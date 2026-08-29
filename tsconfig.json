@@ -1,0 +1,16 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/domain" },
+    { "path": "packages/ports" },
+    { "path": "packages/db" },
+    { "path": "packages/temporal-common" },
+    { "path": "packages/activities" },
+    { "path": "packages/workflows" },
+    { "path": "packages/adapters-sandbox" },
+    { "path": "apps/worker" },
+    { "path": "apps/api" },
+    { "path": "services/sandbox-providers" },
+    { "path": "services/codec-server" }
+  ]
+}

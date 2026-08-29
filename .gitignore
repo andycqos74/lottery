@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# Secrets — never committed. See docs/SETUP.md §4.
+deploy/secrets/*
+!deploy/secrets/.gitkeep
+!deploy/secrets/*.example
+*.env
+.env
+.env.*
+!.env.example
+
+# Real member data must NEVER enter the repo, dev, or CI. See docs/DATA-POLICY.md
+data/real/
+*.xlsx
+*.xls
+!fixtures/**/*.xlsx

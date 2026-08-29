@@ -1,0 +1,31 @@
+{
+  "name": "qosfc-lottery",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": { "node": ">=22.11.0" },
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' --filter './apps/**' --filter './services/**' run build",
+    "typecheck": "tsc -b --pretty",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:unit": "vitest run packages/domain packages/db",
+    "test:property": "vitest run --project property",
+    "test:workflow": "vitest run packages/workflows",
+    "test:contract": "vitest run packages/adapters-sandbox",
+    "verify:stack": "tsx deploy/bootstrap/verify-stack.ts",
+    "bootstrap:temporal": "bash deploy/bootstrap/bootstrap-temporal.sh",
+    "migrate": "tsx packages/db/src/cli/migrate.ts",
+    "gaps": "tsx tools/gap-check.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.39.0",
+    "fast-check": "^4.3.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.4"
+  }
+}
