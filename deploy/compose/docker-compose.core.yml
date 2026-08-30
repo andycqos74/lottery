@@ -27,17 +27,26 @@ services:
     cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
     command:
       - postgres
-      - -c=shared_buffers=1536MB
-      - -c=max_connections=100
-      - -c=wal_level=replica
-      - -c=archive_mode=on
-      - -c=archive_command=pgbackrest --stanza=app archive-push %p
-      - -c=log_min_duration_statement=1000
-      - -c=log_connections=on
-      - -c=log_disconnections=on
+      - -c
+      - shared_buffers=1536MB
+      - -c
+      - max_connections=100
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=app archive-push %p
+      - -c
+      - log_min_duration_statement=1000
+      - -c
+      - log_connections=on
+      - -c
+      - log_disconnections=on
       # Every DDL is logged: the schema of a gambling ledger changing unnoticed
       # is precisely what the audit requirement exists to prevent.
-      - -c=log_statement=ddl
+      - -c
+      - log_statement=ddl
     environment:
       POSTGRES_DB: lottery_app
       POSTGRES_USER: lottery_owner
@@ -65,11 +74,16 @@ services:
       - postgres
       # max_connections=200: each Temporal service role holds its own pool, and
       # four roles across two datastores adds up faster than the workload suggests.
-      - -c=shared_buffers=1536MB
-      - -c=max_connections=200
-      - -c=wal_level=replica
-      - -c=archive_mode=on
-      - -c=archive_command=pgbackrest --stanza=temporal archive-push %p
+      - -c
+      - shared_buffers=1536MB
+      - -c
+      - max_connections=200
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=temporal archive-push %p
     environment:
       POSTGRES_USER: temporal
       POSTGRES_PASSWORD_FILE: /run/secrets/temporal_db_password
@@ -90,22 +104,36 @@ services:
     image: ${TEMPORAL_SERVER_IMAGE:?run deploy/bootstrap/pin-digests.sh, then source deploy/compose/images.env}
     depends_on:
       postgres-temporal: { condition: service_healthy }
+    # The upstream image's config template only reads POSTGRES_PWD (a plain env
+    # var) — it has no _FILE convention. Read the mounted secret into the
+    # process environment at container start instead of the compose file, so it
+    # never appears in `docker inspect` / `docker compose config`.
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        export POSTGRES_PWD="$$(cat /run/secrets/temporal_db_password)";
+        export TEMPORAL_BROADCAST_ADDRESS="$$(getent hosts "$$(hostname)" | awk '{print $$1}')";
+        exec /etc/temporal/entrypoint.sh
     environment:
       DB: postgres12                       # the postgres12 plugin, not legacy 'postgres'
       POSTGRES_SEEDS: postgres-temporal
       DB_PORT: 5432
       POSTGRES_USER: temporal
-      POSTGRES_PWD_FILE: /run/secrets/temporal_db_password
       DBNAME: temporal
       VISIBILITY_DBNAME: temporal_visibility
       ENABLE_ES: "false"                   # T-10.4: no Elasticsearch at 52 draws a year
       SERVICES: frontend:history:matching:worker
-      # On a SINGLE node this is the container's own address on `core`.
+      # BIND_ON_IP=0.0.0.0: without it the entrypoint binds the frontend only
+      # to the container's own IP on `core`, so nothing on 127.0.0.1 answers —
+      # not `docker exec`-based healthchecks, not the loopback port publish
+      # below. TEMPORAL_BROADCAST_ADDRESS is resolved separately in `command`
+      # above, to the container's own IP — ringpop rejects a DNS name like the
+      # service name `temporal`, it needs a literal, routable address.
+      BIND_ON_IP: 0.0.0.0
       # ⚠ On the two-node T2 topology this must become the node's private IP AND
       # the container must move to network_mode: host — see T-10.9. Under bridge
       # networking a node advertises an unroutable address and cluster membership
       # silently fails to converge.
-      TEMPORAL_BROADCAST_ADDRESS: temporal
       DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/production.yaml
     volumes:
       - ../dynamicconfig:/etc/temporal/config/dynamicconfig:ro

@@ -11,7 +11,23 @@ cd "$(dirname "$0")/../.."
 
 APP_PW="$(cat deploy/secrets/app_role_password)"
 OWNER_PW="$(cat deploy/secrets/app_db_password)"
-HOST="${APP_DB_HOST:-127.0.0.1}"
+
+# postgres-app sits ONLY on `core`, which is `internal: true` (§4: "no ingress
+# from edge, no internet egress"). Docker skips published-port setup entirely
+# for a container whose sole network is internal — `docker port` shows nothing
+# and no DNAT rule exists — so the documented `127.0.0.1:5432` never actually
+# answers, on this host or on a production VPS. The host CAN still reach the
+# container directly on its `core`-network address (same L2 bridge, not
+# reachable from anywhere else), so resolve that unless the caller overrides it.
+resolve_app_db_host() {
+  docker inspect -f '{{ (index .NetworkSettings.Networks "qosfc-lottery_core").IPAddress }}' \
+    qosfc-lottery-postgres-app-1 2>/dev/null
+}
+HOST="${APP_DB_HOST:-$(resolve_app_db_host)}"
+if [[ -z "${HOST}" ]]; then
+  echo "Could not resolve postgres-app's address. Is 'docker compose ... -f docker-compose.core.yml up -d' running? Set APP_DB_HOST to override." >&2
+  exit 1
+fi
 PORT="${APP_DB_PORT:-5432}"
 
 echo "── 1. Login role ──────────────────────────────────────────────────────────"

@@ -33,6 +33,12 @@ export function assertTaskQueue(value: string): TaskQueue {
  * RUNTIME, not at deploy. The worker asserts their presence at startup rather
  * than discovering the omission during a draw.
  */
+// SQL-backed visibility has a fixed pool of typed columns per type (3 Int, 3
+// Double, ...) — Temporal rejects registration past the pool size, so a 4th
+// Int attribute does not fit. AmountPence uses Double instead: pence amounts
+// here are well inside a double's 53-bit exact-integer range, and this column
+// is a search index, not the ledger — postgres-app::bigint stays the only
+// source of truth for money (T-1.1).
 export const SEARCH_ATTRIBUTES = {
   DrawNumber: 'Int',
   DrawStatus: 'Keyword',
@@ -41,7 +47,7 @@ export const SEARCH_ATTRIBUTES = {
   StatementNumber: 'Int',
   TaskKind: 'Keyword',
   Blocked: 'Bool',
-  AmountPence: 'Int',
+  AmountPence: 'Double',
 } as const;
 
 export const NAMESPACE = process.env['TEMPORAL_NAMESPACE'] ?? 'qosfc-lottery';

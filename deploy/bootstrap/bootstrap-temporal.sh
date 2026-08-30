@@ -22,11 +22,15 @@ NETWORK="qosfc-lottery_core"
 PW="$(cat secrets/temporal_db_password)"
 
 echo "── 1. Schema ──────────────────────────────────────────────────────────────"
+# admin-tools' image ENTRYPOINT is `tini -- sleep infinity` (meant for `docker
+# exec`), so a plain `docker run image CMD` never runs CMD — it gets appended
+# as extra arguments to `sleep`, which silently ignores them. Override it.
 docker run --rm --network "${NETWORK}" \
   -e SQL_PLUGIN=postgres12 \
   -e SQL_HOST=postgres-temporal -e SQL_PORT=5432 \
   -e SQL_USER=temporal -e SQL_PASSWORD="${PW}" \
-  "${TEMPORAL_ADMIN_IMAGE}" sh -c '
+  --entrypoint sh \
+  "${TEMPORAL_ADMIN_IMAGE}" -c '
     set -e
     temporal-sql-tool --database temporal create-database || true
     temporal-sql-tool --database temporal setup-schema -v 0.0 || true
@@ -38,8 +42,8 @@ docker run --rm --network "${NETWORK}" \
       -d ./schema/postgresql/v12/visibility/versioned'
 
 echo "── 2. Namespace ───────────────────────────────────────────────────────────"
-docker run --rm --network "${NETWORK}" "${TEMPORAL_ADMIN_IMAGE}" \
-  temporal operator namespace create \
+docker run --rm --network "${NETWORK}" --entrypoint temporal "${TEMPORAL_ADMIN_IMAGE}" \
+  operator namespace create \
     --address temporal:7233 --namespace "${NAMESPACE}" --retention "${RETENTION}" \
   2>&1 | grep -v "already exists" || true
 
@@ -47,8 +51,8 @@ echo "── 3. Search attributes ───────────────�
 # T-10.7: namespace-scoped on SQL-backed visibility, and workflow code that sets
 # an unregistered attribute fails at RUNTIME. Registering them is provisioning,
 # not an afterthought — the worker asserts their presence at startup.
-docker run --rm --network "${NETWORK}" "${TEMPORAL_ADMIN_IMAGE}" \
-  temporal operator search-attribute create \
+docker run --rm --network "${NETWORK}" --entrypoint temporal "${TEMPORAL_ADMIN_IMAGE}" \
+  operator search-attribute create \
     --address temporal:7233 --namespace "${NAMESPACE}" \
     --name DrawNumber      --type Int \
     --name DrawStatus      --type Keyword \
@@ -57,7 +61,7 @@ docker run --rm --network "${NETWORK}" "${TEMPORAL_ADMIN_IMAGE}" \
     --name StatementNumber --type Int \
     --name TaskKind        --type Keyword \
     --name Blocked         --type Bool \
-    --name AmountPence     --type Int \
+    --name AmountPence     --type Double \
   2>&1 | grep -v "already exists" || true
 
 echo ""

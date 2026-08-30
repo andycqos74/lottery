@@ -44,7 +44,9 @@ x-worker: &worker
   depends_on:
     temporal: { condition: service_healthy }
     postgres-app: { condition: service_healthy }
-  secrets: [codec_key, app_role_password]
+  secrets:
+    - codec_key
+    - app_role_password
   networks: [app, core]
 
 services:
@@ -101,7 +103,10 @@ services:
       PORT: 8080
       SESSION_SECRET_FILE: /run/secrets/session_secret
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set in .env}
-    secrets: [codec_key, app_role_password, session_secret]
+    secrets:
+      - codec_key
+      - app_role_password
+      - session_secret
     networks: [edge, app, core]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -124,7 +129,10 @@ services:
       ADMIN_BASE_URL: ${ADMIN_BASE_URL:?set in .env}
       # T-9.3: individual named accounts with MFA. No shared logins.
       REQUIRE_MFA: "true"
-    secrets: [codec_key, app_role_password, session_secret]
+    secrets:
+      - codec_key
+      - app_role_password
+      - session_secret
     networks: [edge, app, core]
 
   # ── Codec server (T-10.11) ──────────────────────────────────────────────────

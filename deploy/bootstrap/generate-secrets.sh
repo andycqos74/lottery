@@ -15,7 +15,11 @@ SECRETS_DIR="secrets"
 CODEC_DIR="${SECRETS_DIR}/codec"
 
 mkdir -p "${CODEC_DIR}"
-chmod 700 "${SECRETS_DIR}" "${CODEC_DIR}"
+chmod 700 "${SECRETS_DIR}"
+# 0755, not 0700: ${CODEC_DIR} itself is bind-mounted whole into containers as
+# the `codec_key` secret, so a container's own non-root user needs to traverse
+# into it — see the note on file mode in write_secret() below.
+chmod 755 "${CODEC_DIR}"
 
 write_secret() {
   local path="$1" generator="$2" description="$3"
@@ -24,7 +28,12 @@ write_secret() {
     return
   fi
   eval "${generator}" > "${path}"
-  chmod 600 "${path}"
+  # 0644, not 0600: Compose (outside Swarm mode) bind-mounts each secret file
+  # as-is — it has no uid/gid/mode translation — so a container's own non-root
+  # user (10001 for our images, the image-defined user for upstream ones like
+  # Temporal) needs read access on the *file itself*. deploy/secrets/ stays
+  # 0700, so only this host account can traverse into the directory at all.
+  chmod 644 "${path}"
   echo "  + ${path} created (${description})"
 }
 
