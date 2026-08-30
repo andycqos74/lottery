@@ -18,9 +18,23 @@ describe('provider selection', () => {
   });
 
   it('names the gap when an adapter does not exist yet', () => {
-    expect(() => buildProviderRegistry({ ...base, PAYMENT_GATEWAY: 'opayo' })).toThrow(/GAP-09 is unresolved/);
-    expect(() => buildProviderRegistry({ ...base, BACS_BUREAU: 'gocardless' })).toThrow(/GAP-10 is unresolved/);
-    expect(() => buildProviderRegistry({ ...base, BANK_FEED: 'open_banking' })).toThrow(/GAP-33 is unresolved/);
+    expect(() => buildProviderRegistry({ ...base, PAYMENT_GATEWAY: 'opayo' })).toThrow(/GAP-09/);
+    expect(() => buildProviderRegistry({ ...base, BACS_BUREAU: 'gocardless' })).toThrow(/GAP-10/);
+    expect(() => buildProviderRegistry({ ...base, BANK_FEED: 'open_banking' })).toThrow(/GAP-33/);
+  });
+
+  it('GAP-09/10: the assumed shapes exist but refuse to run — no provider is confirmed yet', async () => {
+    const registry = buildProviderRegistry({ ...base, PAYMENT_GATEWAY: 'card_portal', BACS_BUREAU: 'own_sun' });
+    expect(registry.paymentGateway.providerName).toBe('live:card-portal');
+    await expect(registry.paymentGateway.getPaymentStatus('s1')).rejects.toThrow(/GAP-09/);
+    expect(registry.bacsBureau.providerName).toBe('live:bacs-own-sun');
+    await expect(registry.bacsBureau.getMandate('m1')).rejects.toThrow(/GAP-10/);
+  });
+
+  it('GAP-33, resolved: csv is a real, working adapter', () => {
+    const registry = buildProviderRegistry({ ...base, BANK_FEED: 'csv', BANK_CSV_UPLOADS_DIR: '/tmp' });
+    expect(registry.bankFeed.providerName).toBe('live:csv-upload');
+    expect(registry.bankFeed.source).toBe('csv');
   });
 });
 

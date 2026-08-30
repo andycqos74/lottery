@@ -7,6 +7,7 @@
  */
 import { type BasisPoints, type Pence, addPence, applyBasisPoints, maxPence, pence, subPence, ZERO } from './money.js';
 import { unresolvedGap } from './gaps.js';
+import { shareJackpot, type SharedJackpot, type WinningEntry } from './prize-sharing.js';
 
 export interface SplitConfig {
   readonly prizeBp: BasisPoints;
@@ -116,15 +117,11 @@ export function settleOutcome(jackpotPreDrawPence: Pence, winnersCount: number):
 /**
  * D9: the must-be-won cap forces a win at £20,000.
  *
- * GAP-24 ⛔: WITH WHAT? D4 excluded every lower tier, so there is nothing to roll
- * down to. The four candidate mechanisms (roll down to nearest match, draw further
- * numbers, share among all entries, guaranteed-winner mechanic) are materially
- * different to members and to the books. `lottery_modelcomparison.xlsx` has a
- * `Forced (cap)` column that is empty in every modelled week — the model never
- * exercised it either.
- *
- * So this reports the condition and never resolves it. DrawWorkflow opens a
- * human_task and blocks (FR-5.3.5).
+ * GAP-24, resolved by the client (2026-08-30, see docs/gap-register.md): roll
+ * down to match 3, then match 2, then match 1 — the first of those tiers that
+ * has a winning entry pays, split equally among the winners in that tier. This
+ * ladder exists ONLY for the must-be-won escape valve; D4 still stands for the
+ * ordinary weekly game, where matching 3 or fewer pays nothing (FR-6.2).
  */
 export function mustBeWonTriggered(
   jackpotPreDrawPence: Pence,
@@ -134,13 +131,60 @@ export function mustBeWonTriggered(
   return jackpotPreDrawPence >= mustBeWonCapPence && winnersCount === 0;
 }
 
-export function resolveMustBeWon(): never {
+/** Entries at each rung of the GAP-24 roll-down ladder, by number of numbers matched. */
+export interface MustBeWonMatchTiers {
+  readonly match3: readonly WinningEntry[];
+  readonly match2: readonly WinningEntry[];
+  readonly match1: readonly WinningEntry[];
+}
+
+export interface MustBeWonRollDown {
+  /** Which rung actually paid. */
+  readonly tier: 3 | 2 | 1;
+  readonly shared: SharedJackpot;
+}
+
+/**
+ * This is the roll-down policy the client confirmed for GAP-24 specifically —
+ * separate from GAP-22 (`config_version.share_basis`), which still governs how
+ * an ORDINARY match-4 jackpot is shared and remains unresolved. The two happen
+ * to share a shape (equal split, largest-remainder-to-winners) because that is
+ * what "split equally between winners in the winning tier" means, not because
+ * one setting drives the other.
+ */
+const MUST_BE_WON_ROLLDOWN_CONFIRMED_BY = 'GAP-24 roll-down (client decision, see docs/gap-register.md)';
+
+/**
+ * Roll a must-be-won jackpot down the ladder and split it.
+ *
+ * Pure and deterministic (T-6.4): the caller supplies each tier's winning
+ * entries — from a frozen entry set already matched against the drawn numbers
+ * (`countMatches` in selection.ts) — and this decides nothing about identity or
+ * timing, only the money.
+ */
+export function resolveMustBeWon(jackpotPaidPence: Pence, tiers: MustBeWonMatchTiers): MustBeWonRollDown {
+  const ladder: readonly (readonly [3 | 2 | 1, readonly WinningEntry[]])[] = [
+    [3, tiers.match3],
+    [2, tiers.match2],
+    [1, tiers.match1],
+  ];
+  for (const [tier, entries] of ladder) {
+    if (entries.length === 0) continue;
+    const shared = shareJackpot(jackpotPaidPence, entries, {
+      basis: 'per_winner',
+      remainder: 'largest_remainder_to_winners',
+      confirmedBy: MUST_BE_WON_ROLLDOWN_CONFIRMED_BY,
+    });
+    return { tier, shared };
+  }
+  // Not reached in practice at N=20/K=4 against a real membership base, but the
+  // client's decision did not cover "nobody matched even one number" — that
+  // residual stays a real gap rather than an invented default.
   unresolvedGap(
     'GAP-24',
-    'the must-be-won mechanism at the £20,000 cap — D4 removed every lower tier, so there is ' +
-      'nothing to roll down to. Options (roll down to nearest match / draw further numbers / ' +
-      'share among all entries / guaranteed-winner mechanic) differ materially for members',
-    'the client, and it must be published to members before go-live',
+    'the must-be-won roll-down reached match-1 with no winning entries at any tier. The confirmed ' +
+      'roll-down (match 3 → 2 → 1, split equally) did not cover this residual case',
+    'the client',
   );
 }
 

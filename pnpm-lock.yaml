@@ -77,6 +77,9 @@ importers:
       '@qosfc/activities':
         specifier: workspace:*
         version: link:../../packages/activities
+      '@qosfc/adapters-live':
+        specifier: workspace:*
+        version: link:../../packages/adapters-live
       '@qosfc/adapters-sandbox':
         specifier: workspace:*
         version: link:../../packages/adapters-sandbox
@@ -120,6 +123,15 @@ importers:
       '@types/pg':
         specifier: ^8.15.5
         version: 8.23.1
+
+  packages/adapters-live:
+    dependencies:
+      '@qosfc/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@qosfc/ports':
+        specifier: workspace:*
+        version: link:../ports
 
   packages/adapters-sandbox:
     dependencies:

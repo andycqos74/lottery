@@ -26,7 +26,7 @@ const { openHumanTask, generateWinningNumbers } = workflow.proxyActivities<Retur
   retry: { initialInterval: '1s', backoffCoefficient: 2, maximumAttempts: 5 },
 });
 
-/** GAP-24: the decision a human supplies to unblock a capped, unwon draw. */
+/** GAP-24: the payout a human confirms until Phase 6 can compute it automatically. */
 export interface MustBeWonDecision {
   readonly mechanism: string;
   readonly decidedBy: string;
@@ -79,14 +79,23 @@ export async function DrawWorkflow(input: DrawWorkflowInput): Promise<DrawState>
 
   const winnersCount = 0; // Phase 6: identify_winners activity over the frozen entry set
 
-  // ── GAP-24 ⛔ — block, do not invent a fallback (FR-5.3.5) ──────────────────
+  // ── GAP-24, resolved (roll down match 3 → 2 → 1, split equally — see
+  // resolveMustBeWon in @qosfc/domain) — but Phase 6's identify_winners
+  // activity, which supplies the match-3/2/1 entries the roll-down needs,
+  // doesn't exist yet. Until it does, this still blocks for a human — not to
+  // decide the mechanism (that's settled) but because nothing here can compute
+  // the tiers to hand resolveMustBeWon(). Once identify_winners exists, this
+  // becomes a straight call to resolveMustBeWon() with its output, and this
+  // task becomes a review/confirm step on the computed payout rather than an
+  // open decision (FR-5.3.5).
   if (mustBeWonTriggered(position.jackpotPreDrawPence, winnersCount, pence(2_000_000))) {
     await openHumanTask({
       kind: 'must_be_won_decision',
       title: `Draw ${input.drawNumber}: jackpot reached the £20,000 must-be-won cap with no winner`,
       detail:
-        'D9 forces a win at £20,000, but D4 excluded every lower prize tier, so there is nothing to ' +
-        'roll down to. The mechanism has never been decided and must not be invented here.',
+        'D9 forces a win at £20,000. The roll-down mechanism is decided (match 3 → 2 → 1, split ' +
+        'equally among winners in the winning tier), but this workflow cannot yet compute who is in ' +
+        'which tier — Phase 6 does not exist. Record who should be paid and how much.',
       consequenceIfIgnored:
         'The draw stays blocked and no prize is paid until two authorised people record a decision. ' +
         'Nothing is lost — the entry set is frozen and the workflow resumes where it stopped.',

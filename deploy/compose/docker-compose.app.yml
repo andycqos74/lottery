@@ -34,6 +34,8 @@ x-worker-env: &worker-env
   PAYMENT_GATEWAY: ${PAYMENT_GATEWAY:-sandbox}
   BACS_BUREAU: ${BACS_BUREAU:-sandbox}
   BANK_FEED: ${BANK_FEED:-sandbox}
+  # Only read when BANK_FEED=csv (GAP-33) — see worker-recon's volume mount below.
+  BANK_CSV_UPLOADS_DIR: /var/lib/qosfc/bank-uploads
   NOTIFIER: ${NOTIFIER:-sandbox}
   RANDOMNESS_SOURCE: ${RANDOMNESS_SOURCE:-unset}
   SANDBOX_PROVIDERS_URL: ${SANDBOX_PROVIDERS_URL:-http://sandbox-providers:9090}
@@ -76,6 +78,11 @@ services:
     # system, so this container gets NO internet egress (`app`+`core` only, both
     # internal) and the largest memory headroom.
     environment: { <<: *worker-env, TASK_QUEUE: recon }
+    # GAP-33: read-only mount of the manual CSV upload landing zone. Only
+    # relevant when BANK_FEED=csv; a mount with nothing dropped in it just
+    # means listStatements() returns nothing to reconcile.
+    volumes:
+      - ${BANK_CSV_UPLOADS_DIR_HOST:-./bank-uploads}:/var/lib/qosfc/bank-uploads:ro
     deploy: { resources: { limits: { memory: 768M } } }
 
   worker-comms:
