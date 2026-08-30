@@ -11,7 +11,7 @@
  *   pnpm verify:stack
  */
 import { randomBytes } from 'node:crypto';
-import { createPool } from '@qosfc/db';
+import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import {
   EncryptionCodec,
   InMemoryKeyProvider,
@@ -34,7 +34,7 @@ const check = (name: string, detail: string, run: () => Promise<string>) => chec
 // ── 1. The system of record ──────────────────────────────────────────────────
 check('postgres-app reachable', 'T-1.1: the ledger is the system of record', async () => {
   const pool = createPool({
-    connectionString: required('APP_DB_URL'),
+    ...appDbConnectionFromEnv(),
     applicationName: 'verify-stack',
     max: 1,
   });
@@ -50,7 +50,7 @@ check('postgres-app reachable', 'T-1.1: the ledger is the system of record', asy
 });
 
 check('money survives the round trip as bigint', 'NFR-2: no floating-point money, ever', async () => {
-  const pool = createPool({ connectionString: required('APP_DB_URL'), applicationName: 'verify-stack', max: 1 });
+  const pool = createPool({ ...appDbConnectionFromEnv(), applicationName: 'verify-stack', max: 1 });
   try {
     const { rows } = await pool.query<{ big: unknown }>(`SELECT 9223372036854775807::bigint AS big`);
     if (typeof rows[0]!.big !== 'bigint') {
@@ -66,7 +66,7 @@ check('money survives the round trip as bigint', 'NFR-2: no floating-point money
 });
 
 check('append-only guarantee holds', 'T-9.4: the app role cannot rewrite the books', async () => {
-  const pool = createPool({ connectionString: required('APP_DB_URL'), applicationName: 'verify-stack', max: 1 });
+  const pool = createPool({ ...appDbConnectionFromEnv(), applicationName: 'verify-stack', max: 1 });
   try {
     const { rows } = await pool.query<{ table_name: string; privilege_type: string }>(
       `SELECT table_name, privilege_type FROM information_schema.role_table_grants
@@ -182,12 +182,6 @@ check('workflow update enabled', 'T-10.8: FR-3.3 depends on synchronous accept/r
     client.connection.close();
   }
 });
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set.`);
-  return value;
-}
 
 // ── Run ──────────────────────────────────────────────────────────────────────
 let failures = 0;

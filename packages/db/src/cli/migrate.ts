@@ -15,7 +15,12 @@ if (!url) {
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = process.env['MIGRATIONS_DIR'] ?? resolve(here, '../../../../db/migrations');
 
-const pool = createPool({ connectionString: url, applicationName: 'qosfc-migrate', max: 1 });
+const pool = createPool({
+  connectionString: url,
+  passwordFile: process.env['APP_DB_MIGRATION_PASSWORD_FILE'],
+  applicationName: 'qosfc-migrate',
+  max: 1,
+});
 try {
   console.log(`Migrating ${maskUrl(url)} from ${migrationsDir}`);
   const result = await migrate(pool, migrationsDir);

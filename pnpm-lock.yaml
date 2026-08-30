@@ -11,6 +11,15 @@ importers:
       '@eslint/js':
         specifier: ^9.39.0
         version: 9.39.5
+      '@qosfc/db':
+        specifier: workspace:*
+        version: link:packages/db
+      '@qosfc/temporal-common':
+        specifier: workspace:*
+        version: link:packages/temporal-common
+      '@temporalio/common':
+        specifier: ^1.14.0
+        version: 1.23.0
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1

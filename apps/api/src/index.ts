@@ -8,11 +8,11 @@
  * and audit trail rather than depending on a request completing.
  */
 import Fastify from 'fastify';
-import { createPool } from '@qosfc/db';
+import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 
 const port = Number(process.env['PORT'] ?? 8080);
 const pool = createPool({
-  connectionString: required('APP_DB_URL'),
+  ...appDbConnectionFromEnv(),
   applicationName: 'qosfc-api',
   max: 10,
 });
@@ -71,9 +71,3 @@ app.get('/results', async () => {
 });
 
 await app.listen({ port, host: '0.0.0.0' });
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set.`);
-  return value;
-}

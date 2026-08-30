@@ -7,7 +7,7 @@
  * and it is enforced by the deployment rather than by convention.
  */
 import { NativeConnection, Worker } from '@temporalio/worker';
-import { createPool } from '@qosfc/db';
+import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import { createActivities } from '@qosfc/activities';
 import {
   EncryptionCodec,
@@ -22,7 +22,7 @@ const taskQueue = assertTaskQueue(process.env['TASK_QUEUE'] ?? 'draw');
 const config = connectionConfigFromEnv();
 
 const pool = createPool({
-  connectionString: required('APP_DB_URL'),
+  ...appDbConnectionFromEnv(),
   applicationName: `qosfc-worker-${taskQueue}`,
   max: 10,
 });
@@ -86,10 +86,4 @@ async function assertSearchAttributesRegistered(): Promise<void> {
         `fails at runtime, which on a draw workflow means mid-draw.`,
     );
   }
-}
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set.`);
-  return value;
 }

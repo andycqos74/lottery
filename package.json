@@ -23,6 +23,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
+    "@qosfc/db": "workspace:*",
+    "@qosfc/temporal-common": "workspace:*",
+    "@temporalio/common": "^1.14.0",
     "@types/node": "^22.10.2",
     "eslint": "^9.39.0",
     "fast-check": "^4.3.0",

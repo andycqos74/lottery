@@ -28,7 +28,11 @@ REVOKE CREATE ON SCHEMA public FROM lottery_app;
 SQL
 
 echo "── 2. Migrations (as owner) ───────────────────────────────────────────────"
-APP_DB_MIGRATION_URL="postgres://lottery_owner:${OWNER_PW}@${HOST}:${PORT}/lottery_app" \
+# The password goes in as a file, not interpolated into the URL: the secret is
+# arbitrary bytes from openssl, and a raw '/' or '@' in it would corrupt the URL
+# it was pasted into.
+APP_DB_MIGRATION_URL="postgres://lottery_owner@${HOST}:${PORT}/lottery_app" \
+APP_DB_MIGRATION_PASSWORD_FILE="deploy/secrets/app_db_password" \
   pnpm exec tsx packages/db/src/cli/migrate.ts
 
 echo ""

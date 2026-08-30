@@ -29,9 +29,14 @@ write_secret() {
 }
 
 echo "Generating secrets in $(pwd)/${SECRETS_DIR}"
-write_secret "${SECRETS_DIR}/app_db_password"       "openssl rand -base64 48 | tr -d '\n'" "postgres-app owner password"
-write_secret "${SECRETS_DIR}/temporal_db_password"  "openssl rand -base64 48 | tr -d '\n'" "postgres-temporal password"
-write_secret "${SECRETS_DIR}/app_role_password"     "openssl rand -base64 48 | tr -d '\n'" "lottery_app login password"
+# Base64's '+', '/' and '=' are not safe to drop unescaped into a postgres://
+# URL — bootstrap-app-db.sh and every app process build one from these files.
+# base64url (RFC 4648 §5) has no such characters, so there is nothing to encode
+# and nothing to get wrong later by forgetting to.
+URL_SAFE="tr -d '\n' | tr '+/' '-_' | tr -d '='"
+write_secret "${SECRETS_DIR}/app_db_password"       "openssl rand -base64 48 | ${URL_SAFE}" "postgres-app owner password"
+write_secret "${SECRETS_DIR}/temporal_db_password"  "openssl rand -base64 48 | ${URL_SAFE}" "postgres-temporal password"
+write_secret "${SECRETS_DIR}/app_role_password"     "openssl rand -base64 48 | ${URL_SAFE}" "lottery_app login password"
 write_secret "${SECRETS_DIR}/session_secret"        "openssl rand -base64 64 | tr -d '\n'" "cookie session signing key"
 write_secret "${SECRETS_DIR}/sandbox_webhook_secret" "openssl rand -hex 32"                "sandbox webhook HMAC (dev only)"
 

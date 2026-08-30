@@ -17,6 +17,19 @@ services:
       - "443:443"
       - "443:443/udp"      # HTTP/3
       - "80:80"            # ACME challenge and the redirect to 443
+    # The Caddyfile's {$VAR} placeholders are resolved by Caddy from ITS OWN
+    # process environment at startup — `docker compose --env-file` only expands
+    # `${VAR}` inside this YAML, it does not forward anything into the
+    # container. Without this block every hostname and the ACME email would be
+    # empty strings and Caddy would refuse to start.
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set in .env}
+      MEMBER_HOST: ${MEMBER_HOST:?set in .env}
+      ADMIN_HOST: ${ADMIN_HOST:?set in .env}
+      TEMPORAL_UI_HOST: ${TEMPORAL_UI_HOST:?set in .env}
+      CODEC_HOST: ${CODEC_HOST:?set in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set in .env}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:?set in .env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

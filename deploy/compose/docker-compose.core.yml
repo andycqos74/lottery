@@ -110,6 +110,10 @@ services:
     volumes:
       - ../dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     secrets: [temporal_db_password]
+    # Loopback only, same treatment as the two Postgres instances above: lets
+    # `deploy/bootstrap/bootstrap-temporal.sh` and a host-side `pnpm verify:stack`
+    # reach the frontend without putting it on any externally-reachable network.
+    ports: ["127.0.0.1:7233:7233"]
     networks: [core, app]
     healthcheck:
       test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
