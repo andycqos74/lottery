@@ -26,6 +26,19 @@ to the plausible-looking one.
 | TG-12 | **Entity-workflow-per-member.** Drives the sizing in SETUP §3.1. | `packages/temporal-common/src/task-queues.ts` |
 | TG-13 | **Nexus not adopted.** Recorded, not overlooked. | this file |
 
+## Resolved by client decision (2026-08-30)
+
+Answered directly by the client. Each is now live in code, not just recorded
+here — see §"When a decision arrives" below for how a `config_version` row or
+a live adapter puts one into force.
+
+| ID | Decision | Recorded in |
+|---|---|---|
+| GAP-17 | **Prepaid blocks.** Each payment buys whole tickets up front; the draw consumes them. | `entriesDue()` (`prepaid_blocks` branch); activate with `config_version.entry_strategy` via `pnpm activate-config` |
+| GAP-21 | **RANDOM.ORG**, via its HTTP client interface (https://www.random.org/clients/http/), not a software CSPRNG. Whether independent assurance is ALSO required for the licensing authority remains open — see the residual note in `packages/ports/src/randomness.ts`. | `packages/adapters-live/src/randomness/random-org.ts`; `RANDOMNESS_SOURCE=random_org` |
+| GAP-24 | **Roll down to match 3, then match 2, then match 1** — the first tier with a winning entry pays, split equally among that tier's winners. Residual: nobody matching even one number was not covered and still halts. | `resolveMustBeWon()` in `packages/domain/src/allocation.ts` |
+| GAP-33 | **Manual CSV upload**, for now. Open Banking and OCR remain live options for later — the port's per-transaction confidence field exists specifically so swapping to either is a new adapter, not a rewrite. | `packages/adapters-live/src/bank-feed/csv-upload.ts`; `BANK_FEED=csv` |
+
 ## Blocking, and where the code stops
 
 | ID | What is undecided | Where it halts |
@@ -33,14 +46,10 @@ to the plausible-looking one.
 | GAP-01 ⛔ | ELM vs in-house. Everything is conditional on it. | — build proceeds as in-house pending sign-off |
 | GAP-02 ⛔ | Switch-over date; cut-over vs parallel run. | — |
 | GAP-05 ⛔ | No email address exists anywhere in 1,591 rows. | `member.email` nullable by *fact*, not by choice |
-| GAP-09 ⛔ | Payment service provider. | `PaymentGateway` port; `PAYMENT_GATEWAY=sandbox` |
-| GAP-10 ⛔ | Bacs route: bureau vs GoCardless vs own SUN. | `BacsBureau` port; `BACS_BUREAU=sandbox` |
+| GAP-09 ⛔ | Payment service provider — **still to be confirmed**. Working assumption: a third-party hosted card processing portal (standing orders and Direct Debit are the other two funding channels, and need no PSP). | `PaymentGateway` port; `PAYMENT_GATEWAY=sandbox`\|`card_portal` — `packages/adapters-live/src/payment/card-portal.ts` is shape-only, every method refuses until a provider is actually chosen |
+| GAP-10 ⛔ | Bacs route — **still to be confirmed**. Working assumption: the society's own Service User Number, with the option to move to a bureau kept open behind the port. | `BacsBureau` port; `BACS_BUREAU=sandbox`\|`own_sun` — `packages/adapters-live/src/bacs/own-sun.ts` is shape-only, refuses until Bacstel-IP access exists to build against |
 | GAP-13 ⛔ | Random allocation for non-responders — drafted, unconfirmed. | `selection_standing.source` may not be written as `randomly_allocated`; the campaign raises a task |
-| GAP-17 ⛔ | Entry generation: balance ledger / fixed schedule / prepaid blocks. All three implemented; none is default. | `entriesDue()` → `unresolvedGap('GAP-17')` |
-| GAP-19 ⛔ | Agent-collected members — 782 of 1,591, 49% of the register, no functional design at all. | `entriesDue()` → `unresolvedGap('GAP-19')` |
-| GAP-21 ⛔ | RNG method and independent assurance. A **licence condition**, not a preference. | `RandomnessSource` port; `RANDOMNESS_SOURCE=unset` |
-| GAP-24 ⛔ | Must-be-won mechanism at £20,000. D4 removed every lower tier, so there is nothing to roll down to. | `resolveMustBeWon()` → halts; `DrawWorkflow` opens `must_be_won_decision` |
-| GAP-33 ⛔ | Bank feed: Open Banking / CSV / continued OCR. | `BankFeed` port; all three shapes in the sandbox |
+| GAP-19 ⛔ | Agent-collected members — 782 of 1,591, 49% of the register, no functional design at all. **Working assumption:** some form of manual entry into the system, scoped and built in a future phase. | `entriesDue()` → `unresolvedGap('GAP-19')` |
 | GAP-36 / 31 ⛔ | Statutory limits and good-cause floor, inconsistently cited across sources. | `config_version.max_*`, `good_cause_floor_bp` — all NULL |
 | GAP-42 ⛔ | No escalation policy, no named on-call. The error handling assumes someone eventually looks. | `EscalationWorkflow` exists; its policy does not |
 | TG-08 / TG-15 ⛔ | Who operates the platform. | — |
@@ -58,9 +67,9 @@ to the plausible-looking one.
 | GAP-14 | Selections persistent vs per-draw. | `selection_standing` effective dates support both |
 | GAP-15 | Multi-ticket members: distinct selections required? | `assertMultiTicketSelectionsPermitted()` halts |
 | GAP-16 | Draw day, time, cut-off. | `config_version.draw_day_of_week` etc. NULL |
-| GAP-18 | Prepaid vs credit timing. | implicit in the GAP-17 strategy choice |
+| GAP-18 | Prepaid vs credit timing. | Answered by the GAP-17 choice (prepaid blocks = prepaid, not credit) — not separately confirmed as its own decision |
 | GAP-20 | 806 members with no amount; 838 tiered Undetermined. | migration flags `amount_unknown`, excludes from entry generation |
-| GAP-22 | Jackpot shared per winner or per winning entry. | `shareJackpot()` halts without a confirmed policy |
+| GAP-22 | Jackpot shared per winner or per winning entry, for an ORDINARY match-4 win. (The GAP-24 must-be-won roll-down uses per-winner internally — a separate decision that happens to share a shape, not an answer to this one.) | `shareJackpot()` halts without a confirmed policy |
 | GAP-23 | Rounding rule for an indivisible remainder. | same |
 | GAP-25 | Reserve funding for the £500 floor; behaviour when empty. | `draw.floor_topup_pence` recorded; funding rule absent |
 | GAP-26 | Per-person entry cap. Syndicate exposure is live from day one. | `perPersonEntryCap` honoured when set; unset is reported |
@@ -102,9 +111,12 @@ to the plausible-looking one.
 
 ## When a decision arrives
 
-1. **A parameter** → insert a new `config_version` row and flip `is_active`.
-   Never `UPDATE` — configuration is versioned by insertion so a draw already in
-   flight cannot be altered (T-3.1).
+1. **A parameter** → insert a new `config_version` row and flip `is_active`,
+   via `pnpm activate-config` (`packages/db/src/cli/activate-config.ts`) — it
+   carries every other column forward from the current active row so setting
+   one decision can never silently reset another. Never `UPDATE` — configuration
+   is versioned by insertion so a draw already in flight cannot be altered
+   (T-3.1).
 2. **A strategy** → set the value *and* its `*_confirmed_by` column. A value
    without a named confirmer is a suggestion, and the code treats it as unset.
 3. **A rule** → update the specification documents and this register.
