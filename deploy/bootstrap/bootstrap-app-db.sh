@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Application database: the login role, then the migrations.
+#
+# The separation matters (db/migrations/0007): migrations run as lottery_owner,
+# the application connects as lottery_app, and lottery_app holds no UPDATE or
+# DELETE grant on ledger_entry or audit_log. If the application ran migrations,
+# it would need the privileges the append-only guarantee exists to deny it.
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+APP_PW="$(cat deploy/secrets/app_role_password)"
+OWNER_PW="$(cat deploy/secrets/app_db_password)"
+
+# postgres-app sits ONLY on `core`, which is `internal: true` (§4: "no ingress
+# from edge, no internet egress"). Docker skips published-port setup entirely
+# for a container whose sole network is internal — `docker port` shows nothing
+# and no DNAT rule exists — so the documented `127.0.0.1:5432` never actually
+# answers, on this host or on a production VPS. The host CAN still reach the
+# container directly on its `core`-network address (same L2 bridge, not
+# reachable from anywhere else), so resolve that unless the caller overrides it.
+resolve_app_db_host() {
+  docker inspect -f '{{ (index .NetworkSettings.Networks "qosfc-lottery_core").IPAddress }}' \
+    qosfc-lottery-postgres-app-1 2>/dev/null
+}
+HOST="${APP_DB_HOST:-$(resolve_app_db_host)}"
+if [[ -z "${HOST}" ]]; then
+  echo "Could not resolve postgres-app's address. Is 'docker compose ... -f docker-compose.core.yml up -d' running? Set APP_DB_HOST to override." >&2
+  exit 1
+fi
+PORT="${APP_DB_PORT:-5432}"
+
+echo "── 1. Login role ──────────────────────────────────────────────────────────"
+PGPASSWORD="${OWNER_PW}" psql -h "${HOST}" -p "${PORT}" -U lottery_owner -d lottery_app -v ON_ERROR_STOP=1 <<SQL
+DO \$\$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'lottery_app') THEN
+    CREATE ROLE lottery_app NOLOGIN;
+  END IF;
+END \$\$;
+ALTER ROLE lottery_app LOGIN PASSWORD '${APP_PW}';
+-- Belt and braces: the application can never create objects it would then own,
+-- and therefore never grant itself privileges on them.
+REVOKE CREATE ON SCHEMA public FROM lottery_app;
+SQL
+
+echo "── 2. Migrations (as owner) ───────────────────────────────────────────────"
+# The password goes in as a file, not interpolated into the URL: the secret is
+# arbitrary bytes from openssl, and a raw '/' or '@' in it would corrupt the URL
+# it was pasted into.
+APP_DB_MIGRATION_URL="postgres://lottery_owner@${HOST}:${PORT}/lottery_app" \
+APP_DB_MIGRATION_PASSWORD_FILE="deploy/secrets/app_db_password" \
+  pnpm exec tsx packages/db/src/cli/migrate.ts
+
+echo ""
+echo "── 3. Verifying the append-only guarantee actually holds ──────────────────"
+PGPASSWORD="${OWNER_PW}" psql -h "${HOST}" -p "${PORT}" -U lottery_owner -d lottery_app -tA <<'SQL'
+SELECT CASE WHEN count(*) = 0
+  THEN '  ✓ lottery_app holds no UPDATE/DELETE on ledger_entry or audit_log (T-9.4)'
+  ELSE '  ✗ FAIL: lottery_app can still rewrite the books — ' || string_agg(table_name||':'||privilege_type, ', ')
+END FROM information_schema.role_table_grants
+ WHERE grantee='lottery_app' AND table_name IN ('ledger_entry','audit_log')
+   AND privilege_type IN ('UPDATE','DELETE','TRUNCATE');
+SQL

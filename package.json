@@ -1,0 +1,38 @@
+{
+  "name": "qosfc-lottery",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' --filter './apps/**' --filter './services/**' run build",
+    "typecheck": "tsc -b --pretty",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:unit": "vitest run packages/domain packages/adapters-sandbox apps/worker",
+    "test:property": "vitest run packages/domain",
+    "verify:stack": "tsx deploy/bootstrap/verify-stack.ts",
+    "bootstrap:temporal": "bash deploy/bootstrap/bootstrap-temporal.sh",
+    "migrate": "tsx packages/db/src/cli/migrate.ts",
+    "create:admin-user": "tsx apps/admin/src/cli/create-admin-user.ts",
+    "test:db": "vitest run packages/db",
+    "test:security": "vitest run packages/db packages/temporal-common tools apps/worker",
+    "test:determinism": "vitest run tools",
+    "docker:build": "bash deploy/bootstrap/build-images.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@qosfc/db": "workspace:*",
+    "@qosfc/temporal-common": "workspace:*",
+    "@temporalio/common": "^1.14.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.39.0",
+    "fast-check": "^4.3.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.4"
+  }
+}

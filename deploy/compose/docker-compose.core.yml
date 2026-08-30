@@ -1,0 +1,164 @@
+# Core datastores and the Temporal service.
+#
+# These sit on the `core` network, which has NO ingress from the edge and no
+# internet egress. Nothing here publishes a port to 0.0.0.0 — the two Postgres
+# instances bind to loopback only, so even a misconfigured host firewall does not
+# expose the ledger.
+#
+# T-10.3: TWO PostgreSQL instances, not two databases in one instance. The
+# society's books and Temporal's orchestration state must not share a blast
+# radius. They share a host to save money; they do not share a server process.
+
+name: qosfc-lottery
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+services:
+  # ── SYSTEM OF RECORD (T-1.1) ────────────────────────────────────────────────
+  postgres-app:
+    <<: *hardening
+    image: ${POSTGRES_IMAGE:?run deploy/bootstrap/pin-digests.sh, then source deploy/compose/images.env}
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1536MB
+      - -c
+      - max_connections=100
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=app archive-push %p
+      - -c
+      - log_min_duration_statement=1000
+      - -c
+      - log_connections=on
+      - -c
+      - log_disconnections=on
+      # Every DDL is logged: the schema of a gambling ledger changing unnoticed
+      # is precisely what the audit requirement exists to prevent.
+      - -c
+      - log_statement=ddl
+    environment:
+      POSTGRES_DB: lottery_app
+      POSTGRES_USER: lottery_owner
+      POSTGRES_PASSWORD_FILE: /run/secrets/app_db_password
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    secrets: [app_db_password]
+    volumes:
+      - app-data:/var/lib/postgresql/data
+      - ./pgbackrest:/etc/pgbackrest:ro
+    ports: ["127.0.0.1:5432:5432"]     # loopback only — never 0.0.0.0
+    networks: [core]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lottery_owner -d lottery_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── ORCHESTRATION STATE ONLY (T-1.1: never the system of record) ────────────
+  postgres-temporal:
+    <<: *hardening
+    image: ${POSTGRES_IMAGE:?run deploy/bootstrap/pin-digests.sh, then source deploy/compose/images.env}
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    command:
+      - postgres
+      # max_connections=200: each Temporal service role holds its own pool, and
+      # four roles across two datastores adds up faster than the workload suggests.
+      - -c
+      - shared_buffers=1536MB
+      - -c
+      - max_connections=200
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=temporal archive-push %p
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD_FILE: /run/secrets/temporal_db_password
+    secrets: [temporal_db_password]
+    volumes:
+      - temporal-data:/var/lib/postgresql/data
+    ports: ["127.0.0.1:5433:5432"]
+    networks: [core]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  temporal:
+    <<: *hardening
+    image: ${TEMPORAL_SERVER_IMAGE:?run deploy/bootstrap/pin-digests.sh, then source deploy/compose/images.env}
+    depends_on:
+      postgres-temporal: { condition: service_healthy }
+    # The upstream image's config template only reads POSTGRES_PWD (a plain env
+    # var) — it has no _FILE convention. Read the mounted secret into the
+    # process environment at container start instead of the compose file, so it
+    # never appears in `docker inspect` / `docker compose config`.
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        export POSTGRES_PWD="$$(cat /run/secrets/temporal_db_password)";
+        export TEMPORAL_BROADCAST_ADDRESS="$$(getent hosts "$$(hostname)" | awk '{print $$1}')";
+        exec /etc/temporal/entrypoint.sh
+    environment:
+      DB: postgres12                       # the postgres12 plugin, not legacy 'postgres'
+      POSTGRES_SEEDS: postgres-temporal
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      ENABLE_ES: "false"                   # T-10.4: no Elasticsearch at 52 draws a year
+      SERVICES: frontend:history:matching:worker
+      # BIND_ON_IP=0.0.0.0: without it the entrypoint binds the frontend only
+      # to the container's own IP on `core`, so nothing on 127.0.0.1 answers —
+      # not `docker exec`-based healthchecks, not the loopback port publish
+      # below. TEMPORAL_BROADCAST_ADDRESS is resolved separately in `command`
+      # above, to the container's own IP — ringpop rejects a DNS name like the
+      # service name `temporal`, it needs a literal, routable address.
+      BIND_ON_IP: 0.0.0.0
+      # ⚠ On the two-node T2 topology this must become the node's private IP AND
+      # the container must move to network_mode: host — see T-10.9. Under bridge
+      # networking a node advertises an unroutable address and cluster membership
+      # silently fails to converge.
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/production.yaml
+    volumes:
+      - ../dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    secrets: [temporal_db_password]
+    # Loopback only, same treatment as the two Postgres instances above: lets
+    # `deploy/bootstrap/bootstrap-temporal.sh` and a host-side `pnpm verify:stack`
+    # reach the frontend without putting it on any externally-reachable network.
+    ports: ["127.0.0.1:7233:7233"]
+    networks: [core, app]
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+networks:
+  core:
+    internal: true          # no internet egress: the ledger host talks to nobody
+  app:
+
+volumes:
+  app-data:
+  temporal-data:
+
+secrets:
+  app_db_password:      { file: ../secrets/app_db_password }
+  temporal_db_password: { file: ../secrets/temporal_db_password }

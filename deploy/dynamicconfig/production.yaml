@@ -1,0 +1,35 @@
+# Temporal dynamic configuration.
+#
+# T-10.8: Workflow Update is used for member-facing selection changes (T-5.2)
+# because it returns accept/reject synchronously, which is what FR-3.3 requires —
+# "a member changing their selection receives an immediate accept or reject, not
+# a silent queued change". On self-hosted deployments this may need explicit
+# enablement, and the flag names and defaults have changed across server
+# releases. VERIFY UPDATES WORK END TO END on the pinned version before building
+# the member UI on them: `pnpm verify:stack` does exactly that, and it is a cheap
+# check that is expensive to discover late.
+frontend.enableUpdateWorkflowExecution:
+  - value: true
+frontend.enableExecuteMultiOperation:
+  - value: true
+
+# Warn well before the 2 MB hard limit. Under identifier-only payloads (T-1.3)
+# nothing should come close; a warning here means personal data or a large blob
+# has crept into a payload, which is a design defect to investigate.
+limit.blobSize.warn:
+  - value: 262144
+limit.blobSize.error:
+  - value: 2097152
+
+# ~1,591 entity workflows (TG-12 resolved to entity-per-member) plus the draw
+# fan-out. Modest, but the defaults are tuned for far larger clusters.
+history.cacheMaxSizeBytes:
+  - value: 268435456
+matching.numTaskqueueReadPartitions:
+  - value: 2
+matching.numTaskqueueWritePartitions:
+  - value: 2
+
+# Retention is per namespace and set at creation (bootstrap-temporal.sh).
+# 30 days — TG-10, unconfirmed. It is an ORCHESTRATION LOG, never evidence:
+# statutory and GDPR record retention are years and live in PostgreSQL (T-1.1).

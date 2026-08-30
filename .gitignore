@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# Secrets — never committed. See docs/SETUP.md §4.
+deploy/secrets/*
+!deploy/secrets/.gitkeep
+!deploy/secrets/*.example
+*.env
+.env
+.env.*
+!.env.example
+# Pinned image digests are config, not a secret — deploy/bootstrap/pin-digests.sh
+# generates it and docs/SETUP.md says to commit it (§10.5: never deploy on `:latest`).
+!deploy/compose/images.env
+
+# Real member data must NEVER enter the repo, dev, or CI. See docs/DATA-POLICY.md
+data/real/
+*.xlsx
+*.xls
+!fixtures/**/*.xlsx

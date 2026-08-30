@@ -1,0 +1,55 @@
+# Dummy external systems (build plan §5).
+#
+# ⚠ NEVER deployed to production. This file is simply not included in the
+# production compose invocation, and the composition root refuses to boot with
+# NODE_ENV=production against any sandbox adapter — belt and braces, because a
+# sandbox PSP left wired in on go-live would look exactly like everything working.
+#
+# These are real HTTP services, not in-memory fakes, so the code exercises real
+# network behaviour: webhooks, three-day settlement delays, out-of-order mandate
+# messages, duplicate callbacks, and OCR quirks.
+name: qosfc-lottery
+
+services:
+  sandbox-providers:
+    image: ${SANDBOX_IMAGE:-qosfc/lottery-sandbox-providers:dev}
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp:size=256m"]
+    user: "10001:10001"
+    environment:
+      PORT: 9090
+      # The app's webhook receiver, so the sandbox can call back asynchronously
+      # exactly as a real PSP or bureau would.
+      WEBHOOK_TARGET_URL: http://api:8080/webhooks
+      WEBHOOK_SIGNING_SECRET_FILE: /run/secrets/sandbox_webhook_secret
+      # Failure injection, so the unhappy paths are exercised by default rather
+      # than discovered in production (T-12.4).
+      SANDBOX_DECLINE_RATE: ${SANDBOX_DECLINE_RATE:-0.1}
+      SANDBOX_DUPLICATE_WEBHOOK_RATE: ${SANDBOX_DUPLICATE_WEBHOOK_RATE:-0.05}
+      SANDBOX_BACS_SETTLEMENT_DAYS: ${SANDBOX_BACS_SETTLEMENT_DAYS:-3}
+      # Compress the settlement wait for local development; the workflow's
+      # durable timer is unchanged, only the sandbox's clock is.
+      SANDBOX_TIME_SCALE: ${SANDBOX_TIME_SCALE:-1}
+    secrets: [sandbox_webhook_secret]
+    networks: [app, sandbox]
+
+  # Catches every outbound email so nothing can reach a real member from dev.
+  mailpit:
+    image: ${MAILPIT_IMAGE:?run deploy/bootstrap/pin-digests.sh}
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: 5000
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports: ["127.0.0.1:8025:8025"]     # web UI, loopback only
+    networks: [app, sandbox]
+
+networks:
+  app:
+  sandbox:
+
+secrets:
+  sandbox_webhook_secret: { file: ../secrets/sandbox_webhook_secret }

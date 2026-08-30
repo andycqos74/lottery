@@ -1,0 +1,78 @@
+# Caddy handles TLS, security headers, and rate limiting.
+#
+# Three hostnames, three postures: the public results page is open, member
+# self-service is authenticated, and the admin console is IP-allowlisted on top
+# of its own login and mandatory MFA (§4.2 of the build plan).
+
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		# The pages are server-rendered with htmx and carry no inline script, so a
+		# strict CSP costs nothing here. 'unsafe-inline' would defeat the purpose.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+		-Server
+	}
+}
+
+# ── Public results. No authentication, no personal data. ───────────────────────
+{$PUBLIC_HOST} {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy api:8080
+}
+
+# ── Member self-service. ──────────────────────────────────────────────────────
+{$MEMBER_HOST} {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy api:8080
+}
+
+# ── Admin console and the task inbox. ─────────────────────────────────────────
+# IP allowlist in FRONT of authentication: a credential-stuffing attempt should
+# not even reach the login form. {$ADMIN_ALLOWED_CIDRS} is set in .env.
+{$ADMIN_HOST} {
+	import security_headers
+
+	@not_allowed not remote_ip {$ADMIN_ALLOWED_CIDRS}
+	respond @not_allowed 403
+
+	encode zstd gzip
+	reverse_proxy admin:8081
+}
+
+# ── Temporal Web UI. Operators only, same allowlist. ──────────────────────────
+# A developer tool, deliberately NOT the treasurer's task inbox (GAP-43).
+{$TEMPORAL_UI_HOST} {
+	import security_headers
+
+	@not_allowed not remote_ip {$ADMIN_ALLOWED_CIDRS}
+	respond @not_allowed 403
+
+	reverse_proxy temporal-ui:8080
+}
+
+# ── Codec server (T-10.11). ───────────────────────────────────────────────────
+# Called from the operator's BROWSER, not from the nodes, so it needs a public
+# route. It decrypts member data, so it gets the allowlist too — and its own
+# authentication inside the service.
+{$CODEC_HOST} {
+	import security_headers
+
+	@not_allowed not remote_ip {$ADMIN_ALLOWED_CIDRS}
+	respond @not_allowed 403
+
+	reverse_proxy codec-server:8082
+}

@@ -1,0 +1,47 @@
+# TLS termination and the only public listener on the host.
+#
+# Port 443 is the sole thing bound to 0.0.0.0. Everything else — Postgres, the
+# Temporal frontend, the workers — is on an internal docker network or bound to
+# loopback. `nmap` from outside should see 443 and the restricted SSH port, and
+# nothing else; deploy/host/verify-exposure.sh checks exactly that.
+name: qosfc-lottery
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:?run deploy/bootstrap/pin-digests.sh}
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    ports:
+      - "443:443"
+      - "443:443/udp"      # HTTP/3
+      - "80:80"            # ACME challenge and the redirect to 443
+    # The Caddyfile's {$VAR} placeholders are resolved by Caddy from ITS OWN
+    # process environment at startup — `docker compose --env-file` only expands
+    # `${VAR}` inside this YAML, it does not forward anything into the
+    # container. Without this block every hostname and the ACME email would be
+    # empty strings and Caddy would refuse to start.
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set in .env}
+      MEMBER_HOST: ${MEMBER_HOST:?set in .env}
+      ADMIN_HOST: ${ADMIN_HOST:?set in .env}
+      TEMPORAL_UI_HOST: ${TEMPORAL_UI_HOST:?set in .env}
+      CODEC_HOST: ${CODEC_HOST:?set in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set in .env}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:?set in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+networks:
+  edge:
+
+volumes:
+  caddy-data:
+  caddy-config:
