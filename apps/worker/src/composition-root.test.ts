@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildProviderRegistry } from './composition-root.js';
 import { describeRegistry } from '@qosfc/ports';
@@ -36,5 +39,40 @@ describe('GAP-21 — the draw cannot run on an unapproved entropy source', () =>
 
   it('rejects an unknown source rather than falling back', () => {
     expect(() => buildProviderRegistry({ ...base, RANDOMNESS_SOURCE: 'rand()' })).toThrow(/Unknown RANDOMNESS_SOURCE/);
+  });
+
+  it('random.org (resolved as the chosen source) still refuses without an API key file', () => {
+    expect(() =>
+      buildProviderRegistry({ ...base, NODE_ENV: 'development', RANDOMNESS_SOURCE: 'external_certified' }),
+    ).toThrow(/RANDOM_ORG_API_KEY_FILE/);
+  });
+
+  it('builds the random.org source once an API key file is supplied', () => {
+    const apiKeyFile = join(mkdtempSync(join(tmpdir(), 'random-org-')), 'api-key');
+    writeFileSync(apiKeyFile, 'test-key');
+    const registry = buildProviderRegistry({
+      ...base,
+      NODE_ENV: 'development',
+      RANDOMNESS_SOURCE: 'external_certified',
+      RANDOM_ORG_API_KEY_FILE: apiKeyFile,
+    });
+    expect(registry.randomness.kind).toBe('external_certified');
+  });
+});
+
+describe('GAP-10 / GAP-33 — assumed routes, left open to change', () => {
+  it('defaults the Bacs route to own_sun', () => {
+    const registry = buildProviderRegistry({ ...base, NODE_ENV: 'development' });
+    expect(registry.bacsBureau.providerName).toBe('sandbox:bacs:own_sun');
+  });
+
+  it('honours an explicit BACS_ROUTE override', () => {
+    const registry = buildProviderRegistry({ ...base, NODE_ENV: 'development', BACS_ROUTE: 'bureau' });
+    expect(registry.bacsBureau.providerName).toBe('sandbox:bacs:bureau');
+  });
+
+  it('defaults the bank feed source to csv', () => {
+    const registry = buildProviderRegistry({ ...base, NODE_ENV: 'development' });
+    expect((registry.bankFeed as { source: string }).source).toBe('csv');
   });
 });

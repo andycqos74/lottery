@@ -4,6 +4,13 @@
  * The real constraint is gambling-MCC acquirer underwriting, not the API, so the
  * provider may change late. This interface is what makes that survivable.
  *
+ * GAP-09, held for now: this is one of three dummy collection channels the
+ * client asked to be assumed while the PSP itself stays open — a third-party
+ * debit card processing PORTAL (this interface's hosted redirect). The other
+ * two are an existing bank standing order (needs no PSP at all — it shows up as
+ * an ordinary bank feed credit) and third-party Direct Debit creation
+ * (`BacsBureau`).
+ *
  * T-9.1: no card data touches this application. The member is sent to hosted
  * fields or a redirect; what comes back is a token. Nothing here accepts a PAN,
  * which is a structural guarantee rather than a coding convention.

@@ -94,11 +94,21 @@ export class SandboxPaymentGateway implements PaymentGateway {
   }
 }
 
+/**
+ * GAP-10, held for now: "own SUN" (Service User Number) is the assumed route —
+ * the client submits Direct Debit collections directly, rather than through a
+ * bureau or a third party like GoCardless — with the option left open to switch
+ * later. `route` names which of the three the sandbox is standing in for; only
+ * the message shapes and settlement timing would differ for a live adapter.
+ */
+export type BacsRoute = 'own_sun' | 'bureau' | 'third_party';
+
 export class SandboxBacsBureau implements BacsBureau {
-  readonly providerName = `${SANDBOX_PREFIX}bacs`;
+  readonly providerName: string;
   private readonly http: SandboxHttpOptions;
 
-  constructor(config: SandboxConfig, readonly settlementDays = 3) {
+  constructor(config: SandboxConfig, readonly settlementDays = 3, readonly route: BacsRoute = 'own_sun') {
+    this.providerName = `${SANDBOX_PREFIX}bacs:${route}`;
     this.http = { baseUrl: config.baseUrl, provider: this.providerName };
   }
 
@@ -148,8 +158,12 @@ export class SandboxBankFeed implements BankFeed {
   /**
    * The sandbox serves all three GAP-33 candidate shapes from the same fixtures,
    * so the matching engine can be built and proven before the decision lands.
+   *
+   * GAP-33, held for now: manual CSV upload is the assumed route, with Open
+   * Banking and continued OCR left as options for future development — hence
+   * `csv` as the default rather than `ocr_pdf`.
    */
-  constructor(config: SandboxConfig, readonly source: 'open_banking' | 'csv' | 'ocr_pdf' = 'ocr_pdf') {
+  constructor(config: SandboxConfig, readonly source: 'open_banking' | 'csv' | 'ocr_pdf' = 'csv') {
     this.http = { baseUrl: config.baseUrl, provider: this.providerName };
   }
 

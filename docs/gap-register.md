@@ -25,6 +25,9 @@ to the plausible-looking one.
 | TG-11 | **Identifier-only payloads AND an encryption codec.** Both, from day one. | `packages/temporal-common/src/codec/`, `pii-guard.ts` |
 | TG-12 | **Entity-workflow-per-member.** Drives the sizing in SETUP §3.1. | `packages/temporal-common/src/task-queues.ts` |
 | TG-13 | **Nexus not adopted.** Recorded, not overlooked. | this file |
+| GAP-17 | **Prepaid blocks set as standard.** The other two strategies stay implemented (T-5.4), not deleted. | `db/migrations/0008_gap_resolutions.sql` activates `entry_strategy='prepaid_blocks'` |
+| GAP-21 *(method only)* | **RNG source: random.org's HTTP API** (`generateSignedIntegers`, https://www.random.org/clients/http/). Independent assurance / licence sign-off on this specific source is still open — see the row below. | `ExternalCertifiedRandomnessSource` in `@qosfc/adapters-sandbox`; `db/migrations/0008_gap_resolutions.sql` |
+| GAP-24 | **Must-be-won roll-down.** Rolls down to match-3, then match-2, then match-1; the whole jackpot splits equally between winners (by member) in whichever tier is reached. | `resolveMustBeWonRollDown()` in `packages/domain/src/allocation.ts`; wired in `DrawWorkflow` pending Phase 6's `identify_winners` activity |
 
 ## Blocking, and where the code stops
 
@@ -33,14 +36,12 @@ to the plausible-looking one.
 | GAP-01 ⛔ | ELM vs in-house. Everything is conditional on it. | — build proceeds as in-house pending sign-off |
 | GAP-02 ⛔ | Switch-over date; cut-over vs parallel run. | — |
 | GAP-05 ⛔ | No email address exists anywhere in 1,591 rows. | `member.email` nullable by *fact*, not by choice |
-| GAP-09 ⛔ | Payment service provider. | `PaymentGateway` port; `PAYMENT_GATEWAY=sandbox` |
-| GAP-10 ⛔ | Bacs route: bureau vs GoCardless vs own SUN. | `BacsBureau` port; `BACS_BUREAU=sandbox` |
+| GAP-09 ⛔ | Payment service provider — held for now: three dummy channels assumed (existing bank standing order, 3rd-party Direct Debit creation, 3rd-party card processing portal). | `PaymentGateway` port (card portal); `BacsBureau` port (DD creation); `BankFeed` port (standing order, no PSP needed); `PAYMENT_GATEWAY=sandbox` |
+| GAP-10 ⛔ | Bacs route: bureau vs GoCardless vs own SUN — held for now: own SUN assumed, switchable later. | `BacsBureau` port; `BACS_BUREAU=sandbox`, `BACS_ROUTE=own_sun` |
 | GAP-13 ⛔ | Random allocation for non-responders — drafted, unconfirmed. | `selection_standing.source` may not be written as `randomly_allocated`; the campaign raises a task |
-| GAP-17 ⛔ | Entry generation: balance ledger / fixed schedule / prepaid blocks. All three implemented; none is default. | `entriesDue()` → `unresolvedGap('GAP-17')` |
-| GAP-19 ⛔ | Agent-collected members — 782 of 1,591, 49% of the register, no functional design at all. | `entriesDue()` → `unresolvedGap('GAP-19')` |
-| GAP-21 ⛔ | RNG method and independent assurance. A **licence condition**, not a preference. | `RandomnessSource` port; `RANDOMNESS_SOURCE=unset` |
-| GAP-24 ⛔ | Must-be-won mechanism at £20,000. D4 removed every lower tier, so there is nothing to roll down to. | `resolveMustBeWon()` → halts; `DrawWorkflow` opens `must_be_won_decision` |
-| GAP-33 ⛔ | Bank feed: Open Banking / CSV / continued OCR. | `BankFeed` port; all three shapes in the sandbox |
+| GAP-19 ⛔ | Agent-collected members — 782 of 1,591, 49% of the register, no functional design at all — held for now: some form of manual entry into the system is assumed; implementation deferred to a future phase. | `entriesDue()` → `unresolvedGap('GAP-19')` |
+| GAP-21 ⛔ *(assurance)* | Whether random.org (see above) is an ACCEPTABLE entropy source, and what independent assurance the licensing authority requires. A **licence condition**, not a preference — the method choice does not resolve this half. | `RandomnessSource` port; `RANDOMNESS_SOURCE=unset` by default |
+| GAP-33 ⛔ | Bank feed: Open Banking / CSV / continued OCR — held for now: manual CSV upload assumed, the others left as future options. | `BankFeed` port; all three shapes in the sandbox; `BANK_FEED_SOURCE=csv` |
 | GAP-36 / 31 ⛔ | Statutory limits and good-cause floor, inconsistently cited across sources. | `config_version.max_*`, `good_cause_floor_bp` — all NULL |
 | GAP-42 ⛔ | No escalation policy, no named on-call. The error handling assumes someone eventually looks. | `EscalationWorkflow` exists; its policy does not |
 | TG-08 / TG-15 ⛔ | Who operates the platform. | — |
@@ -58,7 +59,7 @@ to the plausible-looking one.
 | GAP-14 | Selections persistent vs per-draw. | `selection_standing` effective dates support both |
 | GAP-15 | Multi-ticket members: distinct selections required? | `assertMultiTicketSelectionsPermitted()` halts |
 | GAP-16 | Draw day, time, cut-off. | `config_version.draw_day_of_week` etc. NULL |
-| GAP-18 | Prepaid vs credit timing. | implicit in the GAP-17 strategy choice |
+| GAP-18 | Prepaid vs credit timing — resolved alongside GAP-17: prepaid blocks pay up front, so this is prepaid timing, not credit. | implicit in the GAP-17 strategy choice |
 | GAP-20 | 806 members with no amount; 838 tiered Undetermined. | migration flags `amount_unknown`, excludes from entry generation |
 | GAP-22 | Jackpot shared per winner or per winning entry. | `shareJackpot()` halts without a confirmed policy |
 | GAP-23 | Rounding rule for an indivisible remainder. | same |

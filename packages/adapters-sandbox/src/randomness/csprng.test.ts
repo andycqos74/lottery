@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { COMBINATIONS } from '@qosfc/domain';
 import { CsprngRandomnessSource, ExternalCertifiedRandomnessSource, ManualPhysicalDrawSource } from './csprng.js';
 
@@ -70,11 +70,62 @@ describe('draw generation', () => {
 });
 
 describe('GAP-21 — unselected sources fail explicitly (spec §15.2)', () => {
-  it('the certified third-party source refuses rather than substituting', async () => {
-    await expect(new ExternalCertifiedRandomnessSource().generateWinningNumbers()).rejects.toThrow(/GAP-21/);
-  });
-
   it('the physical draw source refuses to generate what an operator must enter', async () => {
     await expect(new ManualPhysicalDrawSource().generateWinningNumbers()).rejects.toThrow(/dual control/);
+  });
+});
+
+describe('GAP-21, resolved — random.org (generateSignedIntegers) as the chosen entropy source', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('draws 4 distinct sorted numbers from the signed-integer response and carries the signature as evidence', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({
+        jsonrpc: '2.0',
+        result: {
+          random: { data: [14, 3, 20, 9], serialNumber: 42, completionTime: '2026-08-30T12:00:00Z' },
+          signature: 'base64-signature',
+        },
+        id: 'draw-1',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const rng = new ExternalCertifiedRandomnessSource({ apiKey: 'test-key' });
+    const { numbers, evidence } = await rng.generateWinningNumbers({ drawId: 'draw-1', poolN: 20, pickK: 4 });
+
+    expect(numbers).toEqual([3, 9, 14, 20]);
+    expect(evidence.source).toBe('external_certified');
+    expect(evidence.seed).toBe('randomorg:42');
+    expect(evidence.evidence['signature']).toBe('base64-signature');
+    expect(evidence.evidence['provider']).toBe('random.org');
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('https://api.random.org/json-rpc/4/invoke');
+    const body = JSON.parse((init as { body: string }).body) as { method: string; params: { apiKey: string } };
+    expect(body.method).toBe('generateSignedIntegers');
+    expect(body.params.apiKey).toBe('test-key');
+  });
+
+  it('surfaces a random.org error response rather than substituting a result', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ jsonrpc: '2.0', error: { code: 401, message: 'Invalid API key' }, id: 'draw-1' }),
+      }),
+    );
+
+    const rng = new ExternalCertifiedRandomnessSource({ apiKey: 'bad-key' });
+    await expect(rng.generateWinningNumbers({ drawId: 'draw-1', poolN: 20, pickK: 4 })).rejects.toThrow(
+      /Invalid API key/,
+    );
   });
 });

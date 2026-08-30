@@ -77,19 +77,104 @@ export class CsprngRandomnessSource implements RandomnessSource {
   }
 }
 
+export interface RandomOrgConfig {
+  /** https://api.random.org/api-keys — required for the signed API used here. */
+  readonly apiKey: string;
+  readonly baseUrl?: string;
+}
+
+interface RandomOrgSignedResponse {
+  readonly result?: {
+    readonly random: {
+      readonly data: readonly number[];
+      readonly serialNumber: number;
+      readonly completionTime: string;
+    };
+    readonly signature: string;
+  };
+  readonly error?: { readonly code: number; readonly message: string };
+}
+
 /**
- * GAP-21 placeholders. Present so the shape of each option is visible and so the
- * composition root can name them — but they throw, because shipping a plausible
- * stand-in for a regulator-facing control is exactly what technical spec §15.2
- * forbids.
+ * GAP-21, resolved: the client's chosen entropy source is random.org's HTTP API
+ * (https://www.random.org/clients/http/) — a true hardware RNG external to this
+ * system, which is what "independent assurance" needs.
+ *
+ * Uses the SIGNED API (`generateSignedIntegers`), not the plain one: it returns a
+ * signature and a serial number that random.org will verify on request, which is
+ * the evidence FR-5.3.6 and a regulator's audit actually need — a bare integer
+ * list would be exactly as unverifiable as our own CSPRNG.
+ *
+ * Still not wired in by default: `RANDOMNESS_SOURCE` must be set to
+ * `external_certified` explicitly, and licence sign-off on this specific source
+ * remains outstanding (GAP-21's other half — see docs/gap-register.md).
  */
 export class ExternalCertifiedRandomnessSource implements RandomnessSource {
   readonly kind = 'external_certified' as const;
-  async generateWinningNumbers(): Promise<DrawResult> {
-    throw new Error(
-      'GAP-21: no certified third-party draw service has been selected or integrated. ' +
-        'Choose a provider with the licensing authority before enabling this source.',
-    );
+
+  constructor(private readonly config: RandomOrgConfig) {}
+
+  async generateWinningNumbers(request: {
+    drawId: string;
+    poolN: number;
+    pickK: number;
+  }): Promise<DrawResult> {
+    const { drawId, poolN, pickK } = request;
+    if (pickK > poolN) {
+      throw new RangeError(`Cannot pick ${pickK} distinct numbers from a pool of ${poolN}.`);
+    }
+
+    const response = await fetch(this.config.baseUrl ?? 'https://api.random.org/json-rpc/4/invoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'generateSignedIntegers',
+        params: {
+          apiKey: this.config.apiKey,
+          n: pickK,
+          min: 1,
+          max: poolN,
+          replacement: false,
+          base: 10,
+        },
+        id: drawId,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`random.org: HTTP ${response.status} ${response.statusText}`);
+    }
+    const payload = (await response.json()) as RandomOrgSignedResponse;
+    if (payload.error) {
+      throw new Error(`random.org: ${payload.error.message} (code ${payload.error.code})`);
+    }
+    if (!payload.result) {
+      throw new Error('random.org: response carried neither a result nor an error.');
+    }
+
+    const { random, signature } = payload.result;
+    const numbers = toSelection([...random.data].sort((a, b) => a - b));
+
+    return {
+      numbers,
+      evidence: {
+        source: this.kind,
+        // The serial number, not the drawn numbers, is the reproducible handle:
+        // random.org's verify endpoint takes the signature, not this string.
+        seed: `randomorg:${random.serialNumber}`,
+        generatedAt: random.completionTime,
+        evidence: {
+          provider: 'random.org',
+          method: 'generateSignedIntegers',
+          serialNumber: random.serialNumber,
+          signature,
+          drawId,
+          poolN,
+          pickK,
+        },
+      },
+    };
   }
 }
 

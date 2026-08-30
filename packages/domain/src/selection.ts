@@ -89,6 +89,20 @@ export function isWinningSelection(selection: Selection, winningNumbers: Selecti
 export const formatSelection = (s: Selection): string => s.join(' · ');
 
 /**
+ * How many of the four drawn numbers does this selection hit?
+ *
+ * D4 keeps `isWinningSelection` boolean-only for the ordinary win path — there is
+ * no published match-3/2/1 prize tier. This exists solely to power the GAP-24
+ * must-be-won roll-down (see `resolveMustBeWonRollDown` in allocation.ts), which
+ * reintroduces match counting as a last resort at the £20,000 cap, and nowhere
+ * else.
+ */
+export function matchCount(selection: Selection, winningNumbers: Selection): number {
+  const winning = new Set(winningNumbers);
+  return selection.filter((n) => winning.has(n)).length;
+}
+
+/**
  * GAP-15: must a member holding multiple tickets carry DISTINCT selections?
  * Member_Conversion shows up to 5 tickets/week (prize draw no 22). Unresolved,
  * and it interacts with GAP-22 on how a shared jackpot is counted, so it cannot

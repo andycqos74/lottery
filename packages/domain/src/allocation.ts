@@ -6,7 +6,7 @@
  * it is replayable and unit-testable without any infrastructure.
  */
 import { type BasisPoints, type Pence, addPence, applyBasisPoints, maxPence, pence, subPence, ZERO } from './money.js';
-import { unresolvedGap } from './gaps.js';
+import { matchCount, type Selection } from './selection.js';
 
 export interface SplitConfig {
   readonly prizeBp: BasisPoints;
@@ -115,16 +115,6 @@ export function settleOutcome(jackpotPreDrawPence: Pence, winnersCount: number):
 
 /**
  * D9: the must-be-won cap forces a win at £20,000.
- *
- * GAP-24 ⛔: WITH WHAT? D4 excluded every lower tier, so there is nothing to roll
- * down to. The four candidate mechanisms (roll down to nearest match, draw further
- * numbers, share among all entries, guaranteed-winner mechanic) are materially
- * different to members and to the books. `lottery_modelcomparison.xlsx` has a
- * `Forced (cap)` column that is empty in every modelled week — the model never
- * exercised it either.
- *
- * So this reports the condition and never resolves it. DrawWorkflow opens a
- * human_task and blocks (FR-5.3.5).
  */
 export function mustBeWonTriggered(
   jackpotPreDrawPence: Pence,
@@ -134,14 +124,63 @@ export function mustBeWonTriggered(
   return jackpotPreDrawPence >= mustBeWonCapPence && winnersCount === 0;
 }
 
-export function resolveMustBeWon(): never {
-  unresolvedGap(
-    'GAP-24',
-    'the must-be-won mechanism at the £20,000 cap — D4 removed every lower tier, so there is ' +
-      'nothing to roll down to. Options (roll down to nearest match / draw further numbers / ' +
-      'share among all entries / guaranteed-winner mechanic) differ materially for members',
-    'the client, and it must be published to members before go-live',
-  );
+/** An entry as seen by the must-be-won roll-down: who holds it, and what they picked. */
+export interface MustBeWonEntry {
+  readonly entryId: string;
+  readonly memberId: string;
+  readonly selection: Selection;
+}
+
+export interface MustBeWonShare {
+  readonly memberId: string;
+  readonly amountPence: Pence;
+}
+
+export interface MustBeWonRollDown {
+  /** The tier the roll-down landed on. */
+  readonly tier: 3 | 2 | 1;
+  readonly winningEntries: readonly MustBeWonEntry[];
+  /** The whole jackpot, split equally between winning MEMBERS (not entries) in this tier. */
+  readonly shares: readonly MustBeWonShare[];
+}
+
+/**
+ * GAP-24, resolved: at the £20,000 must-be-won cap, roll down to the highest
+ * populated tier among match-3, match-2, match-1 in that order. D4 removed those
+ * tiers from the ordinary game — nobody below a match-4 wins in a normal draw —
+ * but the must-be-won mechanism specifically reintroduces them as a last resort,
+ * and only then. The total jackpot is split equally between winners in whichever
+ * tier is reached (per member, not per entry — a member holding two winning
+ * tickets in the tier still takes one share).
+ *
+ * Returns `undefined` only in the practically-impossible case where no entry
+ * matches even a single number. No rule covers that; DrawWorkflow must still
+ * raise a human task rather than invent one.
+ */
+export function resolveMustBeWonRollDown(
+  entries: readonly MustBeWonEntry[],
+  winningNumbers: Selection,
+  jackpotPreDrawPence: Pence,
+): MustBeWonRollDown | undefined {
+  for (const tier of [3, 2, 1] as const) {
+    const winningEntries = entries.filter((e) => matchCount(e.selection, winningNumbers) === tier);
+    if (winningEntries.length === 0) continue;
+
+    const memberIds = [...new Set(winningEntries.map((e) => e.memberId))].sort();
+    const shareCount = BigInt(memberIds.length);
+    const baseShare = (jackpotPreDrawPence / shareCount) as Pence;
+    const remainder = jackpotPreDrawPence % shareCount;
+    // Equal shares with an indivisible remainder: same auditable rule as
+    // shareJackpot's 'largest_remainder_to_winners' — the first N members by id
+    // take one extra penny each, so the total still balances to the pound (T-12.1).
+    const shares = memberIds.map((memberId, index) => ({
+      memberId,
+      amountPence: (index < Number(remainder) ? baseShare + 1n : baseShare) as Pence,
+    }));
+
+    return { tier, winningEntries, shares };
+  }
+  return undefined;
 }
 
 export const TICKET_PRICE_PENCE = pence(200);

@@ -12,6 +12,11 @@
  *
  * T-5.4 requires all three to exist behind one interface with the unselected ones
  * failing explicitly rather than falling through. That is what this module is.
+ *
+ * GAP-17, resolved: prepaid blocks is set as the standard strategy — see
+ * `db/migrations/0008_gap_resolutions.sql`, which activates a `config_version`
+ * row with `entry_strategy = 'prepaid_blocks'` and its confirmer. The other two
+ * implementations stay in place, per T-5.4, rather than being deleted.
  */
 import { type Pence, ZERO } from './money.js';
 import { unresolvedGap } from './gaps.js';
@@ -54,15 +59,17 @@ export interface EntryGenerationConfig {
 export function entriesDue(state: MemberEntryState, cfg: EntryGenerationConfig): EntriesDue {
   if (state.isAgentCollected) {
     // GAP-19 ⛔ — 782 of 1,591 members, 49% of the register, with no functional
-    // design at all. The write-up defers it: conversion "will need to be based on
-    // the agent's bulk collection total divided across their members". Until that
-    // exists these members generate nothing and surface as a task; they are never
-    // silently given zero entries while their money is banked.
+    // design at all. Held for now: some form of manual entry into the system is
+    // assumed (an administrator keys in each agent-collected member's entries
+    // rather than the system inferring them from the bulk lodgement), but that
+    // is explicitly future-phase work — nothing here implements it yet. Until it
+    // exists these members generate nothing and surface as a task; they are
+    // never silently given zero entries while their money is banked.
     unresolvedGap(
       'GAP-19',
       'the entry model for agent-collected members — 782 of 1,591 (49% of the register) have no ' +
-        'functional design. Their cash arrives as one bulk branch lodgement with no per-member ' +
-        'breakdown in the bank, so there is no evidenced rule for how many entries each is due',
+        'functional design. Manual entry into the system is the assumed direction, but its ' +
+        'implementation is deferred to a future phase; there is still no evidenced rule to code against',
       'the client, and it should be scoped before the schema is frozen',
     );
   }

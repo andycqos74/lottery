@@ -13,10 +13,12 @@ import {
   allocate,
   jackpotPosition,
   mustBeWonTriggered,
+  resolveMustBeWonRollDown,
   revenueFor,
   settleOutcome,
   pence,
   basisPoints,
+  type MustBeWonEntry,
   type Pence,
 } from '@qosfc/domain';
 import type { createActivities } from '@qosfc/activities';
@@ -78,48 +80,62 @@ export async function DrawWorkflow(input: DrawWorkflowInput): Promise<DrawState>
   state = { ...state, status: 'drawn', jackpotPreDrawPence: position.jackpotPreDrawPence.toString() };
 
   const winnersCount = 0; // Phase 6: identify_winners activity over the frozen entry set
+  // Phase 6: identify_winners also supplies this — every entry in the frozen set
+  // with its selection, so the roll-down below can count matches per tier.
+  const entries: readonly MustBeWonEntry[] = [];
 
-  // ── GAP-24 ⛔ — block, do not invent a fallback (FR-5.3.5) ──────────────────
+  // ── GAP-24, resolved — roll down to match-3 / match-2 / match-1 in that
+  // order, splitting the whole jackpot equally between winners (by member) in
+  // whichever tier is reached. D4 excluded those tiers from the ordinary game;
+  // this reintroduces them only as the must-be-won last resort. FR-5.3.5 still
+  // applies to the one case no rule covers: nobody matching even one number.
+  let rollDown: ReturnType<typeof resolveMustBeWonRollDown> = undefined;
   if (mustBeWonTriggered(position.jackpotPreDrawPence, winnersCount, pence(2_000_000))) {
-    await openHumanTask({
-      kind: 'must_be_won_decision',
-      title: `Draw ${input.drawNumber}: jackpot reached the £20,000 must-be-won cap with no winner`,
-      detail:
-        'D9 forces a win at £20,000, but D4 excluded every lower prize tier, so there is nothing to ' +
-        'roll down to. The mechanism has never been decided and must not be invented here.',
-      consequenceIfIgnored:
-        'The draw stays blocked and no prize is paid until two authorised people record a decision. ' +
-        'Nothing is lost — the entry set is frozen and the workflow resumes where it stopped.',
-      gapId: 'GAP-24',
-      entityType: 'draw',
-      entityId: input.drawId,
-      workflowId: workflow.workflowInfo().workflowId,
-      runId: workflow.workflowInfo().runId,
-      signalName: 'must_be_won_decision',
-      // GAP-44: a single-person override on a potential £20,000 payout is not
-      // defensible, so the quorum is a property of the workflow, not the UI.
-      requiresSecondApprover: true,
-      dedupeKey: `must_be_won:${input.drawId}`,
-    });
+    rollDown = resolveMustBeWonRollDown(entries, drawn.numbers, position.jackpotPreDrawPence);
 
-    state = { ...state, status: 'blocked', blockedOn: 'GAP-24 must-be-won mechanism' };
+    if (!rollDown) {
+      await openHumanTask({
+        kind: 'must_be_won_decision',
+        title: `Draw ${input.drawNumber}: jackpot reached the £20,000 must-be-won cap with no winner at any tier`,
+        detail:
+          'GAP-24 is resolved for the ordinary case — roll down to match 3 / 2 / 1, split equally between ' +
+          'winners in the tier reached — but nobody matched even one number, which the decision does not ' +
+          'cover, so this must not be invented here.',
+        consequenceIfIgnored:
+          'The draw stays blocked and no prize is paid until two authorised people record a decision. ' +
+          'Nothing is lost — the entry set is frozen and the workflow resumes where it stopped.',
+        gapId: 'GAP-24',
+        entityType: 'draw',
+        entityId: input.drawId,
+        workflowId: workflow.workflowInfo().workflowId,
+        runId: workflow.workflowInfo().runId,
+        signalName: 'must_be_won_decision',
+        // GAP-44: a single-person override on a potential £20,000 payout is not
+        // defensible, so the quorum is a property of the workflow, not the UI.
+        requiresSecondApprover: true,
+        dedupeKey: `must_be_won:${input.drawId}`,
+      });
 
-    // No timeout that defaults. FR-5.4 permits an indefinite wait precisely for
-    // processes parked pending a business decision (FR-5.6); the escalation
-    // workflow attached to the task is what stops it being forgotten.
-    await workflow.condition(() => decision !== undefined);
+      state = { ...state, status: 'blocked', blockedOn: 'GAP-24 must-be-won: no match at any tier' };
 
-    if (!decision!.secondApproverId || decision!.secondApproverId === decision!.decidedBy) {
-      throw workflow.ApplicationFailure.nonRetryable(
-        'GAP-44: the must-be-won decision requires two distinct approvers.',
-        'QuorumNotMet',
-      );
+      // No timeout that defaults. FR-5.4 permits an indefinite wait precisely for
+      // processes parked pending a business decision (FR-5.6); the escalation
+      // workflow attached to the task is what stops it being forgotten.
+      await workflow.condition(() => decision !== undefined);
+
+      if (!decision!.secondApproverId || decision!.secondApproverId === decision!.decidedBy) {
+        throw workflow.ApplicationFailure.nonRetryable(
+          'GAP-44: the must-be-won decision requires two distinct approvers.',
+          'QuorumNotMet',
+        );
+      }
     }
   }
 
-  const outcome = settleOutcome(position.jackpotPreDrawPence, winnersCount);
-  void outcome; // Phase 6: settle_draw writes draw, ledger and prizes in one transaction
-  void drawn;
+  const outcome = rollDown
+    ? { jackpotPaidPence: position.jackpotPreDrawPence, rolloverOutPence: pence(0), winnersCount: rollDown.winningEntries.length }
+    : settleOutcome(position.jackpotPreDrawPence, winnersCount);
+  void outcome; // Phase 6: settle_draw writes draw, ledger and prizes (rollDown.shares when set) in one transaction
   void alloc;
 
   state = { ...state, status: 'settled' };

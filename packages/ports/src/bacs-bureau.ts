@@ -1,6 +1,13 @@
 /**
  * Direct Debit — GAP-10 ⛔ (bureau vs GoCardless vs own SUN undecided).
  *
+ * GAP-10, held for now: own SUN (the client submits collections directly under
+ * its own Service User Number) is assumed, with bureau/third-party left open to
+ * switch to later — see `BacsRoute` in `@qosfc/adapters-sandbox`. Nothing here
+ * changes: the route only affects the message SET and settlement timing behind
+ * this interface, and GAP-09's "3rd party direct debit creation" dummy
+ * integration is this port.
+ *
  * The asynchronous, days-long shape is exactly why P4 is a workflow: a submission
  * today produces results in three working days, mandate messages arrive out of
  * band, and an indemnity claim can arrive months after the collection that caused

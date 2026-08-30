@@ -1,6 +1,12 @@
 /**
  * Bank statements — GAP-33 ⛔ (Open Banking vs CSV vs continued OCR undecided).
  *
+ * GAP-33, held for now: manual CSV upload is assumed, with Open Banking and
+ * continued OCR left as options for future development — see the sandbox's
+ * `SandboxBankFeed` default `source`. This also carries GAP-09's "existing
+ * standing order from bank account" dummy integration: a standing order needs
+ * no PSP at all, it simply shows up here as an ordinary credit.
+ *
  * All three candidates produce the same thing: statements with an opening and
  * closing balance, and credits with a reference. The difference is confidence —
  * OCR drops decimal points (T-5.7), Open Banking does not — so the port carries a

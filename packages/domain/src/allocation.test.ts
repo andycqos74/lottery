@@ -7,13 +7,14 @@ import {
   settleOutcome,
   revenueFor,
   mustBeWonTriggered,
-  resolveMustBeWon,
+  resolveMustBeWonRollDown,
   TICKET_PRICE_PENCE,
   DEFAULT_JACKPOT_FLOOR_PENCE,
   MUST_BE_WON_CAP_PENCE,
+  type MustBeWonEntry,
   type SplitConfig,
 } from './allocation.js';
-import { UnresolvedGapError } from './gaps.js';
+import { toSelection } from './selection.js';
 
 /** D7: the confirmed 50 / 40 / 10 split. */
 const SPLIT: SplitConfig = {
@@ -121,8 +122,44 @@ describe('D9 / GAP-24 — the must-be-won cap', () => {
     expect(mustBeWonTriggered(pence(1_999_999), 0, MUST_BE_WON_CAP_PENCE)).toBe(false);
   });
 
-  it('refuses to invent a mechanism — the draw blocks instead (FR-5.3.5)', () => {
-    expect(() => resolveMustBeWon()).toThrow(UnresolvedGapError);
-    expect(() => resolveMustBeWon()).toThrow(/GAP-24/);
+  const winningNumbers = toSelection([1, 2, 3, 4]);
+  const entry = (entryId: string, memberId: string, selection: readonly number[]): MustBeWonEntry => ({
+    entryId,
+    memberId,
+    selection: toSelection(selection),
+  });
+
+  it('rolls down to match-3 when someone matches 3 of 4', () => {
+    const entries = [
+      entry('e1', 'm1', [1, 2, 3, 20]), // match 3
+      entry('e2', 'm2', [1, 2, 19, 20]), // match 2
+    ];
+    const result = resolveMustBeWonRollDown(entries, winningNumbers, MUST_BE_WON_CAP_PENCE);
+    expect(result?.tier).toBe(3);
+    expect(result?.winningEntries.map((e) => e.entryId)).toEqual(['e1']);
+    expect(result?.shares).toEqual([{ memberId: 'm1', amountPence: MUST_BE_WON_CAP_PENCE }]);
+  });
+
+  it('falls through to match-2, then match-1, when nobody reaches the tier above', () => {
+    const entries = [entry('e1', 'm1', [1, 19, 18, 17])]; // match 1 only
+    const result = resolveMustBeWonRollDown(entries, winningNumbers, MUST_BE_WON_CAP_PENCE);
+    expect(result?.tier).toBe(1);
+  });
+
+  it('splits the whole jackpot equally between winning MEMBERS, not entries', () => {
+    const entries = [
+      entry('e1', 'm1', [1, 2, 3, 20]), // m1, match 3
+      entry('e2', 'm1', [1, 2, 3, 19]), // m1's second ticket, also match 3
+      entry('e3', 'm2', [1, 2, 4, 20]), // m2, match 3
+    ];
+    const result = resolveMustBeWonRollDown(entries, winningNumbers, pence(100));
+    expect(result?.tier).toBe(3);
+    expect(result?.shares).toHaveLength(2);
+    expect(result?.shares.reduce((sum, s) => sum + s.amountPence, 0n)).toBe(pence(100));
+  });
+
+  it('returns undefined when nobody matches even one number — no rule covers that', () => {
+    const entries = [entry('e1', 'm1', [17, 18, 19, 20])];
+    expect(resolveMustBeWonRollDown(entries, winningNumbers, MUST_BE_WON_CAP_PENCE)).toBeUndefined();
   });
 });

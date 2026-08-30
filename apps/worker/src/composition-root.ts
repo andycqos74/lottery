@@ -21,9 +21,15 @@ import { assertNoSandboxInProduction, type ProviderRegistry, type RandomnessSour
 export interface ProviderEnv {
   readonly PAYMENT_GATEWAY?: string | undefined;
   readonly BACS_BUREAU?: string | undefined;
+  /** GAP-10, held for now: own_sun | bureau | third_party. Default own_sun. */
+  readonly BACS_ROUTE?: string | undefined;
   readonly BANK_FEED?: string | undefined;
+  /** GAP-33, held for now: open_banking | csv | ocr_pdf. Default csv. */
+  readonly BANK_FEED_SOURCE?: string | undefined;
   readonly NOTIFIER?: string | undefined;
   readonly RANDOMNESS_SOURCE?: string | undefined;
+  /** Required when RANDOMNESS_SOURCE=external_certified (random.org). */
+  readonly RANDOM_ORG_API_KEY_FILE?: string | undefined;
   readonly SANDBOX_PROVIDERS_URL?: string | undefined;
   readonly SANDBOX_WEBHOOK_SECRET_FILE?: string | undefined;
   readonly NODE_ENV?: string | undefined;
@@ -35,21 +41,28 @@ export function buildProviderRegistry(env: ProviderEnv): ProviderRegistry {
     webhookSecret: readSecret(env.SANDBOX_WEBHOOK_SECRET_FILE) ?? 'sandbox-development-secret',
   };
 
+  const bacsRoute = (env.BACS_ROUTE ?? 'own_sun') as 'own_sun' | 'bureau' | 'third_party';
+  const bankFeedSource = (env.BANK_FEED_SOURCE ?? 'csv') as 'open_banking' | 'csv' | 'ocr_pdf';
+
   const registry: ProviderRegistry = {
+    // GAP-09, held for now: three dummy channels stand in for the eventual PSP —
+    // an existing bank standing order (seen only via the bank feed, no PSP
+    // integration at all), third-party Direct Debit creation (BacsBureau below),
+    // and a third-party card processing portal (this hosted-session gateway).
     paymentGateway: select(env.PAYMENT_GATEWAY, 'PAYMENT_GATEWAY', 'GAP-09', {
       sandbox: () => new SandboxPaymentGateway(sandbox),
     }),
     bacsBureau: select(env.BACS_BUREAU, 'BACS_BUREAU', 'GAP-10', {
-      sandbox: () => new SandboxBacsBureau(sandbox),
+      sandbox: () => new SandboxBacsBureau(sandbox, 3, bacsRoute),
     }),
     bankFeed: select(env.BANK_FEED, 'BANK_FEED', 'GAP-33', {
-      sandbox: () => new SandboxBankFeed(sandbox),
+      sandbox: () => new SandboxBankFeed(sandbox, bankFeedSource),
     }),
     notifier: select(env.NOTIFIER, 'NOTIFIER', 'GAP-30', {
       sandbox: () => new SandboxNotifier(sandbox),
     }),
     printHandoff: new SandboxPrintHandoff(sandbox),
-    randomness: buildRandomnessSource(env.RANDOMNESS_SOURCE),
+    randomness: buildRandomnessSource(env.RANDOMNESS_SOURCE, env.RANDOM_ORG_API_KEY_FILE),
   };
 
   // Belt and braces against the mistake that would look exactly like everything
@@ -66,12 +79,24 @@ export function buildProviderRegistry(env: ProviderEnv): ProviderRegistry {
  * cannot run, which is the correct behaviour: numbers nobody has approved must
  * never be generated for a real draw.
  */
-function buildRandomnessSource(value: string | undefined): RandomnessSource {
+function buildRandomnessSource(value: string | undefined, apiKeyFile: string | undefined): RandomnessSource {
   switch (value) {
     case 'csprng':
       return new CsprngRandomnessSource();
-    case 'external_certified':
-      return new ExternalCertifiedRandomnessSource();
+    case 'external_certified': {
+      // GAP-21, resolved (source): random.org's HTTP API — see
+      // packages/adapters-sandbox/src/randomness/csprng.ts. Licence sign-off on
+      // this specific source is the half of GAP-21 that remains open, so this
+      // still requires explicit selection, never a default.
+      const apiKey = readSecret(apiKeyFile);
+      if (!apiKey) {
+        throw new Error(
+          'GAP-21: RANDOMNESS_SOURCE=external_certified requires RANDOM_ORG_API_KEY_FILE to point at a ' +
+            'readable file holding a random.org API key (https://api.random.org/api-keys).',
+        );
+      }
+      return new ExternalCertifiedRandomnessSource({ apiKey });
+    }
     case 'manual_physical_draw':
       return new ManualPhysicalDrawSource();
     case undefined:
