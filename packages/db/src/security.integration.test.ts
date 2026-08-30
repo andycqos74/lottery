@@ -317,9 +317,7 @@ describeDb('database-enforced security guarantees', () => {
   });
 });
 
-let entrySeq = 0;
 async function insertEntry(drawId: string, key: string, selection = '{1,2,3,4}') {
-  entrySeq += 1;
   return pool.query(
     `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, funding_source, idempotency_key)
      VALUES ($1, $2, 9001, $3, 'balance', $4)`,

@@ -1,0 +1,170 @@
+# Application: API, admin console, workers, Temporal UI, codec server.
+#
+# Network placement is the security boundary:
+#   edge — reachable from Caddy only:      api, admin, codec-server, temporal-ui
+#   app  — reachable from nothing outside: the workers
+#   core — datastores, no ingress from edge, no internet egress
+#
+# Workers sit on `app` and `core` but NOT `edge`: nothing from the internet can
+# reach a worker, even through a misconfigured reverse proxy.
+
+name: qosfc-lottery
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  user: "10001:10001"
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+x-worker-env: &worker-env
+  NODE_ENV: ${NODE_ENV:-production}
+  TEMPORAL_ADDRESS: temporal:7233
+  TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-qosfc-lottery}
+  TEMPORAL_CODEC_KEY_DIR: /run/secrets/codec
+  TEMPORAL_CODEC_ACTIVE_KEY_ID: ${TEMPORAL_CODEC_ACTIVE_KEY_ID:?set in .env}
+  APP_DB_URL: postgres://lottery_app@postgres-app:5432/lottery_app
+  # Which adapter set each port uses. `sandbox` is refused in production by the
+  # composition root (assertNoSandboxInProduction), so this cannot be forgotten.
+  PAYMENT_GATEWAY: ${PAYMENT_GATEWAY:-sandbox}
+  BACS_BUREAU: ${BACS_BUREAU:-sandbox}
+  BANK_FEED: ${BANK_FEED:-sandbox}
+  NOTIFIER: ${NOTIFIER:-sandbox}
+  RANDOMNESS_SOURCE: ${RANDOMNESS_SOURCE:-unset}
+  SANDBOX_PROVIDERS_URL: ${SANDBOX_PROVIDERS_URL:-http://sandbox-providers:9090}
+
+x-worker: &worker
+  <<: *hardening
+  image: ${WORKER_IMAGE:-qosfc/lottery-worker:dev}
+  depends_on:
+    temporal: { condition: service_healthy }
+    postgres-app: { condition: service_healthy }
+  secrets: [codec_key, app_db_password]
+  networks: [app, core]
+
+services:
+  # ── One worker container per task queue (T-10.19) ────────────────────────────
+  # The separation is enforced by the deployment, not by convention: a slow OCR
+  # batch on `recon` cannot starve the draw, because it is a different process
+  # with its own memory limit.
+  worker-draw:
+    <<: *worker
+    environment: { <<: *worker-env, TASK_QUEUE: draw }
+    deploy: { resources: { limits: { memory: 384M } } }
+
+  worker-member:
+    <<: *worker
+    environment: { <<: *worker-env, TASK_QUEUE: member }
+    # The largest allocation after recon: ~1,591 entity workflows (TG-12).
+    deploy: { resources: { limits: { memory: 512M } } }
+
+  worker-payments:
+    <<: *worker
+    environment: { <<: *worker-env, TASK_QUEUE: payments }
+    deploy: { resources: { limits: { memory: 384M } } }
+
+  worker-recon:
+    <<: *worker
+    # OCR over untrusted PDF input is the highest-risk parsing surface in the
+    # system, so this container gets NO internet egress (`app`+`core` only, both
+    # internal) and the largest memory headroom.
+    environment: { <<: *worker-env, TASK_QUEUE: recon }
+    deploy: { resources: { limits: { memory: 768M } } }
+
+  worker-comms:
+    <<: *worker
+    environment: { <<: *worker-env, TASK_QUEUE: comms }
+    deploy: { resources: { limits: { memory: 384M } } }
+
+  # Behind a profile so it is started deliberately for a migration run and is not
+  # left polling in normal operation (§10.5).
+  worker-migration:
+    <<: *worker
+    profiles: [migration]
+    environment: { <<: *worker-env, TASK_QUEUE: migration }
+    deploy: { resources: { limits: { memory: 768M } } }
+
+  # ── Member-facing API and public results ────────────────────────────────────
+  api:
+    <<: *hardening
+    image: ${API_IMAGE:-qosfc/lottery-api:dev}
+    depends_on:
+      temporal: { condition: service_healthy }
+      postgres-app: { condition: service_healthy }
+    environment:
+      <<: *worker-env
+      PORT: 8080
+      SESSION_SECRET_FILE: /run/secrets/session_secret
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set in .env}
+    secrets: [codec_key, app_db_password, session_secret]
+    networks: [edge, app, core]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── Admin console and the human task inbox (GAP-43) ─────────────────────────
+  admin:
+    <<: *hardening
+    image: ${ADMIN_IMAGE:-qosfc/lottery-admin:dev}
+    depends_on:
+      temporal: { condition: service_healthy }
+      postgres-app: { condition: service_healthy }
+    environment:
+      <<: *worker-env
+      PORT: 8081
+      SESSION_SECRET_FILE: /run/secrets/session_secret
+      ADMIN_BASE_URL: ${ADMIN_BASE_URL:?set in .env}
+      # T-9.3: individual named accounts with MFA. No shared logins.
+      REQUIRE_MFA: "true"
+    secrets: [codec_key, app_db_password, session_secret]
+    networks: [edge, app, core]
+
+  # ── Codec server (T-10.11) ──────────────────────────────────────────────────
+  # The Temporal UI decodes payloads by calling this FROM THE OPERATOR'S BROWSER,
+  # so it needs a route from admin machines — not just from the nodes. It is an
+  # oracle that decrypts member data, so it sits behind Caddy with its own
+  # authentication and a CORS origin restricted to the UI.
+  codec-server:
+    <<: *hardening
+    image: ${CODEC_SERVER_IMAGE:-qosfc/lottery-codec-server:dev}
+    environment:
+      PORT: 8082
+      TEMPORAL_CODEC_KEY_DIR: /run/secrets/codec
+      TEMPORAL_CODEC_ACTIVE_KEY_ID: ${TEMPORAL_CODEC_ACTIVE_KEY_ID:?set in .env}
+      ALLOWED_ORIGIN: ${TEMPORAL_UI_URL:?set in .env}
+    secrets: [codec_key]
+    networks: [edge]
+
+  temporal-ui:
+    <<: *hardening
+    image: ${TEMPORAL_UI_IMAGE:?run pin-digests.sh}
+    user: "0:0"          # the upstream image expects root; it holds no secrets
+    read_only: false
+    depends_on:
+      temporal: { condition: service_healthy }
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_UI_PUBLIC_PATH: /
+      TEMPORAL_CODEC_ENDPOINT: ${CODEC_SERVER_URL:?set in .env}
+      # Never a substitute for the task inbox (GAP-43): this is a developer tool,
+      # and a treasurer must not be asked to release a stuck payment from it.
+      TEMPORAL_NOTIFY_ON_NEW_VERSION: "false"
+    networks: [edge, app]
+
+networks:
+  edge:
+  app:
+  core:
+    internal: true
+
+secrets:
+  codec_key:        { file: ../secrets/codec }
+  app_db_password:  { file: ../secrets/app_db_password }
+  session_secret:   { file: ../secrets/session_secret }

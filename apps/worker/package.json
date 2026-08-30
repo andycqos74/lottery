@@ -1,0 +1,11 @@
+{
+  "name": "@qosfc/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b" },
+  "dependencies": { "@qosfc/activities": "workspace:*", "@qosfc/workflows": "workspace:*", "@qosfc/temporal-common": "workspace:*", "@qosfc/adapters-sandbox": "workspace:*", "@qosfc/db": "workspace:*", "@qosfc/ports": "workspace:*", "@temporalio/worker": "^1.14.0" }
+}

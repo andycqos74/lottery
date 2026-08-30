@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [{ "path": "../../packages/activities" }, { "path": "../../packages/workflows" }, { "path": "../../packages/temporal-common" }, { "path": "../../packages/adapters-sandbox" }, { "path": "../../packages/db" }, { "path": "../../packages/ports" }]
+}

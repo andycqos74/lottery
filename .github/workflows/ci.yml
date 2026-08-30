@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+# Least privilege: the workflow reads code and nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # The database security suite SKIPS without a database rather than
+        # passing, so CI must provide one — otherwise a green run with no
+        # database would look like proof that the guarantees hold.
+        image: postgres:16
+        env:
+          POSTGRES_USER: lottery_owner
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: lottery_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U lottery_owner"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Includes the workflow determinism rules (T-6.1/6.2/6.3). A failure here
+      # means non-deterministic code reached a workflow — treat it as a defect,
+      # never as a lint nit to disable.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Tests
+        run: pnpm test
+        env:
+          TEST_APP_DB_URL: postgres://lottery_owner:ci@localhost:5432/lottery_test
+
+      # Belt and braces on the .gitignore rules: real member data must never
+      # enter the repository, dev, or CI (build plan blocker B-2).
+      - name: No spreadsheets or real member data committed
+        run: |
+          if git ls-files | grep -Ei '\.(xlsx|xls|csv)$' | grep -v '^fixtures/'; then
+            echo "::error::Spreadsheet committed outside fixtures/. Real member data must never enter the repo."
+            exit 1
+          fi
+
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+
+      - name: Dependency audit
+        run: pnpm audit --audit-level high
+
+      - name: Filesystem vulnerability and secret scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true

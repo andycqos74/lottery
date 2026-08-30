@@ -64,7 +64,10 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     files: ['**/*.ts'],
-    languageOptions: { parserOptions: { projectService: true } },
+    // A dedicated config that INCLUDES test files. The per-package tsconfigs
+    // exclude them so they are not emitted to dist, which would otherwise leave
+    // every test file unlintable — including the determinism rules below.
+    languageOptions: { parserOptions: { project: './tsconfig.eslint.json', tsconfigRootDir: import.meta.dirname } },
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/consistent-type-imports': 'error',
