@@ -18,6 +18,7 @@ build() {
 # worker-recon runs OCR over untrusted PDFs, so it alone gets the OCR toolchain.
 build worker            apps/worker/dist/index.js              worker-ocr
 build api               apps/api/dist/index.js
+build admin             apps/admin/dist/index.js
 build codec-server      services/codec-server/dist/index.js
 build sandbox-providers services/sandbox-providers/dist/index.js
 

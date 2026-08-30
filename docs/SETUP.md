@@ -112,6 +112,38 @@ cd ../.. && pnpm verify:stack
   enablement has changed across server releases. Discovering this late is
   expensive; discovering it here costs nothing.
 
+### 2.1 The admin console
+
+`apps/admin` (build plan §5, GAP-43) is the human task inbox — a rendered
+database table, deliberately **not** the Temporal Web UI, so a volunteer
+treasurer is never asked to send a raw signal from a developer tool to release
+a stuck prize payment.
+
+There is no self-service signup (T-9.3: individual named accounts, mandatory
+MFA, no shared logins). Create the first account from the repo root, once
+`postgres-app` is up and migrated:
+
+```bash
+ADMIN_EMAIL=you@example.com ADMIN_NAME="Your Name" pnpm create:admin-user
+```
+
+This prints a generated password and a TOTP enrollment key/QR URI **once** —
+neither is recoverable afterwards (the password is hashed, the TOTP secret is
+encrypted at rest under `deploy/secrets/admin_mfa_key`, generated alongside
+the other secrets by `generate-secrets.sh`). Add the TOTP key to an
+authenticator app, then log in at `http://<ADMIN_HOST>/login` — password
+first, then a 6-digit code.
+
+Tasks with `requires_second_approver` (GAP-44) need two *different* accounts
+to approve before they resolve — the console enforces this the same way the
+database does (`human_task`'s `approvers_must_be_different` constraint).
+
+**Not yet built:** any surface beyond the task inbox — member management,
+draw administration, payments — since none of GAP-09/10/17/19/21/24/33 are
+resolved yet (§9). The task inbox is real and functional against whatever
+`human_task` rows a running draw creates; there just isn't a draw to create
+them yet without resolving those gaps first.
+
 ### Running the tests
 
 ```bash

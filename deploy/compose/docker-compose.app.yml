@@ -129,10 +129,12 @@ services:
       ADMIN_BASE_URL: ${ADMIN_BASE_URL:?set in .env}
       # T-9.3: individual named accounts with MFA. No shared logins.
       REQUIRE_MFA: "true"
+      ADMIN_MFA_KEY_FILE: /run/secrets/admin_mfa_key
     secrets:
       - codec_key
       - app_role_password
       - session_secret
+      - admin_mfa_key
     networks: [edge, app, core]
 
   # ── Codec server (T-10.11) ──────────────────────────────────────────────────
@@ -177,3 +179,4 @@ secrets:
   codec_key:        { file: ../secrets/codec }
   app_role_password: { file: ../secrets/app_role_password }
   session_secret:   { file: ../secrets/session_secret }
+  admin_mfa_key:    { file: ../secrets/admin_mfa_key }

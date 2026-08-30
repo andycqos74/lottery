@@ -48,6 +48,9 @@ write_secret "${SECRETS_DIR}/temporal_db_password"  "openssl rand -base64 48 | $
 write_secret "${SECRETS_DIR}/app_role_password"     "openssl rand -base64 48 | ${URL_SAFE}" "lottery_app login password"
 write_secret "${SECRETS_DIR}/session_secret"        "openssl rand -base64 64 | tr -d '\n'" "cookie session signing key"
 write_secret "${SECRETS_DIR}/sandbox_webhook_secret" "openssl rand -hex 32"                "sandbox webhook HMAC (dev only)"
+# Encrypts app_user.totp_secret_enc at rest — deliberately separate from the
+# Temporal codec key below (apps/admin/src/secret-box.ts explains why).
+write_secret "${SECRETS_DIR}/admin_mfa_key"          "openssl rand -base64 32"             "admin console MFA secret-at-rest key (AES-256-GCM)"
 
 # The codec key. AES-256-GCM needs exactly 32 bytes; the id is a date so rotation
 # reads chronologically, and retired keys STAY here for decryption.

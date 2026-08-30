@@ -16,6 +16,7 @@
     "verify:stack": "tsx deploy/bootstrap/verify-stack.ts",
     "bootstrap:temporal": "bash deploy/bootstrap/bootstrap-temporal.sh",
     "migrate": "tsx packages/db/src/cli/migrate.ts",
+    "create:admin-user": "tsx apps/admin/src/cli/create-admin-user.ts",
     "test:db": "vitest run packages/db",
     "test:security": "vitest run packages/db packages/temporal-common tools apps/worker",
     "test:determinism": "vitest run tools",

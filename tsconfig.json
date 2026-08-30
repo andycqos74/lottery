@@ -10,6 +10,7 @@
     { "path": "packages/adapters-sandbox" },
     { "path": "apps/worker" },
     { "path": "apps/api" },
+    { "path": "apps/admin" },
     { "path": "services/sandbox-providers" },
     { "path": "services/codec-server" }
   ]
