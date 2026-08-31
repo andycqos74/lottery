@@ -10,12 +10,16 @@
  * are created by `deploy/bootstrap/create-admin-user.ts` — there is no
  * self-service signup for an admin console.
  */
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import Fastify from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import { verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
+import { ingestNewStatements } from '@qosfc/activities';
+import { CsvBankFeed } from '@qosfc/adapters-live';
 import {
   addEntry,
   countEntries,
@@ -25,9 +29,11 @@ import {
   dashboardCounts,
   findUserByEmail,
   findUserById,
+  getBankStatement,
   getDraw,
   getTask,
   insertAuditLog,
+  listBankStatements,
   listDraws,
   listMembers,
   listTasksByStatus,
@@ -36,6 +42,8 @@ import {
   type AppUser,
 } from './db.js';
 import {
+  bankStatementDetailPage,
+  bankStatementsPage,
   dashboardPage,
   drawDetailPage,
   drawsPage,
@@ -64,6 +72,7 @@ const sessionSecret = readFileSync(sessionSecretFile, 'utf8').trim();
 const mfaKey = mfaKeyFile ? Buffer.from(readFileSync(mfaKeyFile, 'utf8').trim(), 'base64') : null;
 
 const pool = createPool({ ...appDbConnectionFromEnv(), applicationName: 'qosfc-admin', max: 10 });
+const bankFeedCsvDir = process.env['BANK_FEED_CSV_DIR'] ?? '/data/bank-statements';
 
 const app = Fastify({
   logger: {
@@ -417,6 +426,59 @@ app.post('/members', async (request, reply) => {
 
   const members = await listMembers(pool);
   reply.type('text/html').send(membersPage({ user: viewUser(request), members, flash: 'Member added.' }));
+});
+
+app.get('/bank-statements', async (request, reply) => {
+  const statements = await listBankStatements(pool);
+  reply.type('text/html').send(bankStatementsPage({ user: viewUser(request), statements }));
+});
+
+app.post('/bank-statements', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+
+  const body = request.body as { csv?: string };
+  const csv = (body.csv ?? '').trim();
+  if (!csv) {
+    const statements = await listBankStatements(pool);
+    return reply
+      .type('text/html')
+      .send(bankStatementsPage({ user: viewUser(request), statements, error: 'CSV content is required.' }));
+  }
+
+  const filePath = join(bankFeedCsvDir, `upload-${randomUUID()}.csv`);
+  try {
+    await mkdir(bankFeedCsvDir, { recursive: true });
+    await writeFile(filePath, csv, 'utf8');
+
+    const bankFeed = new CsvBankFeed(bankFeedCsvDir);
+    const results = await ingestNewStatements(pool, bankFeed, {
+      actorId: request.authUser!.id,
+      actorLabel: request.authUser!.email,
+    });
+    const statements = await listBankStatements(pool);
+    const ingested = results.find((r) => !r.alreadyIngested);
+    const flash = ingested
+      ? `Statement ${ingested.statementNumber} ingested: ${ingested.matched} matched, ` +
+        `${ingested.ambiguous + ingested.unmatched} sent for review.`
+      : 'Nothing new to ingest — this statement number is already recorded.';
+    reply.type('text/html').send(bankStatementsPage({ user: viewUser(request), statements, flash }));
+  } catch (error) {
+    const statements = await listBankStatements(pool);
+    reply.type('text/html').send(
+      bankStatementsPage({
+        user: viewUser(request),
+        statements,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+});
+
+app.get('/bank-statements/:id', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const statement = await getBankStatement(pool, id);
+  if (!statement) return reply.code(404).type('text/html').send('<p>Statement not found.</p>');
+  reply.type('text/html').send(bankStatementDetailPage({ user: viewUser(request), statement }));
 });
 
 app.get('/tasks/:id', async (request, reply) => {

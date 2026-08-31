@@ -8,6 +8,7 @@
     { "path": "packages/activities" },
     { "path": "packages/workflows" },
     { "path": "packages/adapters-sandbox" },
+    { "path": "packages/adapters-live" },
     { "path": "apps/worker" },
     { "path": "apps/api" },
     { "path": "apps/admin" },

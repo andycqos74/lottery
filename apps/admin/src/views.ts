@@ -1,5 +1,5 @@
 import { formatPence, pence } from '@qosfc/domain';
-import type { DashboardCounts, DrawSummary, HumanTask, MemberSummary } from './db.js';
+import type { BankStatementDetail, BankStatementSummary, BankTransactionRow, DashboardCounts, DrawSummary, HumanTask, MemberSummary } from './db.js';
 
 export function escapeHtml(value: string): string {
   return value
@@ -75,6 +75,7 @@ function layout(opts: {
            <a href="/tasks">Tasks</a>
            <a href="/draws">Draws</a>
            <a href="/members">Members</a>
+           <a href="/bank-statements">Bank statements</a>
            <form method="post" action="/logout" style="display:inline">
              ${csrfField(opts.user.csrf)}
              <button type="submit" class="secondary" style="margin:0 0 0 1.25rem;padding:0.25rem 0.7rem;font-size:0.85rem">Log out</button>
@@ -451,6 +452,108 @@ export function taskDetailPage(opts: {
         ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
         ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
         ${actionSection}
+      </div>
+    `,
+  });
+}
+
+function bankStatementRow(s: BankStatementSummary): string {
+  return `<tr>
+    <td><a class="row-link" href="/bank-statements/${s.id}">Statement ${s.statementNumber}</a></td>
+    <td>${escapeHtml(s.periodStart)} – ${escapeHtml(s.periodEnd)}</td>
+    <td><span class="badge">${escapeHtml(s.source)}</span></td>
+    <td>${s.transactionCount}</td>
+    <td>${s.matched}</td>
+    <td>${s.ambiguous + s.unmatched > 0 ? `<strong>${s.ambiguous + s.unmatched}</strong>` : '0'}</td>
+  </tr>`;
+}
+
+export function bankStatementsPage(opts: {
+  user: { displayName: string; csrf: string };
+  statements: BankStatementSummary[];
+  error?: string;
+  flash?: string;
+}): string {
+  const rows = opts.statements.map(bankStatementRow).join('\n');
+  return layout({
+    title: 'Bank statements',
+    user: opts.user,
+    body: `
+      <h1>Bank statements</h1>
+      <p class="muted">GAP-33: CSV upload — Open Banking is left for future consideration. Every credit
+      becomes a review task until TG-04's auto-accept threshold is set (gap-register.md).</p>
+      <div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
+        <h2 style="font-size:1.05rem;margin-top:0">Upload a statement</h2>
+        <form method="post" action="/bank-statements">
+          ${csrfField(opts.user.csrf)}
+          <label for="file">CSV file (loads into the box below — nothing is uploaded until you click Ingest)</label>
+          <input type="file" id="file" accept=".csv,text/csv" onchange="
+            const f = this.files[0]; if (!f) return;
+            f.text().then(t => { document.getElementById('csv').value = t; });
+          " />
+          <label for="csv">CSV content (canonical schema — see docs/SETUP.md §2.2)</label>
+          <textarea id="csv" name="csv" required placeholder="#statement 1 2026-08-01 2026-08-07 0 5000&#10;value_date,description,type,amount_pence,is_credit,reference"></textarea>
+          <button type="submit">Ingest</button>
+        </form>
+      </div>
+      <div class="card">
+        ${
+          opts.statements.length === 0
+            ? '<p class="muted">No statements ingested yet.</p>'
+            : `<table>
+                 <thead><tr><th>Statement</th><th>Period</th><th>Source</th><th>Transactions</th><th>Matched</th><th>Needs review</th></tr></thead>
+                 <tbody>${rows}</tbody>
+               </table>`
+        }
+      </div>
+    `,
+  });
+}
+
+function bankTransactionRow(t: BankTransactionRow): string {
+  const statusClass = t.matchStatus === 'matched' ? '' : 'overdue';
+  return `<tr class="${statusClass}">
+    <td>${escapeHtml(t.valueDate)}</td>
+    <td>${escapeHtml(t.description ?? '—')}</td>
+    <td>${formatPence(pence(BigInt(t.amountPence)))}</td>
+    <td>${escapeHtml(t.extractedReference ?? '—')}</td>
+    <td>${t.candidatePrizeDrawNos.length > 0 ? t.candidatePrizeDrawNos.join(', ') : '—'}</td>
+    <td><span class="badge">${escapeHtml(t.matchStatus)}</span></td>
+  </tr>`;
+}
+
+export function bankStatementDetailPage(opts: {
+  user: { displayName: string; csrf: string };
+  statement: BankStatementDetail;
+}): string {
+  const { statement } = opts;
+  const rows = statement.transactions.map(bankTransactionRow).join('\n');
+  return layout({
+    title: `Statement ${statement.statementNumber}`,
+    user: opts.user,
+    body: `
+      <p><a class="muted" href="/bank-statements">← Back to bank statements</a></p>
+      <h1>Statement ${statement.statementNumber}</h1>
+      <div class="card">
+        <dl class="kv">
+          <dt>Period</dt><dd>${escapeHtml(statement.periodStart)} – ${escapeHtml(statement.periodEnd)}</dd>
+          <dt>Source</dt><dd>${escapeHtml(statement.source)}</dd>
+          <dt>Ingested</dt><dd>${escapeHtml(statement.ingestedAt)}</dd>
+          <dt>Matched</dt><dd>${statement.matched} of ${statement.transactionCount}</dd>
+        </dl>
+      </div>
+      <div class="card">
+        ${
+          statement.transactions.length === 0
+            ? '<p class="muted">No transactions.</p>'
+            : `<table>
+                 <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Reference</th><th>Candidate prize draw no.</th><th>Status</th></tr></thead>
+                 <tbody>${rows}</tbody>
+               </table>
+               <p class="muted">Ambiguous and unmatched transactions each opened a review task — see <a href="/tasks?status=open">Tasks</a>.</p>`
+        }
       </div>
     `,
   });

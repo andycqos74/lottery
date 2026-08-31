@@ -3,5 +3,11 @@
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../../packages/db" }]
+  "references": [
+    { "path": "../../packages/db" },
+    { "path": "../../packages/temporal-common" },
+    { "path": "../../packages/activities" },
+    { "path": "../../packages/adapters-live" },
+    { "path": "../../packages/ports" }
+  ]
 }

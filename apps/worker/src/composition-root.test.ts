@@ -22,6 +22,11 @@ describe('provider selection', () => {
     expect(() => buildProviderRegistry({ ...base, BACS_BUREAU: 'gocardless' })).toThrow(/GAP-10 is unresolved/);
     expect(() => buildProviderRegistry({ ...base, BANK_FEED: 'open_banking' })).toThrow(/GAP-33 is unresolved/);
   });
+
+  it('GAP-33: builds the CSV bank feed once selected — CSV, not Open Banking, was confirmed first', () => {
+    const registry = buildProviderRegistry({ ...base, NODE_ENV: 'development', BANK_FEED: 'csv' });
+    expect(registry.bankFeed.providerName).toBe('live:csv-upload');
+  });
 });
 
 describe('GAP-21 — the draw cannot run on an unapproved entropy source', () => {

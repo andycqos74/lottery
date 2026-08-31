@@ -16,12 +16,14 @@ import {
   SandboxPaymentGateway,
   SandboxPrintHandoff,
 } from '@qosfc/adapters-sandbox';
-import { assertNoSandboxInProduction, type ProviderRegistry, type RandomnessSource } from '@qosfc/ports';
+import { CsvBankFeed } from '@qosfc/adapters-live';
+import { assertNoSandboxInProduction, type BankFeed, type ProviderRegistry, type RandomnessSource } from '@qosfc/ports';
 
 export interface ProviderEnv {
   readonly PAYMENT_GATEWAY?: string | undefined;
   readonly BACS_BUREAU?: string | undefined;
   readonly BANK_FEED?: string | undefined;
+  readonly BANK_FEED_CSV_DIR?: string | undefined;
   readonly NOTIFIER?: string | undefined;
   readonly RANDOMNESS_SOURCE?: string | undefined;
   readonly SANDBOX_PROVIDERS_URL?: string | undefined;
@@ -42,8 +44,9 @@ export function buildProviderRegistry(env: ProviderEnv): ProviderRegistry {
     bacsBureau: select(env.BACS_BUREAU, 'BACS_BUREAU', 'GAP-10', {
       sandbox: () => new SandboxBacsBureau(sandbox),
     }),
-    bankFeed: select(env.BANK_FEED, 'BANK_FEED', 'GAP-33', {
+    bankFeed: select<BankFeed>(env.BANK_FEED, 'BANK_FEED', 'GAP-33', {
       sandbox: () => new SandboxBankFeed(sandbox),
+      csv: () => new CsvBankFeed(env.BANK_FEED_CSV_DIR ?? '/data/bank-statements'),
     }),
     notifier: select(env.NOTIFIER, 'NOTIFIER', 'GAP-30', {
       sandbox: () => new SandboxNotifier(sandbox),

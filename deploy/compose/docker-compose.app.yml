@@ -34,6 +34,9 @@ x-worker-env: &worker-env
   PAYMENT_GATEWAY: ${PAYMENT_GATEWAY:-sandbox}
   BACS_BUREAU: ${BACS_BUREAU:-sandbox}
   BANK_FEED: ${BANK_FEED:-sandbox}
+  # GAP-33: where the admin console writes an uploaded CSV and where
+  # `CsvBankFeed` (worker-recon) reads it back from — the shared volume below.
+  BANK_FEED_CSV_DIR: /data/bank-statements
   NOTIFIER: ${NOTIFIER:-sandbox}
   RANDOMNESS_SOURCE: ${RANDOMNESS_SOURCE:-unset}
   SANDBOX_PROVIDERS_URL: ${SANDBOX_PROVIDERS_URL:-http://sandbox-providers:9090}
@@ -77,6 +80,7 @@ services:
     # system, so this container gets NO internet egress (`app`+`core` only, both
     # internal) and the largest memory headroom.
     environment: { <<: *worker-env, TASK_QUEUE: recon }
+    volumes: ["bank_statements_csv:/data/bank-statements:ro"]
     deploy: { resources: { limits: { memory: 768M } } }
 
   worker-comms:
@@ -132,6 +136,10 @@ services:
       # T-9.3: individual named accounts with MFA. No shared logins.
       REQUIRE_MFA: "true"
       ADMIN_MFA_KEY_FILE: /run/secrets/admin_mfa_key
+    # GAP-33: the admin console writes each CSV upload here itself and ingests
+    # it in the same request — `read_only: true` (x-hardening) makes this the
+    # one directory admin can write to, alongside the tmpfs /tmp.
+    volumes: ["bank_statements_csv:/data/bank-statements"]
     secrets:
       - source: codec_key
         target: codec
@@ -184,6 +192,11 @@ networks:
   app:
   core:
     internal: true
+
+volumes:
+  # GAP-33: admin writes each uploaded CSV statement here; worker-recon can
+  # read the same files back once `BANK_FEED=csv` drives automated polling.
+  bank_statements_csv:
 
 secrets:
   codec_key:        { file: ../secrets/codec }

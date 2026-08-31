@@ -30,6 +30,8 @@ to the plausible-looking one.
 | B-7 | **Resolved/all-tasks view.** `/tasks` now takes `?status=open\|resolved\|all` (`listTasksByStatus()`), with tabs in the console. | `apps/admin/src/db.ts`, `apps/admin/src/index.ts`, `apps/admin/src/views.ts` |
 | B-8 | **Draw administration surface.** `/draws` list, `/draws/new`, `/draws/:id` detail, and a "run" action now exist. | `apps/admin/src/index.ts`, `apps/admin/src/views.ts` |
 | B-9 | **Task decisions now reach the workflow they blocked.** Resolving a `human_task` delivers the named Temporal signal (currently scoped to `must_be_won_decision`; other signal/update names are reported as not-yet-wired rather than silently dropped). | `apps/admin/src/temporal.ts` (`deliverTaskDecision`) |
+| GAP-33 | **CSV upload first; Open Banking left for future consideration.** OCR is not pursued either — confirmed by Andy Cowan. The `BankFeed` port was built to fit all three candidate shapes from day one, so this was a selection, not a rewrite. | `BANK_FEED=csv`; `packages/adapters-live/src/bank-feed/csv-bank-feed.ts`; reconciliation in `packages/activities/src/reconcile/` |
+| GAP-04 | **Legacy members will get logins.** Their existing standing orders continue running unchanged; translating them into the new payment/entry model (`payment_method`/`subscription`) is explicit **future-phase work**, not part of this build — confirmed by Andy Cowan. | `member_credential` (`db/migrations/0008_member_login.sql`); portal auth in `apps/api/src/auth.ts`. Legacy-standing-order translation: not started, deliberately |
 
 ## Blocking, and where the code stops
 
@@ -38,14 +40,13 @@ to the plausible-looking one.
 | GAP-01 ⛔ | ELM vs in-house. Everything is conditional on it. | — build proceeds as in-house pending sign-off |
 | GAP-02 ⛔ | Switch-over date; cut-over vs parallel run. | — |
 | GAP-05 ⛔ | No email address exists anywhere in 1,591 rows. | `member.email` nullable by *fact*, not by choice |
-| GAP-09 ⛔ | Payment service provider. | `PaymentGateway` port; `PAYMENT_GATEWAY=sandbox` |
+| GAP-09 ⛔ | Payment service provider (real gambling-MCC acquirer). Unblocked for *build* purposes only: the member portal's online purchase flow runs end to end against the sandbox PSP as a dummy transaction simulator, so the flow is provable before an acquirer is chosen — but no real money can move until one is. | `PaymentGateway` port; `PAYMENT_GATEWAY=sandbox`; portal flow in `apps/api/src/entries.ts` |
 | GAP-10 ⛔ | Bacs route: bureau vs GoCardless vs own SUN. | `BacsBureau` port; `BACS_BUREAU=sandbox` |
 | GAP-13 ⛔ | Random allocation for non-responders — drafted, unconfirmed. | `selection_standing.source` may not be written as `randomly_allocated`; the campaign raises a task |
 | GAP-17 ⛔ | Entry generation: balance ledger / fixed schedule / prepaid blocks. All three implemented; none is default. | `entriesDue()` → `unresolvedGap('GAP-17')` |
 | GAP-19 ⛔ | Agent-collected members — 782 of 1,591, 49% of the register, no functional design at all. | `entriesDue()` → `unresolvedGap('GAP-19')` |
 | GAP-21 ⛔ | RNG method and independent assurance. A **licence condition**, not a preference. | `RandomnessSource` port; `RANDOMNESS_SOURCE=unset` |
 | GAP-24 ⛔ | Must-be-won mechanism at £20,000. D4 removed every lower tier, so there is nothing to roll down to. | `resolveMustBeWon()` → halts; `DrawWorkflow` opens `must_be_won_decision` |
-| GAP-33 ⛔ | Bank feed: Open Banking / CSV / continued OCR. | `BankFeed` port; all three shapes in the sandbox |
 | GAP-36 / 31 ⛔ | Statutory limits and good-cause floor, inconsistently cited across sources. | `config_version.max_*`, `good_cause_floor_bp` — all NULL |
 | GAP-42 ⛔ | No escalation policy, no named on-call. The error handling assumes someone eventually looks. | `EscalationWorkflow` exists; its policy does not |
 | TG-08 / TG-15 ⛔ | Who operates the platform. | — |
@@ -55,7 +56,6 @@ to the plausible-looking one.
 | ID | Undecided | Represented by |
 |---|---|---|
 | GAP-03 | Role permissions / segregation of duties. | `app_role.permissions` — data, not code; defaults to deny |
-| GAP-04 | Whether legacy members get logins. | — |
 | GAP-07 | Duplicate prize draw numbers 1253, 1515, 2498. | migration rejects to the exception report |
 | GAP-08 | Deceased / estate handling. | `member_status.deceased` exists; policy does not |
 | GAP-11 | Payment failure grace period. | `config_version.payment_grace_days` NULL |
@@ -101,6 +101,7 @@ to the plausible-looking one.
 | B-4 | Domain names and TLS ownership. | Relative to the existing Wix estate |
 | B-5 | 16 GB needed for T1 + entity-per-member. | Budget confirmation, or reopen TG-12 before Phase 5 |
 | B-6 | Codec key recovery custody. | Who holds the off-machine copy, and where |
+| B-10 | `CsvBankFeed` (GAP-33) reads a canonical CSV schema we defined ourselves — nobody has yet mapped a real bank export's actual column layout onto it. | A real bank statement CSV export, to write the one-time column mapping |
 
 ## When a decision arrives
 

@@ -467,3 +467,133 @@ export async function addEntry(
     return { kind: 'added', entryId: entryRows[0]!.id };
   });
 }
+
+// ── Bank reconciliation (GAP-33) ────────────────────────────────────────────
+
+export interface BankStatementSummary {
+  readonly id: string;
+  readonly statementNumber: number;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly source: string;
+  readonly ingestedAt: string;
+  readonly transactionCount: number;
+  readonly matched: number;
+  readonly ambiguous: number;
+  readonly unmatched: number;
+}
+
+export async function listBankStatements(pool: Pool, limit = 100): Promise<BankStatementSummary[]> {
+  const { rows } = await pool.query<{
+    id: string;
+    statement_number: number;
+    period_start: string;
+    period_end: string;
+    source: string;
+    ingested_at: string;
+    total: string;
+    matched: string;
+    ambiguous: string;
+    unmatched: string;
+  }>(
+    `SELECT s.id, s.statement_number, s.period_start::text, s.period_end::text, s.source::text, s.ingested_at::text,
+            count(t.id) AS total,
+            count(t.id) FILTER (WHERE t.match_status = 'matched')   AS matched,
+            count(t.id) FILTER (WHERE t.match_status = 'ambiguous') AS ambiguous,
+            count(t.id) FILTER (WHERE t.match_status = 'unmatched') AS unmatched
+       FROM bank_statement s LEFT JOIN bank_transaction t ON t.statement_id = s.id
+      GROUP BY s.id
+      ORDER BY s.statement_number DESC
+      LIMIT $1`,
+    [limit],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    statementNumber: r.statement_number,
+    periodStart: r.period_start,
+    periodEnd: r.period_end,
+    source: r.source,
+    ingestedAt: r.ingested_at,
+    transactionCount: Number(r.total),
+    matched: Number(r.matched),
+    ambiguous: Number(r.ambiguous),
+    unmatched: Number(r.unmatched),
+  }));
+}
+
+export interface BankTransactionRow {
+  readonly id: string;
+  readonly valueDate: string;
+  readonly description: string | null;
+  readonly typeRaw: string | null;
+  readonly amountPence: string;
+  readonly extractedReference: string | null;
+  readonly matchStatus: string;
+  readonly candidatePrizeDrawNos: readonly number[];
+}
+
+export interface BankStatementDetail extends BankStatementSummary {
+  readonly transactions: readonly BankTransactionRow[];
+}
+
+export async function getBankStatement(pool: Pool, id: string): Promise<BankStatementDetail | undefined> {
+  const { rows: statementRows } = await pool.query<{
+    id: string;
+    statement_number: number;
+    period_start: string;
+    period_end: string;
+    source: string;
+    ingested_at: string;
+  }>(
+    `SELECT id, statement_number, period_start::text, period_end::text, source::text, ingested_at::text
+       FROM bank_statement WHERE id = $1`,
+    [id],
+  );
+  const statement = statementRows[0];
+  if (!statement) return undefined;
+
+  const { rows: txnRows } = await pool.query<{
+    id: string;
+    value_date: string;
+    description: string | null;
+    type_raw: string | null;
+    amount_pence: string;
+    extracted_reference: string | null;
+    match_status: string;
+    candidate_prize_draw_nos: number[] | null;
+  }>(
+    `SELECT t.id, t.value_date::text, t.description, t.type_raw, t.amount_pence::text,
+            t.extracted_reference, t.match_status::text,
+            array_agg(c.prize_draw_no) FILTER (WHERE c.prize_draw_no IS NOT NULL) AS candidate_prize_draw_nos
+       FROM bank_transaction t LEFT JOIN match_candidate c ON c.bank_transaction_id = t.id
+      WHERE t.statement_id = $1
+      GROUP BY t.id
+      ORDER BY t.value_date, t.id`,
+    [id],
+  );
+
+  const transactions = txnRows.map((r) => ({
+    id: r.id,
+    valueDate: r.value_date,
+    description: r.description,
+    typeRaw: r.type_raw,
+    amountPence: r.amount_pence,
+    extractedReference: r.extracted_reference,
+    matchStatus: r.match_status,
+    candidatePrizeDrawNos: r.candidate_prize_draw_nos ?? [],
+  }));
+
+  return {
+    id: statement.id,
+    statementNumber: statement.statement_number,
+    periodStart: statement.period_start,
+    periodEnd: statement.period_end,
+    source: statement.source,
+    ingestedAt: statement.ingested_at,
+    transactionCount: transactions.length,
+    matched: transactions.filter((t) => t.matchStatus === 'matched').length,
+    ambiguous: transactions.filter((t) => t.matchStatus === 'ambiguous').length,
+    unmatched: transactions.filter((t) => t.matchStatus === 'unmatched').length,
+    transactions,
+  };
+}

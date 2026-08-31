@@ -50,12 +50,21 @@ importers:
       '@node-rs/argon2':
         specifier: ^2.0.2
         version: 2.2.0
+      '@qosfc/activities':
+        specifier: workspace:*
+        version: link:../../packages/activities
+      '@qosfc/adapters-live':
+        specifier: workspace:*
+        version: link:../../packages/adapters-live
       '@qosfc/db':
         specifier: workspace:*
         version: link:../../packages/db
       '@qosfc/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@qosfc/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
       '@qosfc/temporal-common':
         specifier: workspace:*
         version: link:../../packages/temporal-common
@@ -65,12 +74,24 @@ importers:
 
   apps/api:
     dependencies:
+      '@fastify/cookie':
+        specifier: ^11.0.2
+        version: 11.1.2
+      '@node-rs/argon2':
+        specifier: ^2.0.2
+        version: 2.2.0
+      '@qosfc/adapters-sandbox':
+        specifier: workspace:*
+        version: link:../../packages/adapters-sandbox
       '@qosfc/db':
         specifier: workspace:*
         version: link:../../packages/db
       '@qosfc/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@qosfc/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
       '@qosfc/temporal-common':
         specifier: workspace:*
         version: link:../../packages/temporal-common
@@ -83,6 +104,9 @@ importers:
       '@qosfc/activities':
         specifier: workspace:*
         version: link:../../packages/activities
+      '@qosfc/adapters-live':
+        specifier: workspace:*
+        version: link:../../packages/adapters-live
       '@qosfc/adapters-sandbox':
         specifier: workspace:*
         version: link:../../packages/adapters-sandbox
@@ -126,6 +150,15 @@ importers:
       '@types/pg':
         specifier: ^8.15.5
         version: 8.23.1
+
+  packages/adapters-live:
+    dependencies:
+      '@qosfc/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@qosfc/ports':
+        specifier: workspace:*
+        version: link:../ports
 
   packages/adapters-sandbox:
     dependencies:

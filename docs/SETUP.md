@@ -142,8 +142,42 @@ The console now also covers draw administration (`/draws` list, detail, and
 running a draw) and basic member management, alongside the task inbox — `/tasks`
 covers open, resolved, and all tasks (`?status=`), and resolving a task
 delivers the Temporal signal it names to the blocked workflow
-(gap-register.md B-7/B-8/B-9). **Not yet built:** payments and anything else
-gated on GAP-09/10/17/19/21/24/33, none of which are resolved yet (§9).
+(gap-register.md B-7/B-8/B-9). It also uploads bank statement CSVs (§2.2) and
+reviews the reconciliation tasks they raise. **Not yet built:** payments and
+anything else gated on GAP-10/17/19/21/24, none of which are resolved yet (§9).
+
+### 2.2 Bank reconciliation (GAP-33)
+
+Andy Cowan confirmed CSV upload as the starting point; Open Banking is left for
+future consideration, and OCR is not pursued. Admin uploads a statement export
+at `/bank-statements` in the canonical CSV schema documented on
+`CsvBankFeed` (`packages/adapters-live/src/bank-feed/csv-bank-feed.ts`) —
+mapping an actual bank's raw export columns onto that schema is a small,
+separate step once a real sample file exists (not yet done; see B-10 below).
+
+Each row becomes a `bank_transaction`; credits are matched against
+`member_number.prize_draw_no` by reference
+(`packages/activities/src/reconcile/match-transactions.ts`). TG-04's
+auto-accept confidence threshold is unset, so **every credit becomes a review
+task** — nothing is auto-allocated yet. That is the documented default
+behaviour (gap-register.md TG-04), not a bug.
+
+### 2.3 Member portal (GAP-04, GAP-09)
+
+`apps/api` now also serves member self-service: register/login (password only —
+T-9.3's mandatory MFA applies to admin accounts, not members) and an online
+entry-purchase flow. Since GAP-09 (the real card acquirer) is still open, the
+purchase flow runs against the same sandbox `PaymentGateway` the worker uses —
+a dummy endpoint that simulates a transaction end to end (hosted session,
+async webhook, success/decline) — so the flow is provable now and swaps to a
+live acquirer the same way every other port does (§5 "Adding a live
+provider"), with no portal code changes.
+
+Per GAP-04 (confirmed by Andy Cowan): legacy members will get logins too, and
+their existing standing orders keep running unchanged in the meantime.
+Translating those legacy payment records into the new `payment_method`/
+`subscription` model, and provisioning legacy members with portal credentials,
+is **explicit future-phase work** — not attempted in this build.
 
 ### Running the tests
 

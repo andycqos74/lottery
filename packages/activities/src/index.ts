@@ -13,6 +13,7 @@ import { openHumanTask, type OpenTaskRequest } from './tasks/human-tasks.js';
 import { generateWinningNumbers, type GenerateNumbersRequest } from './draw/rng.js';
 import { identifyWinners, type IdentifyWinnersRequest } from './draw/winners.js';
 import { settleDraw, type SettleDrawRequest } from './draw/settle.js';
+import { ingestNewStatements, type IngestNewStatementsRequest } from './reconcile/ingest-statement.js';
 
 export function createActivities(ctx: ActivityContext) {
   return {
@@ -24,6 +25,8 @@ export function createActivities(ctx: ActivityContext) {
     identifyWinners: (request: IdentifyWinnersRequest) => identifyWinners(ctx.pool, request),
 
     settleDraw: (request: SettleDrawRequest) => settleDraw(ctx.pool, request),
+
+    ingestNewBankStatements: (request: IngestNewStatementsRequest) => ingestNewStatements(ctx.pool, ctx.providers.bankFeed, request),
 
     /** Which providers this worker is actually talking to — used by the Phase 1 gate. */
     describeProviders: async () => ({
@@ -41,4 +44,7 @@ export type { OpenTaskRequest, OpenTaskResult } from './tasks/human-tasks.js';
 export type { GenerateNumbersRequest, GenerateNumbersResult } from './draw/rng.js';
 export type { IdentifyWinnersRequest, IdentifyWinnersResult } from './draw/winners.js';
 export type { SettleDrawRequest, SettleDrawResult } from './draw/settle.js';
+export { ingestNewStatements } from './reconcile/ingest-statement.js';
+export type { IngestNewStatementsRequest, IngestedStatement } from './reconcile/ingest-statement.js';
+export { matchBankTransaction, type MatchOutcome } from './reconcile/match-transactions.js';
 export { writeAudit, type AuditRecord } from './audit.js';
