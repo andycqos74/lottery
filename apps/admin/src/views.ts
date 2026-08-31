@@ -1,4 +1,5 @@
-import type { DashboardCounts, HumanTask } from './db.js';
+import { formatPence, pence } from '@qosfc/domain';
+import type { DashboardCounts, DrawSummary, HumanTask, MemberSummary } from './db.js';
 
 export function escapeHtml(value: string): string {
   return value
@@ -72,6 +73,8 @@ function layout(opts: {
          <nav>
            <span class="muted" style="color:#c7d2e6">${escapeHtml(opts.user.displayName)}</span>
            <a href="/tasks">Tasks</a>
+           <a href="/draws">Draws</a>
+           <a href="/members">Members</a>
            <form method="post" action="/logout" style="display:inline">
              ${csrfField(opts.user.csrf)}
              <button type="submit" class="secondary" style="margin:0 0 0 1.25rem;padding:0.25rem 0.7rem;font-size:0.85rem">Log out</button>
@@ -148,7 +151,7 @@ export function dashboardPage(opts: { user: { displayName: string; csrf: string 
           <span class="n">${counts.overdueTasks}</span><span class="l">Overdue</span>
         </div>
         <div class="stat"><span class="n">${counts.members}</span><span class="l">Members</span></div>
-        <div class="stat"><span class="n">${counts.draws}</span><span class="l">Draws</span></div>
+        <div class="stat"><a href="/draws" style="color:inherit;text-decoration:none"><span class="n">${counts.draws}</span><span class="l">Draws</span></a></div>
       </div>
       <div class="card">
         <p>The human task inbox (GAP-43) is the day-to-day surface of this console — every process that
@@ -159,29 +162,221 @@ export function dashboardPage(opts: { user: { displayName: string; csrf: string 
   });
 }
 
-function taskRow(task: HumanTask): string {
-  const overdue = task.dueAt !== null && task.dueAt.getTime() < Date.now();
+function taskRow(task: HumanTask, showStatus: boolean): string {
+  const overdue = task.status === 'open' && task.dueAt !== null && task.dueAt.getTime() < Date.now();
   return `<tr class="${overdue ? 'overdue' : ''}">
     <td><a class="row-link" href="/tasks/${task.id}">${escapeHtml(task.title)}</a>${task.requiresSecondApprover ? ' <span class="badge">dual approval</span>' : ''}</td>
     <td><span class="badge">${escapeHtml(task.kind)}</span></td>
+    ${showStatus ? `<td><span class="badge">${escapeHtml(task.status)}</span></td>` : ''}
     <td>${task.openedAt.toISOString().slice(0, 10)}</td>
     <td>${task.dueAt ? task.dueAt.toISOString().slice(0, 10) : '—'}</td>
   </tr>`;
 }
 
-export function tasksPage(opts: { user: { displayName: string; csrf: string }; tasks: HumanTask[] }): string {
-  const rows = opts.tasks.map(taskRow).join('\n');
+export function tasksPage(opts: {
+  user: { displayName: string; csrf: string };
+  tasks: HumanTask[];
+  filter: 'open' | 'resolved' | 'all';
+}): string {
+  const { filter } = opts;
+  const showStatus = filter !== 'open';
+  const rows = opts.tasks.map((t) => taskRow(t, showStatus)).join('\n');
+  const tab = (label: string, href: string, active: boolean) =>
+    `<a href="${href}" style="margin-right:1.25rem;${active ? 'font-weight:700;color:#16233f' : 'color:#5b6472'}">${label}</a>`;
+  const tabs = `<p>${tab('Open', '/tasks', filter === 'open')}${tab('Resolved', '/tasks?status=resolved', filter === 'resolved')}${tab('All', '/tasks?status=all', filter === 'all')}</p>`;
+  const heading = filter === 'open' ? 'Open tasks' : filter === 'resolved' ? 'Resolved tasks' : 'All tasks';
+  const empty = filter === 'open' ? 'Nothing is waiting on a person right now.' : 'No tasks to show.';
   return layout({
     title: 'Task inbox',
     user: opts.user,
     body: `
-      <h1>Open tasks</h1>
+      <h1>${heading}</h1>
+      ${tabs}
       <div class="card">
         ${
           opts.tasks.length === 0
-            ? '<p class="muted">Nothing is waiting on a person right now.</p>'
+            ? `<p class="muted">${empty}</p>`
             : `<table>
-                 <thead><tr><th>Title</th><th>Kind</th><th>Opened</th><th>Due</th></tr></thead>
+                 <thead><tr><th>Title</th><th>Kind</th>${showStatus ? '<th>Status</th>' : ''}<th>Opened</th><th>Due</th></tr></thead>
+                 <tbody>${rows}</tbody>
+               </table>`
+        }
+      </div>
+    `,
+  });
+}
+
+function drawRow(draw: DrawSummary): string {
+  return `<tr>
+    <td><a class="row-link" href="/draws/${draw.id}">Draw ${draw.drawNumber}</a></td>
+    <td><span class="badge">${escapeHtml(draw.status)}</span></td>
+    <td>${draw.drawDate.toISOString().slice(0, 10)}</td>
+    <td>${draw.entriesCount ?? '—'}</td>
+    <td>${draw.winningNumbers ? draw.winningNumbers.join(' · ') : '—'}</td>
+    <td>${draw.jackpotPaidPence !== null ? formatPence(pence(draw.jackpotPaidPence)) : '—'}</td>
+  </tr>`;
+}
+
+export function drawsPage(opts: { user: { displayName: string; csrf: string }; draws: DrawSummary[] }): string {
+  const rows = opts.draws.map(drawRow).join('\n');
+  return layout({
+    title: 'Draws',
+    user: opts.user,
+    body: `
+      <h1>Draws</h1>
+      <p><a href="/draws/new"><button type="button">New draw</button></a></p>
+      <div class="card">
+        ${
+          opts.draws.length === 0
+            ? '<p class="muted">No draws yet.</p>'
+            : `<table>
+                 <thead><tr><th>Draw</th><th>Status</th><th>Date</th><th>Entries</th><th>Winning numbers</th><th>Paid</th></tr></thead>
+                 <tbody>${rows}</tbody>
+               </table>`
+        }
+      </div>
+    `,
+  });
+}
+
+function memberOption(m: MemberSummary): string {
+  const label = `${m.forename ?? ''} ${m.surname ?? ''}`.trim() || m.id;
+  return `<option value="${m.id}">${escapeHtml(label)} (${m.entryCount} ${m.entryCount === 1 ? 'entry' : 'entries'})</option>`;
+}
+
+export function drawDetailPage(opts: {
+  user: { displayName: string; csrf: string };
+  draw: DrawSummary;
+  members?: MemberSummary[];
+  liveEntryCount?: number;
+  error?: string;
+  flash?: string;
+}): string {
+  const { draw } = opts;
+  const entriesDisplay =
+    opts.liveEntryCount !== undefined
+      ? `${opts.liveEntryCount} (open)`
+      : draw.entriesCount !== null
+        ? String(draw.entriesCount)
+        : '—';
+  const meta = [
+    ['Status', draw.status],
+    ['Draw date', draw.drawDate.toISOString().slice(0, 10)],
+    ['Entries', entriesDisplay],
+    ['Winning numbers', draw.winningNumbers ? draw.winningNumbers.join(' · ') : '—'],
+    ['Jackpot pre-draw', draw.jackpotPreDrawPence !== null ? formatPence(pence(draw.jackpotPreDrawPence)) : '—'],
+    ['Winners', draw.winnersCount !== null ? String(draw.winnersCount) : '—'],
+    ['Jackpot paid', draw.jackpotPaidPence !== null ? formatPence(pence(draw.jackpotPaidPence)) : '—'],
+    ['Rollover out', draw.rolloverOutPence !== null ? formatPence(pence(draw.rolloverOutPence)) : '—'],
+    ['Workflow', draw.workflowId ?? '—'],
+    ['Drawn at', draw.drawnAt ? draw.drawnAt.toISOString() : '—'],
+    ['Settled at', draw.settledAt ? draw.settledAt.toISOString() : '—'],
+  ]
+    .map(([k, v]) => `<dt>${escapeHtml(k!)}</dt><dd>${escapeHtml(v!)}</dd>`)
+    .join('');
+
+  let openSection = '';
+  if (draw.status === 'open') {
+    const members = opts.members ?? [];
+    openSection = `
+      <div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
+        <h2 style="font-size:1.05rem;margin-top:0">Add entry</h2>
+        ${
+          members.length === 0
+            ? `<p class="muted">No members yet — <a href="/members">add one</a> first.</p>`
+            : `<form method="post" action="/draws/${draw.id}/entries">
+                 ${csrfField(opts.user.csrf)}
+                 <label for="memberId">Member</label>
+                 <select id="memberId" name="memberId" required>${members.map(memberOption).join('')}</select>
+                 <label for="selection">Numbers (four, 1&ndash;20)</label>
+                 <input type="text" id="selection" name="selection" required placeholder="2, 4, 5, 14" />
+                 <button type="submit">Add entry</button>
+               </form>`
+        }
+        <form method="post" action="/draws/${draw.id}/run" style="margin-top:1.25rem">
+          ${csrfField(opts.user.csrf)}
+          <button type="submit">Close entries &amp; run this draw →</button>
+        </form>
+      </div>
+    `;
+  }
+
+  return layout({
+    title: `Draw ${draw.drawNumber}`,
+    user: opts.user,
+    body: `
+      <p><a class="muted" href="/draws">← Back to draws</a></p>
+      <h1>Draw ${draw.drawNumber}</h1>
+      <div class="card">
+        <dl class="kv">${meta}</dl>
+      </div>
+      ${openSection}
+    `,
+  });
+}
+
+export function newDrawPage(opts: { user: { displayName: string; csrf: string }; error?: string }): string {
+  return layout({
+    title: 'New draw',
+    user: opts.user,
+    body: `
+      <p><a class="muted" href="/draws">← Back to draws</a></p>
+      <h1>New draw</h1>
+      <div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        <form method="post" action="/draws">
+          ${csrfField(opts.user.csrf)}
+          <label for="drawNumber">Draw number</label>
+          <input type="number" id="drawNumber" name="drawNumber" required min="1" />
+          <button type="submit">Create draw</button>
+        </form>
+        <p class="muted">Draw date is set to today. Add entries once the draw is created; nothing is drawn until you close it.</p>
+      </div>
+    `,
+  });
+}
+
+function memberRow(m: MemberSummary): string {
+  const label = `${m.forename ?? ''} ${m.surname ?? ''}`.trim() || '—';
+  return `<tr>
+    <td>${escapeHtml(label)}</td>
+    <td><span class="badge">${escapeHtml(m.status)}</span></td>
+    <td>${m.entryCount}</td>
+  </tr>`;
+}
+
+export function membersPage(opts: {
+  user: { displayName: string; csrf: string };
+  members: MemberSummary[];
+  error?: string;
+  flash?: string;
+}): string {
+  const rows = opts.members.map(memberRow).join('\n');
+  return layout({
+    title: 'Members',
+    user: opts.user,
+    body: `
+      <h1>Members</h1>
+      <div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
+        <form method="post" action="/members">
+          ${csrfField(opts.user.csrf)}
+          <label for="forename">Forename</label>
+          <input type="text" id="forename" name="forename" required />
+          <label for="surname">Surname</label>
+          <input type="text" id="surname" name="surname" required />
+          <button type="submit">Add member</button>
+        </form>
+      </div>
+      <div class="card">
+        ${
+          opts.members.length === 0
+            ? '<p class="muted">No members yet.</p>'
+            : `<table>
+                 <thead><tr><th>Name</th><th>Status</th><th>Entries</th></tr></thead>
                  <tbody>${rows}</tbody>
                </table>`
         }
@@ -221,10 +416,19 @@ export function taskDetailPage(opts: {
         ? '<p class="muted">One approval recorded. This action will record the second, resolving the task (GAP-44: two distinct people).</p>'
         : '<p class="muted">This task requires two distinct approvers. This action records the first.</p>'
       : '';
+    // GAP-24 is still undecided — the mechanism is collected from the human
+    // making the decision, never defaulted by this code.
+    const mechanismField =
+      task.kind === 'must_be_won_decision'
+        ? `<label for="mechanism">Must-be-won mechanism</label>
+           <input type="text" id="mechanism" name="mechanism" required
+                  placeholder="What mechanism does this decision use — not for the system to invent" />`
+        : '';
     actionSection = `
       ${approvalNote}
       <form method="post" action="/tasks/${task.id}/resolve">
         ${csrfField(opts.user.csrf)}
+        ${mechanismField}
         <label for="note">Resolution note</label>
         <textarea id="note" name="note" required placeholder="What was decided, and why"></textarea>
         <button type="submit">${task.requiresSecondApprover ? 'Record approval' : 'Resolve task'}</button>

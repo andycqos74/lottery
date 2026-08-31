@@ -25,6 +25,11 @@ to the plausible-looking one.
 | TG-11 | **Identifier-only payloads AND an encryption codec.** Both, from day one. | `packages/temporal-common/src/codec/`, `pii-guard.ts` |
 | TG-12 | **Entity-workflow-per-member.** Drives the sizing in SETUP §3.1. | `packages/temporal-common/src/task-queues.ts` |
 | TG-13 | **Nexus not adopted.** Recorded, not overlooked. | this file |
+| GAP-16 | **Draw every Friday, 12:00 noon; entries cut off at Friday 00:00** (12h before draw). Postgres `DOW` convention (0=Sunday..6=Saturday; Friday=5). | `config_version.draw_day_of_week`/`draw_time_local`/`selection_cutoff_before`, active row `5c94ac98-211f-461c-86b7-812d3740b307` — confirmed by Andy Cowan. Not yet consumed: nothing schedules `DrawWorkflow` from it yet |
+| GAP-22 / GAP-23 | **Jackpot splits per winning entry** (not per winner); the indivisible remainder goes to the good cause, not to winners or rollover. GAP-15 (must multi-ticket selections be distinct?) is still open and unaffected by this. | `config_version.share_basis`/`share_remainder_rule`, active row `258a0c16-c26e-4129-a5ec-36d636ef0aef` — confirmed by Andy Cowan. Consumed by `settleDraw()` (`packages/activities/src/draw/settle.ts`), called from `DrawWorkflow` |
+| B-7 | **Resolved/all-tasks view.** `/tasks` now takes `?status=open\|resolved\|all` (`listTasksByStatus()`), with tabs in the console. | `apps/admin/src/db.ts`, `apps/admin/src/index.ts`, `apps/admin/src/views.ts` |
+| B-8 | **Draw administration surface.** `/draws` list, `/draws/new`, `/draws/:id` detail, and a "run" action now exist. | `apps/admin/src/index.ts`, `apps/admin/src/views.ts` |
+| B-9 | **Task decisions now reach the workflow they blocked.** Resolving a `human_task` delivers the named Temporal signal (currently scoped to `must_be_won_decision`; other signal/update names are reported as not-yet-wired rather than silently dropped). | `apps/admin/src/temporal.ts` (`deliverTaskDecision`) |
 
 ## Blocking, and where the code stops
 
@@ -57,11 +62,8 @@ to the plausible-looking one.
 | GAP-12 | Refund / DD indemnity policy and its effect on placed entries. | `MandateEvent.indemnity_claim` routed to the member workflow |
 | GAP-14 | Selections persistent vs per-draw. | `selection_standing` effective dates support both |
 | GAP-15 | Multi-ticket members: distinct selections required? | `assertMultiTicketSelectionsPermitted()` halts |
-| GAP-16 | Draw day, time, cut-off. | `config_version.draw_day_of_week` etc. NULL |
 | GAP-18 | Prepaid vs credit timing. | implicit in the GAP-17 strategy choice |
 | GAP-20 | 806 members with no amount; 838 tiered Undetermined. | migration flags `amount_unknown`, excludes from entry generation |
-| GAP-22 | Jackpot shared per winner or per winning entry. | `shareJackpot()` halts without a confirmed policy |
-| GAP-23 | Rounding rule for an indivisible remainder. | same |
 | GAP-25 | Reserve funding for the £500 floor; behaviour when empty. | `draw.floor_topup_pence` recorded; funding rule absent |
 | GAP-26 | Per-person entry cap. Syndicate exposure is live from day one. | `perPersonEntryCap` honoured when set; unset is reported |
 | GAP-27 | Revenue recognition: cash received vs entry face value. | — |

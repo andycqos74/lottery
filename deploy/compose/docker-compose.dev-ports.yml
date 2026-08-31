@@ -1,0 +1,20 @@
+# Ad hoc loopback port publishing for local browser access to api/admin/
+# temporal-ui/codec-server WITHOUT standing up Caddy (docker-compose.edge.yml),
+# which needs real hostnames and internet-facing ACME.
+#
+# NEVER include this file in a production `docker compose ... up`. It bypasses
+# the edge network boundary and the Caddyfile's IP allowlist and TLS entirely —
+# that is exactly what §4 of docs/SETUP.md says the edge network exists to
+# prevent. Binding to 127.0.0.1 only keeps it to this host; it is still a
+# deliberate hole in the security posture and belongs in local dev alone.
+name: qosfc-lottery
+
+services:
+  api:
+    ports: ["127.0.0.1:8080:8080"]
+  admin:
+    ports: ["127.0.0.1:8081:8081"]
+  codec-server:
+    ports: ["127.0.0.1:8082:8082"]
+  temporal-ui:
+    ports: ["127.0.0.1:8233:8080"]

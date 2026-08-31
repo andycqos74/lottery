@@ -138,11 +138,12 @@ Tasks with `requires_second_approver` (GAP-44) need two *different* accounts
 to approve before they resolve — the console enforces this the same way the
 database does (`human_task`'s `approvers_must_be_different` constraint).
 
-**Not yet built:** any surface beyond the task inbox — member management,
-draw administration, payments — since none of GAP-09/10/17/19/21/24/33 are
-resolved yet (§9). The task inbox is real and functional against whatever
-`human_task` rows a running draw creates; there just isn't a draw to create
-them yet without resolving those gaps first.
+The console now also covers draw administration (`/draws` list, detail, and
+running a draw) and basic member management, alongside the task inbox — `/tasks`
+covers open, resolved, and all tasks (`?status=`), and resolving a task
+delivers the Temporal signal it names to the blocked workflow
+(gap-register.md B-7/B-8/B-9). **Not yet built:** payments and anything else
+gated on GAP-09/10/17/19/21/24/33, none of which are resolved yet (§9).
 
 ### Running the tests
 

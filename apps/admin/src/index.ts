@@ -17,19 +17,38 @@ import cookie from '@fastify/cookie';
 import { verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import {
+  addEntry,
+  countEntries,
+  closeDrawAndRecordWorkflow,
+  createDraw,
+  createMember,
   dashboardCounts,
   findUserByEmail,
   findUserById,
+  getDraw,
   getTask,
   insertAuditLog,
-  listOpenTasks,
+  listDraws,
+  listMembers,
+  listTasksByStatus,
   resolveTaskStep,
   touchLastLogin,
   type AppUser,
 } from './db.js';
-import { dashboardPage, loginPage, mfaPage, taskDetailPage, tasksPage } from './views.js';
+import {
+  dashboardPage,
+  drawDetailPage,
+  drawsPage,
+  loginPage,
+  membersPage,
+  mfaPage,
+  newDrawPage,
+  taskDetailPage,
+  tasksPage,
+} from './views.js';
 import { decryptSecret } from './secret-box.js';
 import { verifyTotp } from './totp.js';
+import { deliverTaskDecision, startDrawWorkflow } from './temporal.js';
 
 const port = Number(process.env['PORT'] ?? 8081);
 const nodeEnv = process.env['NODE_ENV'] ?? 'development';
@@ -245,8 +264,159 @@ app.get('/', async (request, reply) => {
 });
 
 app.get('/tasks', async (request, reply) => {
-  const tasks = await listOpenTasks(pool);
-  reply.type('text/html').send(tasksPage({ user: viewUser(request), tasks }));
+  const { status } = request.query as { status?: string };
+  const filter: 'open' | 'resolved' | 'all' = status === 'resolved' || status === 'all' ? status : 'open';
+  const tasks = await listTasksByStatus(pool, filter);
+  reply.type('text/html').send(tasksPage({ user: viewUser(request), tasks, filter }));
+});
+
+app.get('/draws', async (request, reply) => {
+  const draws = await listDraws(pool);
+  reply.type('text/html').send(drawsPage({ user: viewUser(request), draws }));
+});
+
+app.get('/draws/new', async (request, reply) => {
+  reply.type('text/html').send(newDrawPage({ user: viewUser(request) }));
+});
+
+app.post('/draws', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+
+  const body = request.body as { drawNumber?: string };
+  const drawNumber = Number.parseInt(body.drawNumber ?? '', 10);
+  if (!Number.isInteger(drawNumber) || drawNumber <= 0) {
+    return reply
+      .type('text/html')
+      .send(newDrawPage({ user: viewUser(request), error: 'Draw number must be a positive whole number.' }));
+  }
+
+  const outcome = await createDraw(pool, { drawNumber });
+  if (outcome.kind === 'rejected') {
+    return reply.type('text/html').send(newDrawPage({ user: viewUser(request), error: outcome.reason }));
+  }
+
+  await insertAuditLog(pool, {
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+    action: 'draw_created',
+    entity: 'draw',
+    entityId: outcome.id,
+  });
+  reply.redirect(`/draws/${outcome.id}`);
+});
+
+app.get('/draws/:id', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const draw = await getDraw(pool, id);
+  if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
+  const open = draw.status === 'open';
+  const members = open ? await listMembers(pool) : undefined;
+  const liveEntryCount = open ? await countEntries(pool, id) : undefined;
+  reply.type('text/html').send(
+    drawDetailPage({
+      user: viewUser(request),
+      draw,
+      ...(members ? { members } : {}),
+      ...(liveEntryCount !== undefined ? { liveEntryCount } : {}),
+    }),
+  );
+});
+
+app.post('/draws/:id/entries', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+
+  const { id } = request.params as { id: string };
+  const draw = await getDraw(pool, id);
+  if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
+
+  const body = request.body as { memberId?: string; selection?: string };
+  const memberId = (body.memberId ?? '').trim();
+  const selection = (body.selection ?? '')
+    .split(',')
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => !Number.isNaN(n));
+
+  const respond = async (error: string) => {
+    const members = await listMembers(pool);
+    return reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw, members, error }));
+  };
+
+  if (!memberId) return respond('A member is required.');
+
+  const outcome = await addEntry(pool, { drawId: id, memberId, selection });
+  if (outcome.kind === 'rejected') return respond(outcome.reason);
+
+  await insertAuditLog(pool, {
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+    action: 'entry_added',
+    entity: 'entry',
+    entityId: outcome.entryId,
+  });
+
+  const refreshed = (await getDraw(pool, id))!;
+  const members = await listMembers(pool);
+  reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw: refreshed, members, flash: 'Entry added.' }));
+});
+
+app.post('/draws/:id/run', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+
+  const { id } = request.params as { id: string };
+  const draw = await getDraw(pool, id);
+  if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
+  if (draw.status !== 'open') {
+    return reply
+      .type('text/html')
+      .send(drawDetailPage({ user: viewUser(request), draw, error: `Draw is already '${draw.status}'.` }));
+  }
+
+  const entriesCount = await countEntries(pool, id);
+  const { workflowId } = await startDrawWorkflow({ drawId: id, drawNumber: draw.drawNumber, entriesCount });
+  await closeDrawAndRecordWorkflow(pool, id, workflowId, entriesCount);
+
+  await insertAuditLog(pool, {
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+    action: 'draw_run',
+    entity: 'draw',
+    entityId: id,
+    workflowId,
+    after: { entriesCount },
+  });
+
+  reply.redirect(`/draws/${id}`);
+});
+
+app.get('/members', async (request, reply) => {
+  const members = await listMembers(pool);
+  reply.type('text/html').send(membersPage({ user: viewUser(request), members }));
+});
+
+app.post('/members', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+
+  const body = request.body as { forename?: string; surname?: string };
+  const forename = (body.forename ?? '').trim();
+  const surname = (body.surname ?? '').trim();
+  if (!forename || !surname) {
+    const members = await listMembers(pool);
+    return reply
+      .type('text/html')
+      .send(membersPage({ user: viewUser(request), members, error: 'Forename and surname are both required.' }));
+  }
+
+  const { id } = await createMember(pool, { forename, surname });
+  await insertAuditLog(pool, {
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+    action: 'member_created',
+    entity: 'member',
+    entityId: id,
+  });
+
+  const members = await listMembers(pool);
+  reply.type('text/html').send(membersPage({ user: viewUser(request), members, flash: 'Member added.' }));
 });
 
 app.get('/tasks/:id', async (request, reply) => {
@@ -260,13 +430,21 @@ app.post('/tasks/:id/resolve', async (request, reply) => {
   if (!requireCsrf(request, reply, request.authCsrf!)) return;
 
   const { id } = request.params as { id: string };
-  const body = request.body as { note?: string };
+  const body = request.body as { note?: string; mechanism?: string };
   const task = await getTask(pool, id);
   if (!task) return reply.code(404).type('text/html').send('<p>Task not found.</p>');
 
   const note = (body.note ?? '').trim();
   if (!note) {
     return reply.type('text/html').send(taskDetailPage({ user: viewUser(request), task, error: 'A resolution note is required.' }));
+  }
+
+  // GAP-24 is still undecided — collected from the human, never defaulted.
+  const mechanism = (body.mechanism ?? '').trim();
+  if (task.kind === 'must_be_won_decision' && !mechanism) {
+    return reply
+      .type('text/html')
+      .send(taskDetailPage({ user: viewUser(request), task, error: 'A must-be-won mechanism is required.' }));
   }
 
   const outcome = await resolveTaskStep(pool, id, request.authUser!.id, note);
@@ -284,7 +462,59 @@ app.post('/tasks/:id/resolve', async (request, reply) => {
     entityId: id,
   });
 
-  const flash = outcome.kind === 'resolved' ? 'Task resolved.' : 'First approval recorded — a different person must approve it a second time.';
+  if (outcome.kind !== 'resolved') {
+    return reply.type('text/html').send(
+      taskDetailPage({
+        user: viewUser(request),
+        task: refreshed,
+        flash: 'First approval recorded — a different person must approve it a second time.',
+      }),
+    );
+  }
+
+  // Fully resolved. The DB write above already happened — a Temporal signal,
+  // once accepted, can't be rolled back, so the human decision stays recorded
+  // regardless of what happens next.
+  let flash = 'Task resolved.';
+  if (refreshed.firstApproverId && refreshed.secondApproverId) {
+    const [firstApprover, secondApprover] = await Promise.all([
+      findUserById(pool, refreshed.firstApproverId),
+      findUserById(pool, refreshed.secondApproverId),
+    ]);
+    const delivery = await deliverTaskDecision(refreshed, {
+      decidedBy: firstApprover?.email ?? refreshed.firstApproverId,
+      secondApproverId: secondApprover?.email ?? refreshed.secondApproverId,
+      mechanism,
+      note,
+    });
+
+    if (delivery.kind === 'delivered') {
+      await insertAuditLog(pool, {
+        actorId: request.authUser!.id,
+        actorLabel: request.authUser!.email,
+        action: 'human_task_signal_delivered',
+        entity: 'human_task',
+        entityId: id,
+        ...(refreshed.workflowId ? { workflowId: refreshed.workflowId } : {}),
+        ...(refreshed.runId ? { runId: refreshed.runId } : {}),
+        after: { signalName: refreshed.signalName },
+      });
+    } else if (delivery.kind === 'failed') {
+      flash = `Task resolved, but delivering the decision to the running process failed: ${delivery.reason} — an operator must check Temporal directly.`;
+      await insertAuditLog(pool, {
+        actorId: request.authUser!.id,
+        actorLabel: request.authUser!.email,
+        action: 'human_task_signal_delivery_failed',
+        entity: 'human_task',
+        entityId: id,
+        ...(refreshed.workflowId ? { workflowId: refreshed.workflowId } : {}),
+        ...(refreshed.runId ? { runId: refreshed.runId } : {}),
+        after: { reason: delivery.reason },
+      });
+    }
+    // 'skipped' — no signal to deliver for this task; nothing to report.
+  }
+
   reply.type('text/html').send(taskDetailPage({ user: viewUser(request), task: refreshed, flash }));
 });
 

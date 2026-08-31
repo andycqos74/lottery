@@ -48,7 +48,19 @@ export class EncryptionCodec implements PayloadCodec {
     const iv = randomBytes(IV_BYTES);
     const cipher = createCipheriv(CIPHER, key, iv);
 
-    const serialised = Buffer.from(JSON.stringify({ metadata: payload.metadata, data: payload.data }), 'utf8');
+    // Real wire payloads carry metadata/data as plain Uint8Array, not Node's
+    // Buffer subclass — JSON.stringify has no toJSON for a bare Uint8Array, so it
+    // serialises as an index-keyed object ({"0":1,"1":2,...}) with no `.length`,
+    // which Buffer.from() cannot reconstruct on the way back out. Base64-encode
+    // explicitly so decodeOne's `Buffer.from(v, 'base64')` always has a real string.
+    const metadataB64 = payload.metadata
+      ? Object.fromEntries(
+          Object.entries(payload.metadata).map(([k, v]) => [k, Buffer.from(v).toString('base64')]),
+        )
+      : null;
+    const dataB64 = payload.data ? Buffer.from(payload.data).toString('base64') : null;
+
+    const serialised = Buffer.from(JSON.stringify({ metadata: metadataB64, data: dataB64 }), 'utf8');
     const ciphertext = Buffer.concat([cipher.update(serialised), cipher.final()]);
     const tag = cipher.getAuthTag();
 

@@ -45,7 +45,8 @@ x-worker: &worker
     temporal: { condition: service_healthy }
     postgres-app: { condition: service_healthy }
   secrets:
-    - codec_key
+    - source: codec_key
+      target: codec
     - app_role_password
   networks: [app, core]
 
@@ -104,7 +105,8 @@ services:
       SESSION_SECRET_FILE: /run/secrets/session_secret
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set in .env}
     secrets:
-      - codec_key
+      - source: codec_key
+        target: codec
       - app_role_password
       - session_secret
     networks: [edge, app, core]
@@ -131,7 +133,8 @@ services:
       REQUIRE_MFA: "true"
       ADMIN_MFA_KEY_FILE: /run/secrets/admin_mfa_key
     secrets:
-      - codec_key
+      - source: codec_key
+        target: codec
       - app_role_password
       - session_secret
       - admin_mfa_key
@@ -150,7 +153,9 @@ services:
       TEMPORAL_CODEC_KEY_DIR: /run/secrets/codec
       TEMPORAL_CODEC_ACTIVE_KEY_ID: ${TEMPORAL_CODEC_ACTIVE_KEY_ID:?set in .env}
       ALLOWED_ORIGIN: ${TEMPORAL_UI_URL:?set in .env}
-    secrets: [codec_key]
+    secrets:
+      - source: codec_key
+        target: codec
     networks: [edge]
 
   temporal-ui:
@@ -162,7 +167,12 @@ services:
       temporal: { condition: service_healthy }
     environment:
       TEMPORAL_ADDRESS: temporal:7233
-      TEMPORAL_UI_PUBLIC_PATH: /
+      # Empty, not "/" — the UI is served at the host root (Caddyfile has no
+      # subpath for TEMPORAL_UI_HOST), and the UI joins this with asset paths
+      # that already start with "/". A literal "/" here doubles the slash
+      # (`//_app/...`), which the browser resolves as a request to a host named
+      # "_app" instead of a same-origin path — DNS fails and the page is blank.
+      TEMPORAL_UI_PUBLIC_PATH: ""
       TEMPORAL_CODEC_ENDPOINT: ${CODEC_SERVER_URL:?set in .env}
       # Never a substitute for the task inbox (GAP-43): this is a developer tool,
       # and a treasurer must not be asked to release a stuck payment from it.

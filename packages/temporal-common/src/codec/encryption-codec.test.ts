@@ -74,4 +74,18 @@ describe('TG-11 — payload encryption', () => {
     const [decoded] = await codec.decode([plain]);
     expect(decoded).toBe(plain);
   });
+
+  it('round-trips a real wire payload, whose metadata/data are plain Uint8Array — not Buffer', async () => {
+    // Buffer.toJSON() special-cases JSON.stringify (-> {type:'Buffer',data:[...]}),
+    // masking a bug that only shows up against the bare Uint8Array the Temporal
+    // core bridge actually hands the codec. Regression for that gap.
+    const codec = new EncryptionCodec(providerA);
+    const original = {
+      metadata: { [METADATA_ENCODING_KEY]: new Uint8Array(Buffer.from('json/plain', 'utf8')) },
+      data: new Uint8Array(Buffer.from(JSON.stringify({ memberId: 'a3f1' }), 'utf8')),
+    };
+    expect(original.data).not.toBeInstanceOf(Buffer);
+    const [decoded] = await codec.decode(await codec.encode([original]));
+    expect(Buffer.from(decoded!.data!).toString('utf8')).toBe(Buffer.from(original.data).toString('utf8'));
+  });
 });

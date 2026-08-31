@@ -9,6 +9,8 @@
   "scripts": { "build": "tsc -b" },
   "dependencies": {
     "@qosfc/db": "workspace:*",
+    "@qosfc/domain": "workspace:*",
+    "@qosfc/temporal-common": "workspace:*",
     "@node-rs/argon2": "^2.0.2",
     "fastify": "^5.6.1",
     "@fastify/cookie": "^11.0.2"

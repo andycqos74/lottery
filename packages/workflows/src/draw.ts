@@ -14,14 +14,15 @@ import {
   jackpotPosition,
   mustBeWonTriggered,
   revenueFor,
-  settleOutcome,
   pence,
   basisPoints,
   type Pence,
 } from '@qosfc/domain';
 import type { createActivities } from '@qosfc/activities';
 
-const { openHumanTask, generateWinningNumbers } = workflow.proxyActivities<ReturnType<typeof createActivities>>({
+const { openHumanTask, generateWinningNumbers, identifyWinners, settleDraw } = workflow.proxyActivities<
+  ReturnType<typeof createActivities>
+>({
   startToCloseTimeout: '2 minutes',
   retry: { initialInterval: '1s', backoffCoefficient: 2, maximumAttempts: 5 },
 });
@@ -42,6 +43,8 @@ export interface DrawState {
   readonly status: 'open' | 'closed' | 'drawn' | 'settled' | 'blocked';
   readonly blockedOn?: string;
   readonly jackpotPreDrawPence?: string;
+  readonly winnersCount?: number;
+  readonly jackpotPaidPence?: string;
 }
 
 export interface DrawWorkflowInput {
@@ -77,7 +80,8 @@ export async function DrawWorkflow(input: DrawWorkflowInput): Promise<DrawState>
   const drawn = await generateWinningNumbers({ drawId: input.drawId, poolN: 20, pickK: 4 });
   state = { ...state, status: 'drawn', jackpotPreDrawPence: position.jackpotPreDrawPence.toString() };
 
-  const winnersCount = 0; // Phase 6: identify_winners activity over the frozen entry set
+  const { winningEntries } = await identifyWinners({ drawId: input.drawId });
+  const winnersCount = winningEntries.length;
 
   // ── GAP-24 ⛔ — block, do not invent a fallback (FR-5.3.5) ──────────────────
   if (mustBeWonTriggered(position.jackpotPreDrawPence, winnersCount, pence(2_000_000))) {
@@ -117,11 +121,22 @@ export async function DrawWorkflow(input: DrawWorkflowInput): Promise<DrawState>
     }
   }
 
-  const outcome = settleOutcome(position.jackpotPreDrawPence, winnersCount);
-  void outcome; // Phase 6: settle_draw writes draw, ledger and prizes in one transaction
+  const settled = await settleDraw({
+    drawId: input.drawId,
+    winningEntries,
+    jackpotPreDrawPence: position.jackpotPreDrawPence.toString(),
+  });
   void drawn;
+  // Entry-purchase-time revenue recognition (good cause / admin shares) is a
+  // separate, unbuilt concern gated on GAP-09/10/27 — not part of settling a
+  // draw's jackpot.
   void alloc;
 
-  state = { ...state, status: 'settled' };
+  state = {
+    ...state,
+    status: 'settled',
+    winnersCount: settled.winnersCount,
+    jackpotPaidPence: settled.jackpotPaidPence,
+  };
   return state;
 }
