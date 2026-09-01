@@ -18,7 +18,13 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import { verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
-import { acceptBankTransactionMatchTx, generateDueEntries, ingestNewStatements } from '@qosfc/activities';
+import {
+  acceptBankTransactionMatchTx,
+  generateDueEntries,
+  ingestNewStatements,
+  recordManualTicket,
+  type ManualTicketSelectionInput,
+} from '@qosfc/activities';
 import { CsvBankFeed } from '@qosfc/adapters-live';
 import {
   addEntry,
@@ -367,6 +373,94 @@ app.post('/draws/:id/entries', async (request, reply) => {
   const refreshed = (await getDraw(pool, id))!;
   const members = await listMembers(pool);
   reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw: refreshed, members, flash: 'Entry added.' }));
+});
+
+app.post('/draws/:id/manual-tickets', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+
+  const { id } = request.params as { id: string };
+  const draw = await getDraw(pool, id);
+  if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
+
+  const body = request.body as {
+    memberId?: string;
+    physicalTicketNumber?: string;
+    purchaseDate?: string;
+    amountPounds?: string;
+    selectionMode?: string;
+    selection?: string;
+  };
+
+  const respond = async (error: string) => {
+    const members = await listMembers(pool);
+    const liveEntryCount = await countEntries(pool, id);
+    return reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw, members, liveEntryCount, error }));
+  };
+
+  const memberId = (body.memberId ?? '').trim();
+  const physicalTicketNumber = (body.physicalTicketNumber ?? '').trim();
+  const purchaseDate = (body.purchaseDate ?? '').trim();
+  if (!memberId) return respond('A member is required.');
+  if (!physicalTicketNumber) return respond('A physical ticket number is required.');
+  if (!purchaseDate) return respond('A purchase date is required.');
+
+  // Parsed as a string, never a float (T-2.1): "12", "12.3" or "12.34" only.
+  const amountMatch = /^(\d+)(?:\.(\d{1,2}))?$/.exec((body.amountPounds ?? '').trim());
+  if (!amountMatch) return respond('Amount paid must be a number of pounds, e.g. 4.00.');
+  const [, poundsStr, penceStr = ''] = amountMatch;
+  const amountPence = BigInt(poundsStr!) * 100n + BigInt(penceStr.padEnd(2, '0'));
+  if (amountPence <= 0n) return respond('Amount paid must be a positive number.');
+
+  const selection: ManualTicketSelectionInput =
+    body.selectionMode === 'manual'
+      ? {
+          mode: 'manual',
+          numbers: (body.selection ?? '')
+            .split(',')
+            .map((s) => Number.parseInt(s.trim(), 10))
+            .filter((n) => !Number.isNaN(n)),
+        }
+      : { mode: 'random' };
+
+  const outcome = await recordManualTicket(pool, {
+    memberId,
+    physicalTicketNumber,
+    purchaseDate,
+    amountPence,
+    selection,
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+  });
+
+  if (outcome.kind === 'rejected') return respond(outcome.reason);
+  if (outcome.kind === 'already_recorded') return respond(`Ticket ${physicalTicketNumber} was already recorded.`);
+
+  // Enter it into this draw right away — future draws consume the remaining
+  // prepaid blocks the same way a standing order's do, via "Generate
+  // standing-order entries" below.
+  const generated = await generateDueEntries(pool, { drawId: id, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
+
+  await insertAuditLog(pool, {
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+    action: 'manual_ticket_entered',
+    entity: 'draw',
+    entityId: id,
+    after: { paymentId: outcome.paymentId, prizeDrawNo: outcome.prizeDrawNo, blocksPurchased: outcome.blocksPurchased },
+  });
+
+  const refreshed = (await getDraw(pool, id))!;
+  const members = await listMembers(pool);
+  const liveEntryCount = await countEntries(pool, id);
+  reply.type('text/html').send(
+    drawDetailPage({
+      user: viewUser(request),
+      draw: refreshed,
+      members,
+      liveEntryCount,
+      flash: `Recorded ticket ${physicalTicketNumber}: ${outcome.blocksPurchased} block(s) purchased, ${generated.generated} entry generated into this draw.`,
+    }),
+  );
 });
 
 app.post('/draws/:id/generate-entries', async (request, reply) => {

@@ -14,6 +14,7 @@ import { generateWinningNumbers, type GenerateNumbersRequest } from './draw/rng.
 import { identifyWinners, type IdentifyWinnersRequest } from './draw/winners.js';
 import { settleDraw, type SettleDrawRequest } from './draw/settle.js';
 import { ingestNewStatements, type IngestNewStatementsRequest } from './reconcile/ingest-statement.js';
+import { recordManualTicket, type RecordManualTicketRequest } from './entries/record-manual-ticket.js';
 
 export function createActivities(ctx: ActivityContext) {
   return {
@@ -27,6 +28,8 @@ export function createActivities(ctx: ActivityContext) {
     settleDraw: (request: SettleDrawRequest) => settleDraw(ctx.pool, request),
 
     ingestNewBankStatements: (request: IngestNewStatementsRequest) => ingestNewStatements(ctx.pool, ctx.providers.bankFeed, request),
+
+    recordManualTicket: (request: RecordManualTicketRequest) => recordManualTicket(ctx.pool, request),
 
     /** Which providers this worker is actually talking to — used by the Phase 1 gate. */
     describeProviders: async () => ({
@@ -53,4 +56,10 @@ export {
   type AcceptMatchOutcome,
 } from './reconcile/match-transactions.js';
 export { generateDueEntries, type GenerateDueEntriesRequest, type GenerateDueEntriesResult } from './draw/generate-entries.js';
+export {
+  recordManualTicket,
+  type RecordManualTicketRequest,
+  type RecordManualTicketOutcome,
+  type ManualTicketSelectionInput,
+} from './entries/record-manual-ticket.js';
 export { writeAudit, type AuditRecord } from './audit.js';

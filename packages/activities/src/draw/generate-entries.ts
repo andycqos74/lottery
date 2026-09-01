@@ -34,7 +34,9 @@ export interface GenerateDueEntriesResult {
   readonly generated: number;
 }
 
-const STANDING_ORDER_CHANNELS = ['so_fps', 'giro', 'branch_cash', 'direct_debit'] as const;
+// 'agent_cash': manually-recorded physical tickets (recordManualTicket) buy
+// prepaid blocks exactly like a standing order does, so they count here too.
+const STANDING_ORDER_CHANNELS = ['so_fps', 'giro', 'branch_cash', 'direct_debit', 'agent_cash'] as const;
 
 export async function generateDueEntries(pool: Pool, request: GenerateDueEntriesRequest): Promise<GenerateDueEntriesResult> {
   return withTransaction(pool, async (client) => {

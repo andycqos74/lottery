@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
-import { COMBINATIONS, isWinningSelection, parseSelection, toSelection, InvalidSelectionError } from './selection.js';
+import { COMBINATIONS, isWinningSelection, parseSelection, randomSelection, toSelection, InvalidSelectionError } from './selection.js';
 
 describe('D3 / FR-3.1 — pick 4 distinct from 1..20', () => {
   it('C(20,4) is 4845', () => {
@@ -27,6 +27,40 @@ describe('D3 / FR-3.1 — pick 4 distinct from 1..20', () => {
     const result = parseSelection([1, 1, 2, 3]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/different/);
+  });
+});
+
+describe('randomSelection — quick pick', () => {
+  it('draws four distinct numbers in range for many seeds', () => {
+    // A real (non-cycling) PRNG, seeded by fast-check: cycling a short fixed
+    // array of doubles can land on fewer than 4 distinct 1..20 buckets and
+    // spin randomSelection's while-loop forever, so the source here must
+    // keep producing fresh values indefinitely, same as Math.random does.
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 2 ** 31 - 1 }), (seed) => {
+        let state = seed;
+        const random = () => {
+          state = (state * 1103515245 + 12345) & 0x7fffffff;
+          return state / 0x7fffffff;
+        };
+        const selection = randomSelection(random);
+        expect(selection).toHaveLength(4);
+        expect(new Set(selection).size).toBe(4);
+        for (const n of selection) {
+          expect(n).toBeGreaterThanOrEqual(1);
+          expect(n).toBeLessThanOrEqual(20);
+        }
+        expect([...selection]).toEqual([...selection].sort((a, b) => a - b));
+      }),
+    );
+  });
+
+  it('is deterministic given a fixed sequence — floor(r*20)+1, sorted', () => {
+    const values = [0.01, 0.99, 0.5, 0.25]; // -> 1, 20, 11, 6
+    let i = 0;
+    const selection = randomSelection(() => values[i++]!);
+    expect(selection).toEqual([1, 6, 11, 20]);
+    expect(i).toBe(4);
   });
 });
 

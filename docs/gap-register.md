@@ -48,6 +48,12 @@ a live adapter puts one into force.
 | GAP-24 | **Roll down to match 3, then match 2, then match 1** — the first tier with a winning entry pays, split equally among that tier's winners. Residual: nobody matching even one number was not covered and still halts. | `resolveMustBeWon()` in `packages/domain/src/allocation.ts` |
 | GAP-33 | **Manual CSV upload**, for now. Open Banking and OCR remain live options for later — the port's per-transaction confidence field exists specifically so swapping to either is a new adapter, not a rewrite. Real column mapping and the FR-5.8.2 continuity trade-off are recorded in the GAP-33/B-10 row above. | `packages/adapters-live/src/bank-feed/csv-bank-feed.ts`; `BANK_FEED=csv` |
 
+## Resolved by client decision (2026-09-01)
+
+| ID | Decision | Recorded in |
+|---|---|---|
+| B-12 | **Manual/physical ticket entry.** Admin staff can key in a physical ticket for an identified member: a physical ticket number (free text, recorded for reference/audit only — never joined against `member_number.prize_draw_no`), a purchase date, and an amount paid. Amount must be a whole multiple of the £2 ticket price; it buys that many prepaid blocks and is treated identically to a standing order from that point on — entered into the currently open draw immediately, and into each future open draw automatically via the existing GAP-17 `prepaid_blocks` machinery. Numbers are either the member's own (as printed on the ticket) or a "quick pick" — a new `selection_source = 'quick_pick'` value, deliberately distinct from GAP-13's still-blocked `'randomly_allocated'`: this is the member's own request to have the system pick, not the system silently defaulting a non-responder. **Not the same problem as GAP-19** (still ⛔): GAP-19 is a bulk agent lodgement with no per-member breakdown at all; this is for a specific, identified member with a known purchase date and amount. | `packages/activities/src/entries/record-manual-ticket.ts` (`recordManualTicket`); `payment.channel = 'agent_cash'` (`db/migrations/0010_manual_ticket_entry.sql`), added to the same standing-order-shaped channel list `generateDueEntries()` reads; `packages/domain/src/selection.ts` (`randomSelection`, entropy injected — this file is imported by workflow code); admin UI at `/draws/:id/manual-tickets` (`apps/admin/src/views.ts`, `drawDetailPage`) |
+
 ## Blocking, and where the code stops
 
 | ID | What is undecided | Where it halts |

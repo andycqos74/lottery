@@ -305,6 +305,33 @@ export function drawDetailPage(opts: {
                  <button type="submit">Add entry</button>
                </form>`
         }
+        ${
+          members.length === 0
+            ? ''
+            : `<h2 style="font-size:1.05rem;margin-top:1.5rem">Record a physical/agent ticket</h2>
+               <form method="post" action="/draws/${draw.id}/manual-tickets">
+                 ${csrfField(opts.user.csrf)}
+                 <label for="manualMemberId">Member</label>
+                 <select id="manualMemberId" name="memberId" required>${members.map(memberOption).join('')}</select>
+                 <label for="physicalTicketNumber">Physical ticket number</label>
+                 <input type="text" id="physicalTicketNumber" name="physicalTicketNumber" required placeholder="e.g. 4471" />
+                 <label for="purchaseDate">Purchase date</label>
+                 <input type="date" id="purchaseDate" name="purchaseDate" required />
+                 <label for="amountPounds">Amount paid (&pound;)</label>
+                 <input type="number" id="amountPounds" name="amountPounds" required min="2" step="2" placeholder="2.00" />
+                 <fieldset style="border:none;padding:0;margin:0.5rem 0">
+                   <label><input type="radio" name="selectionMode" value="random" checked /> Pick random numbers</label>
+                   <label><input type="radio" name="selectionMode" value="manual" /> Enter numbers from the ticket</label>
+                   <input type="text" name="selection" placeholder="2, 4, 5, 14" />
+                 </fieldset>
+                 <button type="submit">Record ticket</button>
+               </form>
+               <p class="muted" style="margin:0.4rem 0 0">
+                 Amount paid must be a whole multiple of &pound;2 — it buys that many prepaid blocks (GAP-17),
+                 entered into this draw now and into each future open draw automatically, exactly like a
+                 standing order.
+               </p>`
+        }
         <form method="post" action="/draws/${draw.id}/generate-entries" style="margin-top:1.25rem">
           ${csrfField(opts.user.csrf)}
           <button type="submit">Generate standing-order entries (GAP-17)</button>

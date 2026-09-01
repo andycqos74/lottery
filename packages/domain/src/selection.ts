@@ -104,6 +104,26 @@ export function countMatches(selection: Selection, winningNumbers: Selection): n
 }
 
 /**
+ * A "quick pick" — the member (or whoever is keying in their physical ticket)
+ * asked for random numbers rather than choosing their own. `random` is
+ * injected rather than read from `Math.random()` here: this file is imported
+ * by workflow code (see eslint.config.js), so it must stay as pure and
+ * replay-safe as everything else in `packages/domain` — the caller (an
+ * activity, never workflow code) supplies the actual entropy.
+ *
+ * Distinct from GAP-13's 'randomly_allocated': that is the system silently
+ * defaulting a non-responder's selection. This is the member's own choice to
+ * have the system pick for them, recorded as `selection_source = 'quick_pick'`.
+ */
+export function randomSelection(random: () => number): Selection {
+  const numbers = new Set<number>();
+  while (numbers.size < NUMBERS_PICK_K) {
+    numbers.add(Math.floor(random() * NUMBERS_POOL_N) + 1);
+  }
+  return toSelection([...numbers]);
+}
+
+/**
  * GAP-15: must a member holding multiple tickets carry DISTINCT selections?
  * Member_Conversion shows up to 5 tickets/week (prize draw no 22). Unresolved,
  * and it interacts with GAP-22 on how a shared jackpot is counted, so it cannot
