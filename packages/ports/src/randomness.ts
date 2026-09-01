@@ -1,5 +1,10 @@
 /**
- * Draw randomness — GAP-21 ⛔.
+ * Draw randomness — GAP-21, resolved (client decision, 2026-08-30, see
+ * docs/gap-register.md): draw from RANDOM.ORG's HTTP client interface.
+ * `RANDOMNESS_SOURCE=random_org` is what puts that decision into effect; the
+ * default remains `unset` until an operator sets it deliberately, and whether
+ * independent assurance is ALSO required for the licensing authority's sign-off
+ * is a residual question this decision did not cover.
  *
  * ⚠ T-6.1, described by the technical spec as "the single most important line in
  * this document":
@@ -24,6 +29,13 @@ import type { Selection } from '@qosfc/domain';
 export type RandomnessSourceKind =
   /** Node's CSPRNG. Defensible, but "defensible" is the regulator's word to say. */
   | 'csprng'
+  /**
+   * GAP-21, resolved (client decision): RANDOM.ORG's HTTP client interface
+   * (https://www.random.org/clients/http/) — true randomness from atmospheric
+   * noise, not a certified/signed service. See
+   * packages/adapters-live/src/randomness/random-org.ts.
+   */
+  | 'random_org'
   /** A certified third-party draw service. */
   | 'external_certified'
   /** A physical draw, its result keyed in by an operator under dual control. */

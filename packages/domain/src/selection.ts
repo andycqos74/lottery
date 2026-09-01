@@ -89,6 +89,21 @@ export function isWinningSelection(selection: Selection, winningNumbers: Selecti
 export const formatSelection = (s: Selection): string => s.join(' · ');
 
 /**
+ * How many of the four drawn numbers does this selection hit?
+ *
+ * D4 still stands for the ordinary weekly game: matching 3 or fewer pays
+ * nothing (FR-6.2), and `isWinningSelection` above stays a boolean for exactly
+ * that reason. This exists ONLY for the must-be-won roll-down (GAP-24,
+ * resolved — see `resolveMustBeWon` in allocation.ts): match-3/2/1 are not
+ * ordinary prize tiers, they are the roll-down ladder used exclusively when
+ * the £20,000 cap is reached with no match-4 winner.
+ */
+export function countMatches(selection: Selection, winningNumbers: Selection): number {
+  const winning = new Set(winningNumbers);
+  return selection.reduce((count, n) => count + (winning.has(n) ? 1 : 0), 0);
+}
+
+/**
  * GAP-15: must a member holding multiple tickets carry DISTINCT selections?
  * Member_Conversion shows up to 5 tickets/week (prize draw no 22). Unresolved,
  * and it interacts with GAP-22 on how a shared jackpot is counted, so it cannot

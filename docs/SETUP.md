@@ -143,8 +143,9 @@ running a draw) and basic member management, alongside the task inbox — `/task
 covers open, resolved, and all tasks (`?status=`), and resolving a task
 delivers the Temporal signal it names to the blocked workflow
 (gap-register.md B-7/B-8/B-9). It also uploads bank statement CSVs (§2.2) and
-reviews the reconciliation tasks they raise. **Not yet built:** payments and
-anything else gated on GAP-10/17/19/21/24, none of which are resolved yet (§9).
+reviews the reconciliation tasks they raise. GAP-17/21/24/33 are resolved (see
+`docs/gap-register.md`); **not yet built:** payments and anything else gated
+on GAP-09/10/19, none of which are resolved yet (§9).
 
 ### 2.2 Bank reconciliation (GAP-33)
 
@@ -369,7 +370,9 @@ packages/temporal-common/  codec, PII guard, task queues, workflow IDs, client
 packages/workflows/        workflow code only — determinism-linted
 packages/activities/       all I/O
 packages/adapters-sandbox/ dummy implementations of every port
-packages/adapters-live/    empty until GAP-09/10/30/33 resolve
+packages/adapters-live/    random.org (real) and CSV bank feed (real); card
+                           portal and own-SUN Bacs are shape-only pending
+                           GAP-09/10; empty for GAP-30
 apps/{api,admin,worker}/   the three runnable processes
 services/sandbox-providers/ the dummy PSP, Bacs bureau, bank feed
 services/codec-server/     payload decryption oracle for the Temporal UI
@@ -468,15 +471,13 @@ But several must be answered **before real money moves**.
 | Gap | Decision needed | Who decides |
 |---|---|---|
 | **GAP-01** ⛔ | ELM vs in-house, formally | Client/board |
-| **GAP-21** ⛔ | RNG method and whether independent assurance is required | **Licensing authority** |
-| **GAP-24** ⛔ | The must-be-won mechanism at £20,000 — D4 removed every lower tier, so there is nothing to roll down to | Client, **published to members** |
+| **GAP-21** *(source resolved: RANDOM.ORG)* | Whether independent assurance is ALSO required | **Licensing authority** |
 | **GAP-36 / 31** ⛔ | Statutory limits and the good-cause floor, from the regulator not a spreadsheet | **Licensing authority** |
 | **GAP-42** ⛔ | Escalation policy and a named on-call | Client |
-| **GAP-09 / 10** ⛔ | PSP and Bacs route | Client + acquirer |
-| **GAP-17 / 18** ⛔ | Entry generation mechanism, and prepaid vs credit timing | Client |
-| **GAP-19** ⛔ | Entry model for the 782 agent-collected members — 49% of the register | Client |
+| **GAP-09** ⛔ | PSP — working assumption is a third-party hosted card portal, still to be confirmed | Client + acquirer |
+| **GAP-10** ⛔ | Bacs route — working assumption is the society's own SUN, still to be confirmed | Client + acquirer |
+| **GAP-19** ⛔ | Entry model for the 782 agent-collected members — 49% of the register. Working assumption: manual entry, scoped for a future phase | Client |
 | **GAP-13** ⛔ | Random allocation of numbers for non-responders | Client |
-| **GAP-33** ⛔ | Bank feed: Open Banking vs CSV vs continued OCR | Client + bank |
 | **GAP-05** ⛔ | How member contact details are captured — no email exists in 1,591 rows | Client |
 | **GAP-02** ⛔ | Switch-over date; cut-over vs parallel run | Client |
 | **GAP-16** | Draw day, time and cut-off — `DrawWorkflow` cannot be scheduled without it | Client |
