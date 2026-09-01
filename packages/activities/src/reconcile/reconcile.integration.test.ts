@@ -13,6 +13,7 @@ import { dirname, resolve } from 'node:path';
 import { createPool, migrate, type Pool } from '@qosfc/db';
 import type { BankCredit, BankFeed, StatementSummary } from '@qosfc/ports';
 import { ingestNewStatements } from './ingest-statement.js';
+import { acceptBankTransactionMatchTx } from './match-transactions.js';
 
 const url = process.env['TEST_APP_DB_URL'];
 const describeDb = url ? describe : describe.skip;
@@ -169,5 +170,47 @@ describeDb('bank reconciliation (GAP-33 / TG-04)', () => {
 
     const { rows } = await pool.query(`SELECT count(*)::int AS n FROM bank_transaction WHERE external_id = 'shared-txn-1'`);
     expect(rows[0].n).toBe(1);
+  });
+
+  it('FR-5.8.3: a human accepting a candidate creates the payment the review task alone does not', async () => {
+    const feed = new FakeBankFeed([
+      {
+        summary: { statementNumber: 200, periodStart: '2026-08-25', periodEnd: '2026-08-25', openingBalancePence: '1000', closingBalancePence: '1500', source: 'csv', sourceRef: 'test' },
+        credits: [
+          {
+            externalId: 'review-accept-1',
+            valueDate: '2026-08-25',
+            description: 'STANDING ORDER REF 4521',
+            typeRaw: 'Standing Order',
+            amountPence: '500',
+            isCredit: true,
+            extractedReference: '4521',
+          },
+        ],
+      },
+    ]);
+    const [result] = await ingestNewStatements(pool, feed, { actorLabel: 'test' });
+    expect(result).toMatchObject({ ambiguous: 1 });
+
+    const { rows: txnRows } = await pool.query<{ id: string }>(`SELECT id FROM bank_transaction WHERE external_id = 'review-accept-1'`);
+    const bankTransactionId = txnRows[0]!.id;
+
+    const outcome = await acceptBankTransactionMatchTx(pool, bankTransactionId, 4521, memberId);
+    if (outcome.kind !== 'accepted') throw new Error(`expected accepted, got ${JSON.stringify(outcome)}`);
+
+    const { rows: paymentRows } = await pool.query(
+      `SELECT member_id, amount_pence::text, status, allocation_method FROM payment WHERE id = $1`,
+      [outcome.paymentId],
+    );
+    expect(paymentRows[0]).toMatchObject({ member_id: memberId, amount_pence: '500', status: 'allocated', allocation_method: 'manual_review_accept' });
+
+    const { rows: statusRows } = await pool.query(`SELECT match_status::text FROM bank_transaction WHERE id = $1`, [bankTransactionId]);
+    expect(statusRows[0]!.match_status).toBe('matched');
+
+    // Idempotent: accepting again (e.g. a double-submitted form) does not create a second payment.
+    const again = await acceptBankTransactionMatchTx(pool, bankTransactionId, 4521, memberId);
+    expect(again).toEqual({ kind: 'already_decided' });
+    const { rows: countRows } = await pool.query(`SELECT count(*)::int AS n FROM payment WHERE bank_transaction_id = $1`, [bankTransactionId]);
+    expect(countRows[0].n).toBe(1);
   });
 });

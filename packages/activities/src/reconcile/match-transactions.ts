@@ -13,6 +13,7 @@
  * FR-5.8.3: the evidence breakdown is what turns a sub-threshold match into an
  * identity question ("which member is this?") rather than an amount conflict.
  */
+import { withTransaction, type Pool } from '@qosfc/db';
 import type { PoolClient } from 'pg';
 
 export type MatchOutcome = 'matched' | 'ambiguous' | 'unmatched';
@@ -105,7 +106,10 @@ export async function matchBankTransaction(client: PoolClient, bankTransactionId
       [bankTransactionId, soleAutoAcceptable.prize_draw_no],
     );
     await client.query(`UPDATE bank_transaction SET match_status = 'matched' WHERE id = $1`, [bankTransactionId]);
-    await createAllocatedPayment(client, bankTransactionId, soleAutoAcceptable.member_id!, txn.amount_pence);
+    await createAllocatedPayment(client, bankTransactionId, soleAutoAcceptable.member_id!, txn.amount_pence, {
+      method: 'csv_reference_auto_accept',
+      confidence: 1.0,
+    });
     return 'matched';
   }
 
@@ -122,18 +126,95 @@ export async function matchBankTransaction(client: PoolClient, bankTransactionId
   return status;
 }
 
-async function createAllocatedPayment(client: PoolClient, bankTransactionId: string, memberId: string, amountPence: string): Promise<void> {
+async function createAllocatedPayment(
+  client: PoolClient,
+  bankTransactionId: string,
+  memberId: string,
+  amountPence: string,
+  allocation: { readonly method: string; readonly confidence: number },
+): Promise<string> {
   const { rows } = await client.query<{ channel: string; value_date: string }>(
     `SELECT channel, value_date::text FROM bank_transaction WHERE id = $1`,
     [bankTransactionId],
   );
   const txn = rows[0]!;
-  await client.query(
+  const inserted = await client.query<{ id: string }>(
     `INSERT INTO payment (member_id, channel, received_date, amount_pence, bank_transaction_id, allocation_confidence, allocation_method, status, idempotency_key)
-     VALUES ($1,$2,$3,$4,$5,1.0,'csv_reference_auto_accept','allocated',$6)
-     ON CONFLICT (idempotency_key) DO NOTHING`,
-    [memberId, txn.channel, txn.value_date, amountPence, bankTransactionId, `bank_txn:${bankTransactionId}`],
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'allocated',$8)
+     ON CONFLICT (idempotency_key) DO NOTHING
+     RETURNING id`,
+    [memberId, txn.channel, txn.value_date, amountPence, bankTransactionId, allocation.confidence, allocation.method, `bank_txn:${bankTransactionId}`],
   );
+  if (inserted.rows[0]) return inserted.rows[0].id;
+  const existing = await client.query<{ id: string }>(`SELECT id FROM payment WHERE idempotency_key = $1`, [`bank_txn:${bankTransactionId}`]);
+  return existing.rows[0]!.id;
+}
+
+export type AcceptMatchOutcome =
+  | { readonly kind: 'accepted'; readonly paymentId: string }
+  | { readonly kind: 'no_such_candidate' }
+  | { readonly kind: 'already_decided' }
+  | { readonly kind: 'unlinked_prize_draw_no' };
+
+/**
+ * A human, reviewing a `bank_transaction_review` task, picks which candidate
+ * prize draw number the credit actually belongs to (FR-5.8.3). This is the
+ * manual counterpart to the sole-auto-acceptable path in `matchBankTransaction`
+ * above — same payment creation, same idempotency key, just a person choosing
+ * instead of the threshold.
+ */
+export async function acceptBankTransactionMatch(
+  client: PoolClient,
+  bankTransactionId: string,
+  prizeDrawNo: number,
+  decidedBy: string,
+): Promise<AcceptMatchOutcome> {
+  const { rows: txnRows } = await client.query<{ match_status: string; amount_pence: string }>(
+    `SELECT match_status, amount_pence::text FROM bank_transaction WHERE id = $1 FOR UPDATE`,
+    [bankTransactionId],
+  );
+  const txn = txnRows[0];
+  if (!txn) return { kind: 'no_such_candidate' };
+  if (txn.match_status === 'matched') return { kind: 'already_decided' };
+
+  const { rows: candRows } = await client.query<{ confidence: string; member_id: string | null }>(
+    `SELECT mc.confidence::text, mn.member_id
+       FROM match_candidate mc
+       JOIN member_number mn ON mn.prize_draw_no = mc.prize_draw_no
+      WHERE mc.bank_transaction_id = $1 AND mc.prize_draw_no = $2`,
+    [bankTransactionId, prizeDrawNo],
+  );
+  const candidate = candRows[0];
+  if (!candidate) return { kind: 'no_such_candidate' };
+  if (!candidate.member_id) return { kind: 'unlinked_prize_draw_no' };
+
+  await client.query(
+    `UPDATE match_candidate SET decision = 'accepted', decided_by = $3, decided_at = now()
+      WHERE bank_transaction_id = $1 AND prize_draw_no = $2`,
+    [bankTransactionId, prizeDrawNo, decidedBy],
+  );
+  await client.query(
+    `UPDATE match_candidate SET decision = 'rejected', decided_by = $3, decided_at = now()
+      WHERE bank_transaction_id = $1 AND prize_draw_no <> $2 AND decision = 'pending_review'`,
+    [bankTransactionId, prizeDrawNo, decidedBy],
+  );
+  await client.query(`UPDATE bank_transaction SET match_status = 'matched' WHERE id = $1`, [bankTransactionId]);
+
+  const paymentId = await createAllocatedPayment(client, bankTransactionId, candidate.member_id, txn.amount_pence, {
+    method: 'manual_review_accept',
+    confidence: Number(candidate.confidence),
+  });
+  return { kind: 'accepted', paymentId };
+}
+
+/** Pool-level convenience wrapper — admin calls this directly, the same way it calls `ingestNewStatements`. */
+export async function acceptBankTransactionMatchTx(
+  pool: Pool,
+  bankTransactionId: string,
+  prizeDrawNo: number,
+  decidedBy: string,
+): Promise<AcceptMatchOutcome> {
+  return withTransaction(pool, (client) => acceptBankTransactionMatch(client, bankTransactionId, prizeDrawNo, decidedBy));
 }
 
 async function openReviewTask(client: PoolClient, bankTransactionId: string, status: MatchOutcome, detail: string): Promise<void> {

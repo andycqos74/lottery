@@ -129,6 +129,8 @@ export interface HumanTask {
   readonly detail: string;
   readonly consequenceIfIgnored: string;
   readonly gapId: string | null;
+  readonly entityType: string | null;
+  readonly entityId: string | null;
   readonly workflowId: string | null;
   readonly runId: string | null;
   readonly signalName: string | null;
@@ -150,6 +152,8 @@ function mapTaskRow(row: {
   detail: string;
   consequence_if_ignored: string;
   gap_id: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
   workflow_id: string | null;
   run_id: string | null;
   signal_name: string | null;
@@ -170,6 +174,8 @@ function mapTaskRow(row: {
     detail: row.detail,
     consequenceIfIgnored: row.consequence_if_ignored,
     gapId: row.gap_id,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
     workflowId: row.workflow_id,
     runId: row.run_id,
     signalName: row.signal_name,
@@ -185,7 +191,7 @@ function mapTaskRow(row: {
   };
 }
 
-const TASK_COLUMNS = `id, kind, title, detail, consequence_if_ignored, gap_id, workflow_id, run_id,
+const TASK_COLUMNS = `id, kind, title, detail, consequence_if_ignored, gap_id, entity_type, entity_id, workflow_id, run_id,
        signal_name, update_name, opened_at, due_at, status, requires_second_approver,
        first_approver_id, second_approver_id, resolved_by, resolved_at`;
 
@@ -595,5 +601,75 @@ export async function getBankStatement(pool: Pool, id: string): Promise<BankStat
     ambiguous: transactions.filter((t) => t.matchStatus === 'ambiguous').length,
     unmatched: transactions.filter((t) => t.matchStatus === 'unmatched').length,
     transactions,
+  };
+}
+
+// ── Bank transaction review (FR-5.8.3) ──────────────────────────────────────
+// What a `bank_transaction_review` human_task needs to let a person actually
+// pick a candidate, rather than just close the task with a note and leave the
+// money unallocated — see match-transactions.ts's `acceptBankTransactionMatchTx`.
+
+export interface BankMatchCandidate {
+  readonly prizeDrawNo: number;
+  readonly confidence: number;
+  readonly memberName: string | null;
+  readonly decision: string;
+}
+
+export interface BankTransactionForReview {
+  readonly id: string;
+  readonly valueDate: string;
+  readonly description: string | null;
+  readonly amountPence: string;
+  readonly extractedReference: string | null;
+  readonly matchStatus: string;
+  readonly candidates: readonly BankMatchCandidate[];
+}
+
+export async function getBankTransactionForReview(pool: Pool, bankTransactionId: string): Promise<BankTransactionForReview | undefined> {
+  const { rows: txnRows } = await pool.query<{
+    id: string;
+    value_date: string;
+    description: string | null;
+    amount_pence: string;
+    extracted_reference: string | null;
+    match_status: string;
+  }>(
+    `SELECT id, value_date::text, description, amount_pence::text, extracted_reference, match_status::text
+       FROM bank_transaction WHERE id = $1`,
+    [bankTransactionId],
+  );
+  const txn = txnRows[0];
+  if (!txn) return undefined;
+
+  const { rows: candRows } = await pool.query<{
+    prize_draw_no: number;
+    confidence: string;
+    decision: string;
+    forename: string | null;
+    surname: string | null;
+  }>(
+    `SELECT mc.prize_draw_no, mc.confidence::text, mc.decision::text, m.forename, m.surname
+       FROM match_candidate mc
+       JOIN member_number mn ON mn.prize_draw_no = mc.prize_draw_no
+       LEFT JOIN member m ON m.id = mn.member_id
+      WHERE mc.bank_transaction_id = $1
+      ORDER BY mc.confidence DESC`,
+    [bankTransactionId],
+  );
+
+  return {
+    id: txn.id,
+    valueDate: txn.value_date,
+    description: txn.description,
+    amountPence: txn.amount_pence,
+    extractedReference: txn.extracted_reference,
+    matchStatus: txn.match_status,
+    candidates: candRows.map((c) => ({
+      prizeDrawNo: c.prize_draw_no,
+      confidence: Number(c.confidence),
+      memberName: c.forename && c.surname ? `${c.forename} ${c.surname}` : null,
+      decision: c.decision,
+    })),
   };
 }

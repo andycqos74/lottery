@@ -174,6 +174,14 @@ auto-accept confidence threshold is unset, so **every credit becomes a review
 task** — nothing is auto-allocated yet. That is the documented default
 behaviour (gap-register.md TG-04), not a bug.
 
+**Reviewing a task is what allocates the money (B-11).** A
+`bank_transaction_review` task's detail page lists its candidates; picking one
+and resolving calls `acceptBankTransactionMatchTx()`, which accepts that
+candidate, marks the transaction matched, and creates the `payment` row
+(FR-5.8.3) — before that, closing the task alone left the credit reviewed but
+still unallocated. Leaving no candidate selected still resolves the task, for
+a transaction genuinely nobody can identify.
+
 **Continuity and dedup.** `ingestNewStatements` only runs the FR-5.8.2 opening/
 closing-balance check when a batch actually carries both figures. When it
 doesn't (the real export, always), the batch is ingested anyway with
@@ -184,6 +192,34 @@ plausible weekly/monthly upload pattern) do not double-count the transactions
 they share. Re-introducing statement-level continuity checking for this feed
 is explicit future-phase work, contingent on the bank ever offering an export
 that carries a balance.
+
+### 2.2.1 Standing orders into entries (GAP-17)
+
+Reconciling a payment (2.2) does not by itself put a member into a draw —
+GAP-17's resolved strategy (prepaid blocks: each payment buys whole tickets
+up front, each draw consumes one) has to actually run. On a draw's detail
+page while it's still `open`, "Generate standing-order entries" calls
+`generateDueEntries()` (`packages/activities/src/draw/generate-entries.ts`)
+for every member with an active persistent selection
+(`selection_standing`, GAP-14) and a linked `member_number`: it derives their
+remaining prepaid blocks (allocated standing-order/Giro/branch payments,
+divided into ticket-price blocks, minus entries already drawn against them
+with `funding_source = 'prepaid'`) and writes one entry per member who still
+has a block left. Idempotent on `<drawId>:<prizeDrawNo>:1`, same as the
+manual entry path (T-8.2), so re-running it is harmless.
+
+This only takes effect once GAP-17's strategy is actually active —
+`entriesDue()` halts with an `UnresolvedGapError` otherwise, surfaced in the
+admin console as a plain error rather than a 500. Activate it once with:
+
+```bash
+ENTRY_STRATEGY=prepaid_blocks ENTRY_STRATEGY_CONFIRMED_BY="Andy Cowan, 2026-08-30" \
+NOTE="GAP-17 activated for testing" pnpm activate-config
+```
+
+Do this **before** closing entries for a draw — once closed, the entry set is
+frozen (FR-5.3.3) and a member who hasn't been swept in yet gets nothing that
+week.
 
 ### 2.3 Member portal (GAP-04, GAP-09)
 

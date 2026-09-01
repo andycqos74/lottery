@@ -46,5 +46,11 @@ export type { IdentifyWinnersRequest, IdentifyWinnersResult } from './draw/winne
 export type { SettleDrawRequest, SettleDrawResult } from './draw/settle.js';
 export { ingestNewStatements } from './reconcile/ingest-statement.js';
 export type { IngestNewStatementsRequest, IngestedStatement } from './reconcile/ingest-statement.js';
-export { matchBankTransaction, type MatchOutcome } from './reconcile/match-transactions.js';
+export {
+  matchBankTransaction,
+  acceptBankTransactionMatchTx,
+  type MatchOutcome,
+  type AcceptMatchOutcome,
+} from './reconcile/match-transactions.js';
+export { generateDueEntries, type GenerateDueEntriesRequest, type GenerateDueEntriesResult } from './draw/generate-entries.js';
 export { writeAudit, type AuditRecord } from './audit.js';

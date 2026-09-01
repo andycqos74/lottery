@@ -18,7 +18,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import { verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
-import { ingestNewStatements } from '@qosfc/activities';
+import { acceptBankTransactionMatchTx, generateDueEntries, ingestNewStatements } from '@qosfc/activities';
 import { CsvBankFeed } from '@qosfc/adapters-live';
 import {
   addEntry,
@@ -30,6 +30,7 @@ import {
   findUserByEmail,
   findUserById,
   getBankStatement,
+  getBankTransactionForReview,
   getDraw,
   getTask,
   insertAuditLog,
@@ -368,6 +369,48 @@ app.post('/draws/:id/entries', async (request, reply) => {
   reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw: refreshed, members, flash: 'Entry added.' }));
 });
 
+app.post('/draws/:id/generate-entries', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+
+  const { id } = request.params as { id: string };
+  const draw = await getDraw(pool, id);
+  if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
+
+  try {
+    const result = await generateDueEntries(pool, { drawId: id, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
+    await insertAuditLog(pool, {
+      actorId: request.authUser!.id,
+      actorLabel: request.authUser!.email,
+      action: 'draw_entries_generated',
+      entity: 'draw',
+      entityId: id,
+      after: result,
+    });
+    const refreshed = (await getDraw(pool, id))!;
+    const members = await listMembers(pool);
+    const liveEntryCount = await countEntries(pool, id);
+    reply.type('text/html').send(
+      drawDetailPage({
+        user: viewUser(request),
+        draw: refreshed,
+        members,
+        liveEntryCount,
+        flash: `Generated ${result.generated} of ${result.candidatesConsidered} standing-order entries considered.`,
+      }),
+    );
+  } catch (error) {
+    // GAP-17 is resolved (prepaid_blocks), but that only takes effect once
+    // `pnpm activate-config` has actually written and activated a
+    // config_version row carrying it — until then entriesDue() halts here
+    // exactly as it's meant to (gap-register.md), and this is where that
+    // becomes a readable message instead of a 500.
+    const message = error instanceof Error ? error.message : String(error);
+    const members = await listMembers(pool);
+    const liveEntryCount = await countEntries(pool, id);
+    reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw, members, liveEntryCount, error: message }));
+  }
+});
+
 app.post('/draws/:id/run', async (request, reply) => {
   if (!requireCsrf(request, reply, request.authCsrf!)) return;
 
@@ -485,28 +528,65 @@ app.get('/tasks/:id', async (request, reply) => {
   const { id } = request.params as { id: string };
   const task = await getTask(pool, id);
   if (!task) return reply.code(404).type('text/html').send('<p>Task not found.</p>');
-  reply.type('text/html').send(taskDetailPage({ user: viewUser(request), task }));
+  const bankTransaction =
+    task.kind === 'bank_transaction_review' && task.entityId ? await getBankTransactionForReview(pool, task.entityId) : undefined;
+  reply.type('text/html').send(taskDetailPage({ user: viewUser(request), task, ...(bankTransaction ? { bankTransaction } : {}) }));
 });
 
 app.post('/tasks/:id/resolve', async (request, reply) => {
   if (!requireCsrf(request, reply, request.authCsrf!)) return;
 
   const { id } = request.params as { id: string };
-  const body = request.body as { note?: string; mechanism?: string };
+  const body = request.body as { note?: string; mechanism?: string; acceptedPrizeDrawNo?: string };
   const task = await getTask(pool, id);
   if (!task) return reply.code(404).type('text/html').send('<p>Task not found.</p>');
 
+  const rerender = async (error: string) => {
+    const bankTransaction =
+      task.kind === 'bank_transaction_review' && task.entityId ? await getBankTransactionForReview(pool, task.entityId) : undefined;
+    return reply
+      .type('text/html')
+      .send(taskDetailPage({ user: viewUser(request), task, ...(bankTransaction ? { bankTransaction } : {}), error }));
+  };
+
   const note = (body.note ?? '').trim();
   if (!note) {
-    return reply.type('text/html').send(taskDetailPage({ user: viewUser(request), task, error: 'A resolution note is required.' }));
+    return rerender('A resolution note is required.');
   }
 
   // GAP-24 is still undecided — collected from the human, never defaulted.
   const mechanism = (body.mechanism ?? '').trim();
   if (task.kind === 'must_be_won_decision' && !mechanism) {
-    return reply
-      .type('text/html')
-      .send(taskDetailPage({ user: viewUser(request), task, error: 'A must-be-won mechanism is required.' }));
+    return rerender('A must-be-won mechanism is required.');
+  }
+
+  // FR-5.8.3: picking a candidate is what creates the payment — the task
+  // resolution below is just the paper trail that a human looked at it.
+  // Applied BEFORE resolving the task, so a rejected match leaves the task
+  // open rather than silently closing it with nothing allocated.
+  let paymentFlash = '';
+  const acceptedPrizeDrawNoRaw = (body.acceptedPrizeDrawNo ?? '').trim();
+  if (task.kind === 'bank_transaction_review' && task.entityId && acceptedPrizeDrawNoRaw) {
+    const prizeDrawNo = Number.parseInt(acceptedPrizeDrawNoRaw, 10);
+    const matchOutcome = await acceptBankTransactionMatchTx(pool, task.entityId, prizeDrawNo, request.authUser!.id);
+    if (matchOutcome.kind !== 'accepted') {
+      const reason =
+        matchOutcome.kind === 'already_decided'
+          ? 'This transaction was already matched — refresh and check its current status.'
+          : matchOutcome.kind === 'unlinked_prize_draw_no'
+            ? 'That prize draw number is not linked to a member, so no payment can be allocated to it.'
+            : 'That candidate no longer exists for this transaction.';
+      return rerender(reason);
+    }
+    await insertAuditLog(pool, {
+      actorId: request.authUser!.id,
+      actorLabel: request.authUser!.email,
+      action: 'bank_transaction_matched',
+      entity: 'payment',
+      entityId: matchOutcome.paymentId,
+      after: { bankTransactionId: task.entityId, prizeDrawNo },
+    });
+    paymentFlash = ` Payment ${matchOutcome.paymentId} allocated to prize draw no. ${prizeDrawNo}.`;
   }
 
   const outcome = await resolveTaskStep(pool, id, request.authUser!.id, note);
@@ -537,7 +617,7 @@ app.post('/tasks/:id/resolve', async (request, reply) => {
   // Fully resolved. The DB write above already happened — a Temporal signal,
   // once accepted, can't be rolled back, so the human decision stays recorded
   // regardless of what happens next.
-  let flash = 'Task resolved.';
+  let flash = `Task resolved.${paymentFlash}`;
   if (refreshed.firstApproverId && refreshed.secondApproverId) {
     const [firstApprover, secondApprover] = await Promise.all([
       findUserById(pool, refreshed.firstApproverId),

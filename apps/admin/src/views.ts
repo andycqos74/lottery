@@ -1,5 +1,14 @@
 import { formatPence, pence } from '@qosfc/domain';
-import type { BankStatementDetail, BankStatementSummary, BankTransactionRow, DashboardCounts, DrawSummary, HumanTask, MemberSummary } from './db.js';
+import type {
+  BankStatementDetail,
+  BankStatementSummary,
+  BankTransactionForReview,
+  BankTransactionRow,
+  DashboardCounts,
+  DrawSummary,
+  HumanTask,
+  MemberSummary,
+} from './db.js';
 
 export function escapeHtml(value: string): string {
   return value
@@ -296,6 +305,15 @@ export function drawDetailPage(opts: {
                  <button type="submit">Add entry</button>
                </form>`
         }
+        <form method="post" action="/draws/${draw.id}/generate-entries" style="margin-top:1.25rem">
+          ${csrfField(opts.user.csrf)}
+          <button type="submit">Generate standing-order entries (GAP-17)</button>
+        </form>
+        <p class="muted" style="margin:0.4rem 0 0">
+          Consumes one prepaid ticket block per member with an active persistent selection and an
+          allocated standing-order/Giro/branch payment — do this before closing entries, or those
+          members get nothing this draw.
+        </p>
         <form method="post" action="/draws/${draw.id}/run" style="margin-top:1.25rem">
           ${csrfField(opts.user.csrf)}
           <button type="submit">Close entries &amp; run this draw →</button>
@@ -386,9 +404,36 @@ export function membersPage(opts: {
   });
 }
 
+function bankTransactionReviewField(txn: BankTransactionForReview): string {
+  const rows = txn.candidates
+    .map(
+      (c) => `<label class="candidate-row" style="display:block;font-weight:normal">
+        <input type="radio" name="acceptedPrizeDrawNo" value="${c.prizeDrawNo}" ${c.decision !== 'pending_review' ? 'disabled' : ''} />
+        Prize draw no. ${c.prizeDrawNo} — ${escapeHtml(c.memberName ?? 'unlinked, no member')}
+        (confidence ${c.confidence.toFixed(2)}${c.decision !== 'pending_review' ? `, already ${escapeHtml(c.decision)}` : ''})
+      </label>`,
+    )
+    .join('\n');
+  return `
+    <div class="card" style="margin:0 0 1rem">
+      <dl class="kv">
+        <dt>Value date</dt><dd>${escapeHtml(txn.valueDate)}</dd>
+        <dt>Description</dt><dd>${escapeHtml(txn.description ?? '—')}</dd>
+        <dt>Amount</dt><dd>${formatPence(pence(BigInt(txn.amountPence)))}</dd>
+        <dt>Reference</dt><dd>${escapeHtml(txn.extractedReference ?? '—')}</dd>
+      </dl>
+      <p class="muted">Pick the member this credit belongs to. Choosing one creates the payment
+      (FR-5.8.3) when you resolve below; leaving none selected resolves the task without allocating
+      anything — for a transaction genuinely nobody can identify.</p>
+      ${rows || '<p class="muted">No candidates were found for this transaction.</p>'}
+    </div>
+  `;
+}
+
 export function taskDetailPage(opts: {
   user: { displayName: string; id: string; csrf: string };
   task: HumanTask;
+  bankTransaction?: BankTransactionForReview;
   flash?: string;
   error?: string;
 }): string {
@@ -425,11 +470,20 @@ export function taskDetailPage(opts: {
            <input type="text" id="mechanism" name="mechanism" required
                   placeholder="What mechanism does this decision use — not for the system to invent" />`
         : '';
+    // FR-5.8.3: picking a candidate here is what actually creates the payment
+    // (match-transactions.ts's acceptBankTransactionMatchTx) — resolving the
+    // task alone does not. Leaving every radio unselected records the review
+    // without allocating anything, for a transaction nobody can identify.
+    const bankMatchField =
+      task.kind === 'bank_transaction_review' && opts.bankTransaction
+        ? bankTransactionReviewField(opts.bankTransaction)
+        : '';
     actionSection = `
       ${approvalNote}
       <form method="post" action="/tasks/${task.id}/resolve">
         ${csrfField(opts.user.csrf)}
         ${mechanismField}
+        ${bankMatchField}
         <label for="note">Resolution note</label>
         <textarea id="note" name="note" required placeholder="What was decided, and why"></textarea>
         <button type="submit">${task.requiresSecondApprover ? 'Record approval' : 'Resolve task'}</button>
