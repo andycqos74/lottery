@@ -493,7 +493,7 @@ export function bankStatementsPage(opts: {
             const f = this.files[0]; if (!f) return;
             f.text().then(t => { document.getElementById('csv').value = t; });
           " />
-          <label for="csv">CSV content (canonical schema — see docs/SETUP.md §2.2)</label>
+          <label for="csv">CSV content — the bank's own "TransactionHistory" export, or the canonical schema (docs/SETUP.md §2.2); the format is detected from the header</label>
           <textarea id="csv" name="csv" required placeholder="#statement 1 2026-08-01 2026-08-07 0 5000&#10;value_date,description,type,amount_pence,is_credit,reference"></textarea>
           <button type="submit">Ingest</button>
         </form>

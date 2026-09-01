@@ -149,11 +149,22 @@ anything else gated on GAP-10/17/19/21/24, none of which are resolved yet (§9).
 ### 2.2 Bank reconciliation (GAP-33)
 
 Andy Cowan confirmed CSV upload as the starting point; Open Banking is left for
-future consideration, and OCR is not pursued. Admin uploads a statement export
-at `/bank-statements` in the canonical CSV schema documented on
-`CsvBankFeed` (`packages/adapters-live/src/bank-feed/csv-bank-feed.ts`) —
-mapping an actual bank's raw export columns onto that schema is a small,
-separate step once a real sample file exists (not yet done; see B-10 below).
+future consideration, and OCR is not pursued. Admin uploads a file at
+`/bank-statements`; `CsvBankFeed`
+(`packages/adapters-live/src/bank-feed/csv-bank-feed.ts`) detects which of two
+schemas it is from its header row and dispatches accordingly:
+
+- The bank's own **"TransactionHistory" export**
+  (`real-export-csv-format.ts`, B-10 — resolved once a real sample existed).
+  This is a flat transaction list, not a statement: it carries no
+  opening/closing balance at all, so FR-5.8.2's continuity check cannot run
+  against it. Andy Cowan's direction: drop the check for this feed rather than
+  block on it — see the ingestion note below.
+- The **canonical schema** we invented before a real sample existed
+  (`csv-format.ts`, `#statement <n> ... <openingPence> <closingPence>` plus a
+  header row) — still supported, mainly useful for fixtures and tests, since
+  it is the one shape that does carry a balance and so is the one FR-5.8.2 can
+  actually check.
 
 Each row becomes a `bank_transaction`; credits are matched against
 `member_number.prize_draw_no` by reference
@@ -161,6 +172,17 @@ Each row becomes a `bank_transaction`; credits are matched against
 auto-accept confidence threshold is unset, so **every credit becomes a review
 task** — nothing is auto-allocated yet. That is the documented default
 behaviour (gap-register.md TG-04), not a bug.
+
+**Continuity and dedup.** `ingestNewStatements` only runs the FR-5.8.2 opening/
+closing-balance check when a batch actually carries both figures. When it
+doesn't (the real export, always), the batch is ingested anyway with
+`chain_verified = false`, and correctness instead rests on
+`bank_transaction.external_id` — a stable per-row identity from the source,
+unique in the database — so that two exports whose date ranges overlap (a
+plausible weekly/monthly upload pattern) do not double-count the transactions
+they share. Re-introducing statement-level continuity checking for this feed
+is explicit future-phase work, contingent on the bank ever offering an export
+that carries a balance.
 
 ### 2.3 Member portal (GAP-04, GAP-09)
 

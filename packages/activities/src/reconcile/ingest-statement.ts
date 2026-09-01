@@ -68,19 +68,27 @@ export async function ingestNewStatements(
         return { statementId: existing.rows[0].id, statementNumber: summary.statementNumber, alreadyIngested: true, ...counts };
       }
 
-      const previous = await client.query<{ closing_balance_pence: string }>(
-        `SELECT closing_balance_pence::text FROM bank_statement
-          WHERE statement_number < $1 ORDER BY statement_number DESC LIMIT 1`,
-        [summary.statementNumber],
-      );
-      const chainVerified =
-        previous.rows.length === 0 || previous.rows[0]!.closing_balance_pence === summary.openingBalancePence;
-      if (!chainVerified) {
-        throw new Error(
-          `Statement ${summary.statementNumber}'s opening balance (${summary.openingBalancePence}p) does not ` +
-            `match the previous statement's closing balance (${previous.rows[0]!.closing_balance_pence}p). ` +
-            `FR-5.8.2: continuity must hold before extraction — nothing has been ingested.`,
+      // A source with no balance at all (the real "TransactionHistory" export,
+      // B-10) cannot be continuity-checked — that is a documented reduction in
+      // what is verified, not a failure, per Andy Cowan's direction. Dedup then
+      // rests entirely on `external_id` (below), not on this chain.
+      const hasBalances = summary.openingBalancePence !== undefined && summary.closingBalancePence !== undefined;
+      let chainVerified = false;
+      if (hasBalances) {
+        const previous = await client.query<{ closing_balance_pence: string }>(
+          `SELECT closing_balance_pence::text FROM bank_statement
+            WHERE statement_number < $1 AND closing_balance_pence IS NOT NULL
+            ORDER BY statement_number DESC LIMIT 1`,
+          [summary.statementNumber],
         );
+        chainVerified = previous.rows.length === 0 || previous.rows[0]!.closing_balance_pence === summary.openingBalancePence;
+        if (!chainVerified) {
+          throw new Error(
+            `Statement ${summary.statementNumber}'s opening balance (${summary.openingBalancePence}p) does not ` +
+              `match the previous statement's closing balance (${previous.rows[0]!.closing_balance_pence}p). ` +
+              `FR-5.8.2: continuity must hold before extraction — nothing has been ingested.`,
+          );
+        }
       }
 
       const { credits } = await bankFeed.extractCredits({ statementNumber: summary.statementNumber });
@@ -90,22 +98,27 @@ export async function ingestNewStatements(
         `INSERT INTO bank_statement
            (id, statement_number, period_start, period_end, opening_balance_pence, closing_balance_pence,
             source, chain_verified, source_ref)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,true,$8)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           statementId,
           summary.statementNumber,
           summary.periodStart,
           summary.periodEnd,
-          summary.openingBalancePence,
-          summary.closingBalancePence,
+          summary.openingBalancePence ?? null,
+          summary.closingBalancePence ?? null,
           summary.source,
+          chainVerified,
           summary.sourceRef,
         ],
       );
 
+      // Only newly-inserted transactions get matched — a row already ingested
+      // by an earlier, overlapping upload keeps whatever match/task it already
+      // has rather than being re-evaluated (and re-queued) a second time.
       const transactionIds: string[] = [];
       for (const row of credits) {
-        transactionIds.push(await insertTransaction(client, statementId, row));
+        const { id, isNew } = await insertTransaction(client, statementId, row);
+        if (isNew) transactionIds.push(id);
       }
 
       await writeAudit(client, {
@@ -142,13 +155,19 @@ export async function ingestNewStatements(
   return results;
 }
 
-async function insertTransaction(client: PoolClient, statementId: string, row: BankCredit): Promise<string> {
+async function insertTransaction(
+  client: PoolClient,
+  statementId: string,
+  row: BankCredit,
+): Promise<{ id: string; isNew: boolean }> {
   const id = randomUUID();
-  await client.query(
+  const { rows } = await client.query<{ id: string }>(
     `INSERT INTO bank_transaction
        (id, statement_id, value_date, description, type_raw, channel, amount_pence, is_credit,
-        extracted_reference, extracted_name, ocr_confidence)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        extracted_reference, extracted_name, ocr_confidence, external_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
+     RETURNING id`,
     [
       id,
       statementId,
@@ -161,9 +180,13 @@ async function insertTransaction(client: PoolClient, statementId: string, row: B
       row.extractedReference ?? null,
       row.extractedName ?? null,
       row.confidence ?? null,
+      row.externalId,
     ],
   );
-  return id;
+  if (rows[0]) return { id: rows[0].id, isNew: true };
+
+  const existing = await client.query<{ id: string }>(`SELECT id FROM bank_transaction WHERE external_id = $1`, [row.externalId]);
+  return { id: existing.rows[0]!.id, isNew: false };
 }
 
 async function matchStatusCounts(

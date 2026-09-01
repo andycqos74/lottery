@@ -122,4 +122,52 @@ describeDb('bank reconciliation (GAP-33 / TG-04)', () => {
     const [result] = await ingestNewStatements(pool, feed, { actorLabel: 'test' });
     expect(result).toMatchObject({ alreadyIngested: true });
   });
+
+  it('ingests a batch with no balance at all (B-10: the real export is a transaction history, not a statement)', async () => {
+    const feed = new FakeBankFeed([
+      {
+        summary: { statementNumber: 100, periodStart: '2026-08-22', periodEnd: '2026-08-22', source: 'csv', sourceRef: 'history.csv' },
+        credits: [
+          { externalId: 'hist-1', valueDate: '2026-08-22', description: 'unclear payment', typeRaw: 'Transfer', amountPence: '500', isCredit: true },
+        ],
+      },
+    ]);
+
+    const [result] = await ingestNewStatements(pool, feed, { actorLabel: 'test' });
+    expect(result).toMatchObject({ alreadyIngested: false, transactionCount: 1, unmatched: 1 });
+
+    const { rows } = await pool.query<{ opening_balance_pence: string | null; chain_verified: boolean }>(
+      `SELECT opening_balance_pence, chain_verified FROM bank_statement WHERE statement_number = 100`,
+    );
+    expect(rows[0]).toMatchObject({ opening_balance_pence: null, chain_verified: false });
+  });
+
+  it('does not double-count a transaction that appears in two overlapping no-balance uploads', async () => {
+    const sharedCredit: BankCredit = {
+      externalId: 'shared-txn-1',
+      valueDate: '2026-08-23',
+      description: 'unclear payment two',
+      typeRaw: 'Transfer',
+      amountPence: '700',
+      isCredit: true,
+    };
+    const first = new FakeBankFeed([
+      { summary: { statementNumber: 101, periodStart: '2026-08-23', periodEnd: '2026-08-23', source: 'csv', sourceRef: 'a.csv' }, credits: [sharedCredit] },
+    ]);
+    const second = new FakeBankFeed([
+      { summary: { statementNumber: 102, periodStart: '2026-08-23', periodEnd: '2026-08-24', source: 'csv', sourceRef: 'b.csv' }, credits: [sharedCredit] },
+    ]);
+
+    const [firstResult] = await ingestNewStatements(pool, first, { actorLabel: 'test' });
+    expect(firstResult).toMatchObject({ transactionCount: 1, unmatched: 1 });
+
+    const [secondResult] = await ingestNewStatements(pool, second, { actorLabel: 'test' });
+    // The row is present in this batch's file (transactionCount: 1) but was
+    // already ingested from the first upload, so it is neither re-inserted nor
+    // re-matched (matched + ambiguous + unmatched all stay at 0 for this batch).
+    expect(secondResult).toMatchObject({ transactionCount: 1, matched: 0, ambiguous: 0, unmatched: 0 });
+
+    const { rows } = await pool.query(`SELECT count(*)::int AS n FROM bank_transaction WHERE external_id = 'shared-txn-1'`);
+    expect(rows[0].n).toBe(1);
+  });
 });

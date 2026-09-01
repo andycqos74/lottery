@@ -31,6 +31,7 @@ to the plausible-looking one.
 | B-8 | **Draw administration surface.** `/draws` list, `/draws/new`, `/draws/:id` detail, and a "run" action now exist. | `apps/admin/src/index.ts`, `apps/admin/src/views.ts` |
 | B-9 | **Task decisions now reach the workflow they blocked.** Resolving a `human_task` delivers the named Temporal signal (currently scoped to `must_be_won_decision`; other signal/update names are reported as not-yet-wired rather than silently dropped). | `apps/admin/src/temporal.ts` (`deliverTaskDecision`) |
 | GAP-33 | **CSV upload first; Open Banking left for future consideration.** OCR is not pursued either — confirmed by Andy Cowan. The `BankFeed` port was built to fit all three candidate shapes from day one, so this was a selection, not a rewrite. | `BANK_FEED=csv`; `packages/adapters-live/src/bank-feed/csv-bank-feed.ts`; reconciliation in `packages/activities/src/reconcile/` |
+| GAP-33 / B-10 | **Real column mapping done; FR-5.8.2 continuity dropped for this feed.** The bank's actual export is a "TransactionHistory" report, not a statement — it has no opening/closing balance column at all, so the continuity check that requires one cannot run against it. Andy Cowan's direction: drop the check for this feed rather than block on it, dedupe by transaction identity instead (`bank_transaction.external_id`, unique), and revisit continuity checking — a future-phase item — only if the bank ever offers a balance-bearing export. | `packages/adapters-live/src/bank-feed/real-export-csv-format.ts`; `db/migrations/0009_bank_transaction_no_balance_feed.sql`; `ingestNewStatements` in `packages/activities/src/reconcile/ingest-statement.ts` |
 | GAP-04 | **Legacy members will get logins.** Their existing standing orders continue running unchanged; translating them into the new payment/entry model (`payment_method`/`subscription`) is explicit **future-phase work**, not part of this build — confirmed by Andy Cowan. | `member_credential` (`db/migrations/0008_member_login.sql`); portal auth in `apps/api/src/auth.ts`. Legacy-standing-order translation: not started, deliberately |
 
 ## Blocking, and where the code stops
@@ -101,7 +102,7 @@ to the plausible-looking one.
 | B-4 | Domain names and TLS ownership. | Relative to the existing Wix estate |
 | B-5 | 16 GB needed for T1 + entity-per-member. | Budget confirmation, or reopen TG-12 before Phase 5 |
 | B-6 | Codec key recovery custody. | Who holds the off-machine copy, and where |
-| B-10 | `CsvBankFeed` (GAP-33) reads a canonical CSV schema we defined ourselves — nobody has yet mapped a real bank export's actual column layout onto it. | A real bank statement CSV export, to write the one-time column mapping |
+| B-10 *(resolved)* | `CsvBankFeed` (GAP-33) reads a canonical CSV schema we defined ourselves — nobody had yet mapped a real bank export's actual column layout onto it. | Done: `real-export-csv-format.ts` maps the bank's "TransactionHistory" export directly; `CsvBankFeed` detects which of the two schemas an uploaded file is by its header. Surfaced a new limitation, recorded against GAP-33 above: that export carries no balance, so FR-5.8.2 continuity does not run against it |
 
 ## When a decision arrives
 

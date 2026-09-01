@@ -16,8 +16,15 @@ export interface StatementSummary {
   readonly statementNumber: number;
   readonly periodStart: string;
   readonly periodEnd: string;
-  readonly openingBalancePence: PenceString;
-  readonly closingBalancePence: PenceString;
+  /**
+   * Absent when the source cannot supply a balance at all — a raw transaction
+   * history export, rather than a statement (GAP-33, B-10). FR-5.8.2's
+   * continuity check only runs when both are present; it is not a failure for
+   * a feed to omit them, only a documented reduction in what is verified —
+   * confirmed as an accepted, future-revisitable trade-off by Andy Cowan.
+   */
+  readonly openingBalancePence?: PenceString;
+  readonly closingBalancePence?: PenceString;
   readonly source: BankFeedSource;
   /** Object store key. T-9.5: never the bytes — statement scans are personal data. */
   readonly sourceRef: string;
