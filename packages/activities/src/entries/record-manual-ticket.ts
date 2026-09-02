@@ -11,6 +11,12 @@
  * is recording the purchase and the selection; entering it into whichever
  * draw is currently open is `generateDueEntries()`'s job, unchanged, called
  * again by the caller after this succeeds (see apps/admin/src/index.ts).
+ *
+ * `memberId` here always names an agent-type member (db/migrations/0011),
+ * never the actual player — the player who bought the physical ticket has no
+ * account and QOSFC cannot identify or contact them. The ticket is attributed
+ * to the agent who sold it, so that if it wins, notification (GAP-30) reaches
+ * someone real. Enforced here, not only by the admin UI's dropdown.
  */
 import { withTransaction, type Pool } from '@qosfc/db';
 import {
@@ -69,8 +75,18 @@ export async function recordManualTicket(pool: Pool, request: RecordManualTicket
     const { rows: existing } = await client.query<{ id: string }>(`SELECT id FROM payment WHERE idempotency_key = $1`, [idempotencyKey]);
     if (existing[0]) return { kind: 'already_recorded', paymentId: existing[0].id };
 
-    const { rows: memberRows } = await client.query<{ id: string }>(`SELECT id FROM member WHERE id = $1`, [request.memberId]);
+    const { rows: memberRows } = await client.query<{ id: string; member_type: string }>(
+      `SELECT id, member_type FROM member WHERE id = $1`,
+      [request.memberId],
+    );
     if (!memberRows[0]) return { kind: 'rejected', reason: 'Member not found.' };
+    if (memberRows[0].member_type !== 'agent') {
+      // The player has no account and QOSFC cannot contact them directly, so
+      // a physical ticket is always attributed to an agent-type member, never
+      // a player (db/migrations/0011) — enforced here, not only by the admin
+      // UI's dropdown, since this is the authoritative validation layer.
+      return { kind: 'rejected', reason: 'A physical ticket can only be attributed to an agent-type member.' };
+    }
 
     const { rows: nextNoRows } = await client.query<{ next: number }>(`SELECT COALESCE(MAX(prize_draw_no), 99999) + 1 AS next FROM member_number`);
     const prizeDrawNo = nextNoRows[0]!.next;

@@ -42,6 +42,7 @@ import {
   insertAuditLog,
   listBankStatements,
   listDraws,
+  listAgentMembers,
   listMembers,
   listTasksByStatus,
   resolveTaskStep,
@@ -327,12 +328,14 @@ app.get('/draws/:id', async (request, reply) => {
   if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
   const open = draw.status === 'open';
   const members = open ? await listMembers(pool) : undefined;
+  const agents = open ? await listAgentMembers(pool) : undefined;
   const liveEntryCount = open ? await countEntries(pool, id) : undefined;
   reply.type('text/html').send(
     drawDetailPage({
       user: viewUser(request),
       draw,
       ...(members ? { members } : {}),
+      ...(agents ? { agents } : {}),
       ...(liveEntryCount !== undefined ? { liveEntryCount } : {}),
     }),
   );
@@ -383,7 +386,7 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
   if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
 
   const body = request.body as {
-    memberId?: string;
+    agentMemberId?: string;
     physicalTicketNumber?: string;
     purchaseDate?: string;
     amountPounds?: string;
@@ -393,14 +396,15 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
 
   const respond = async (error: string) => {
     const members = await listMembers(pool);
+    const agents = await listAgentMembers(pool);
     const liveEntryCount = await countEntries(pool, id);
-    return reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw, members, liveEntryCount, error }));
+    return reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw, members, agents, liveEntryCount, error }));
   };
 
-  const memberId = (body.memberId ?? '').trim();
+  const agentMemberId = (body.agentMemberId ?? '').trim();
   const physicalTicketNumber = (body.physicalTicketNumber ?? '').trim();
   const purchaseDate = (body.purchaseDate ?? '').trim();
-  if (!memberId) return respond('A member is required.');
+  if (!agentMemberId) return respond('An agent is required.');
   if (!physicalTicketNumber) return respond('A physical ticket number is required.');
   if (!purchaseDate) return respond('A purchase date is required.');
 
@@ -423,7 +427,7 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
       : { mode: 'random' };
 
   const outcome = await recordManualTicket(pool, {
-    memberId,
+    memberId: agentMemberId,
     physicalTicketNumber,
     purchaseDate,
     amountPence,
@@ -437,8 +441,18 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
 
   // Enter it into this draw right away — future draws consume the remaining
   // prepaid blocks the same way a standing order's do, via "Generate
-  // standing-order entries" below.
-  const generated = await generateDueEntries(pool, { drawId: id, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
+  // standing-order entries" below. GAP-17 may still be unactivated in a given
+  // environment (config_version.entry_strategy unset) — the ticket is already
+  // recorded at this point, so that failure must not look like the whole
+  // action failed; report it as a flash, not a 500.
+  let entryFlash = '';
+  try {
+    const generated = await generateDueEntries(pool, { drawId: id, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
+    entryFlash = `${generated.generated} entry generated into this draw.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    entryFlash = `Recorded, but could not enter it into this draw yet: ${message}`;
+  }
 
   await insertAuditLog(pool, {
     actorId: request.authUser!.id,
@@ -451,14 +465,16 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
 
   const refreshed = (await getDraw(pool, id))!;
   const members = await listMembers(pool);
+  const agents = await listAgentMembers(pool);
   const liveEntryCount = await countEntries(pool, id);
   reply.type('text/html').send(
     drawDetailPage({
       user: viewUser(request),
       draw: refreshed,
       members,
+      agents,
       liveEntryCount,
-      flash: `Recorded ticket ${physicalTicketNumber}: ${outcome.blocksPurchased} block(s) purchased, ${generated.generated} entry generated into this draw.`,
+      flash: `Recorded ticket ${physicalTicketNumber}: ${outcome.blocksPurchased} block(s) purchased. ${entryFlash}`,
     }),
   );
 });

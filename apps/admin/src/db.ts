@@ -388,6 +388,7 @@ export interface MemberSummary {
   readonly forename: string | null;
   readonly surname: string | null;
   readonly status: string;
+  readonly memberType: string;
   readonly entryCount: number;
 }
 
@@ -397,9 +398,10 @@ export async function listMembers(pool: Pool, limit = 200): Promise<MemberSummar
     forename: string | null;
     surname: string | null;
     status: string;
+    member_type: string;
     entry_count: string;
   }>(
-    `SELECT m.id, m.forename, m.surname, m.status, count(e.id) AS entry_count
+    `SELECT m.id, m.forename, m.surname, m.status, m.member_type, count(e.id) AS entry_count
        FROM member m LEFT JOIN entry e ON e.member_id = m.id
       GROUP BY m.id
       ORDER BY m.created_at DESC
@@ -411,14 +413,29 @@ export async function listMembers(pool: Pool, limit = 200): Promise<MemberSummar
     forename: r.forename,
     surname: r.surname,
     status: r.status,
+    memberType: r.member_type,
     entryCount: Number(r.entry_count),
   }));
 }
 
-export async function createMember(pool: Pool, input: { forename: string; surname: string }): Promise<{ id: string }> {
+/**
+ * Agent-type members only — who a physical/agent ticket (GAP-17 prepaid
+ * blocks via recordManualTicket) is attributed to, since the actual player
+ * has no account and QOSFC cannot identify or contact them directly
+ * (db/migrations/0011). Deliberately not the legacy `agent` table.
+ */
+export async function listAgentMembers(pool: Pool, limit = 200): Promise<MemberSummary[]> {
+  const all = await listMembers(pool, limit);
+  return all.filter((m) => m.memberType === 'agent');
+}
+
+export async function createMember(
+  pool: Pool,
+  input: { forename: string; surname: string; memberType?: 'player' | 'agent' },
+): Promise<{ id: string }> {
   const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO member (forename, surname, status) VALUES ($1, $2, 'active') RETURNING id`,
-    [input.forename, input.surname],
+    `INSERT INTO member (forename, surname, status, member_type) VALUES ($1, $2, 'active', $3) RETURNING id`,
+    [input.forename, input.surname, input.memberType ?? 'player'],
   );
   return { id: rows[0]!.id };
 }

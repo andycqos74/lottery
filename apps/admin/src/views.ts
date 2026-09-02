@@ -258,6 +258,7 @@ export function drawDetailPage(opts: {
   user: { displayName: string; csrf: string };
   draw: DrawSummary;
   members?: MemberSummary[];
+  agents?: MemberSummary[];
   liveEntryCount?: number;
   error?: string;
   flash?: string;
@@ -305,14 +306,20 @@ export function drawDetailPage(opts: {
                  <button type="submit">Add entry</button>
                </form>`
         }
-        ${
-          members.length === 0
-            ? ''
-            : `<h2 style="font-size:1.05rem;margin-top:1.5rem">Record a physical/agent ticket</h2>
-               <form method="post" action="/draws/${draw.id}/manual-tickets">
+        ${(() => {
+          const agents = opts.agents ?? [];
+          return `<h2 style="font-size:1.05rem;margin-top:1.5rem">Record a physical/agent ticket</h2>
+               ${
+                 agents.length === 0
+                   ? `<p class="muted">No agent members yet — <a href="/members">add one</a> first (Type: Agent).</p>`
+                   : `<form method="post" action="/draws/${draw.id}/manual-tickets">
                  ${csrfField(opts.user.csrf)}
-                 <label for="manualMemberId">Member</label>
-                 <select id="manualMemberId" name="memberId" required>${members.map(memberOption).join('')}</select>
+                 <label for="agentMemberId">Agent</label>
+                 <select id="agentMemberId" name="agentMemberId" required>${agents.map(memberOption).join('')}</select>
+                 <p class="muted" style="margin:0.2rem 0 0.6rem">
+                   The ticket is attributed to the agent, not the player — the player has no account
+                   and QOSFC cannot contact them directly. If it wins, notification goes to the agent.
+                 </p>
                  <label for="physicalTicketNumber">Physical ticket number</label>
                  <input type="text" id="physicalTicketNumber" name="physicalTicketNumber" required placeholder="e.g. 4471" />
                  <label for="purchaseDate">Purchase date</label>
@@ -331,7 +338,8 @@ export function drawDetailPage(opts: {
                  entered into this draw now and into each future open draw automatically, exactly like a
                  standing order.
                </p>`
-        }
+               }`;
+        })()}
         <form method="post" action="/draws/${draw.id}/generate-entries" style="margin-top:1.25rem">
           ${csrfField(opts.user.csrf)}
           <button type="submit">Generate standing-order entries (GAP-17)</button>
@@ -389,6 +397,7 @@ function memberRow(m: MemberSummary): string {
   return `<tr>
     <td>${escapeHtml(label)}</td>
     <td><span class="badge">${escapeHtml(m.status)}</span></td>
+    <td>${escapeHtml(m.memberType)}</td>
     <td>${m.entryCount}</td>
   </tr>`;
 }
@@ -414,6 +423,16 @@ export function membersPage(opts: {
           <input type="text" id="forename" name="forename" required />
           <label for="surname">Surname</label>
           <input type="text" id="surname" name="surname" required />
+          <label for="memberType">Type</label>
+          <select id="memberType" name="memberType">
+            <option value="player" selected>Player</option>
+            <option value="agent">Agent</option>
+          </select>
+          <p class="muted" style="margin:0.2rem 0 0.6rem">
+            Agent: sells physical tickets to players who have no account of their own — see
+            "Record a physical/agent ticket" on an open draw. Contact details recorded here are
+            who a winning physical ticket notifies.
+          </p>
           <button type="submit">Add member</button>
         </form>
       </div>
@@ -422,7 +441,7 @@ export function membersPage(opts: {
           opts.members.length === 0
             ? '<p class="muted">No members yet.</p>'
             : `<table>
-                 <thead><tr><th>Name</th><th>Status</th><th>Entries</th></tr></thead>
+                 <thead><tr><th>Name</th><th>Status</th><th>Type</th><th>Entries</th></tr></thead>
                  <tbody>${rows}</tbody>
                </table>`
         }
