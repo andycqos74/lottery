@@ -21,14 +21,22 @@ export type StartPurchaseOutcome =
   | { readonly kind: 'started'; readonly redirectUrl: string; readonly sessionId: string }
   | { readonly kind: 'rejected'; readonly reason: string };
 
+// A member paying for more than one draw at once is buying prepaid blocks
+// (GAP-17) exactly like a standing order or an agent-collected physical
+// ticket does — these are the block sizes the payment page offers.
+export const PURCHASE_BLOCK_SIZES = [1, 4, 12] as const;
+
 export async function startEntryPurchase(
   pool: Pool,
   gateway: PaymentGateway,
-  input: { memberId: string; selection: readonly number[]; returnUrl: string; cancelUrl: string },
+  input: { memberId: string; selection: readonly number[]; blocks: number; returnUrl: string; cancelUrl: string },
 ): Promise<StartPurchaseOutcome> {
   const selection = [...new Set(input.selection)].sort((a, b) => a - b);
   if (selection.length !== 4 || selection.some((n) => n < 1 || n > 20)) {
     return { kind: 'rejected', reason: 'A selection must be four distinct numbers between 1 and 20.' };
+  }
+  if (!PURCHASE_BLOCK_SIZES.includes(input.blocks as (typeof PURCHASE_BLOCK_SIZES)[number])) {
+    return { kind: 'rejected', reason: 'Choose 1, 4, or 12 draws.' };
   }
 
   const draw = await getOpenDraw(pool);
@@ -36,9 +44,9 @@ export async function startEntryPurchase(
     return { kind: 'rejected', reason: 'No draw is currently open for entries.' };
   }
 
-  const amountPence = TICKET_PRICE_PENCE.toString();
+  const amountPence = (TICKET_PRICE_PENCE * BigInt(input.blocks)).toString();
   const session = await gateway.createHostedSession({
-    idempotencyKey: idempotencyKey(`entry-purchase:${input.memberId}:${draw.id}:${selection.join('-')}`),
+    idempotencyKey: idempotencyKey(`entry-purchase:${input.memberId}:${draw.id}:${selection.join('-')}:${input.blocks}`),
     amountPence,
     currency: 'GBP',
     // An identifier only — never a member name (T-1.3).
@@ -48,10 +56,10 @@ export async function startEntryPurchase(
   });
 
   await pool.query(
-    `INSERT INTO pending_entry_purchase (session_id, member_id, draw_id, selection, amount_pence)
-     VALUES ($1,$2,$3,$4,$5)
+    `INSERT INTO pending_entry_purchase (session_id, member_id, draw_id, selection, amount_pence, blocks)
+     VALUES ($1,$2,$3,$4,$5,$6)
      ON CONFLICT (session_id) DO NOTHING`,
-    [session.sessionId, input.memberId, draw.id, selection, amountPence],
+    [session.sessionId, input.memberId, draw.id, selection, amountPence, input.blocks],
   );
 
   return { kind: 'started', redirectUrl: session.redirectUrl, sessionId: session.sessionId };
@@ -112,23 +120,49 @@ export async function completeEntryPurchase(
       return { kind: 'payment_failed', reason: 'The draw closed before this payment completed. Contact QOSFC for a refund.' };
     }
 
-    const { rows: nextNoRows } = await client.query<{ next: number }>(
-      `SELECT COALESCE(MAX(prize_draw_no), 99999) + 1 AS next FROM member_number`,
+    // A member who has already bought entries keeps the same legacy-shaped
+    // identifier (FR-1.3's immutability applies to a portal-minted number too
+    // — it goes on the ticket stub the member is shown) rather than minting a
+    // fresh one every purchase.
+    const { rows: existingNoRows } = await client.query<{ prize_draw_no: number }>(
+      `SELECT prize_draw_no FROM member_number WHERE member_id = $1 LIMIT 1`,
+      [pending.member_id],
     );
-    const prizeDrawNo = nextNoRows[0]!.next;
-    await client.query(`INSERT INTO member_number (prize_draw_no, member_id, row_type) VALUES ($1, $2, 'member')`, [
-      prizeDrawNo,
-      pending.member_id,
-    ]);
+    let prizeDrawNo = existingNoRows[0]?.prize_draw_no;
+    if (prizeDrawNo === undefined) {
+      const { rows: nextNoRows } = await client.query<{ next: number }>(
+        `SELECT COALESCE(MAX(prize_draw_no), 99999) + 1 AS next FROM member_number`,
+      );
+      prizeDrawNo = nextNoRows[0]!.next;
+      await client.query(`INSERT INTO member_number (prize_draw_no, member_id, row_type) VALUES ($1, $2, 'member')`, [
+        prizeDrawNo,
+        pending.member_id,
+      ]);
+    }
+
+    // Numbers stay entered into every future open draw until changed (GAP-14):
+    // close whatever standing selection was there before and open this one.
+    await client.query(
+      `UPDATE selection_standing SET effective_to = CURRENT_DATE WHERE prize_draw_no = $1 AND slot = 1 AND effective_to IS NULL`,
+      [prizeDrawNo],
+    );
+    await client.query(
+      `INSERT INTO selection_standing (prize_draw_no, slot, selection, source) VALUES ($1, 1, $2, 'member_chosen')`,
+      [prizeDrawNo, pending.selection],
+    );
 
     const { rows: entryRows } = await client.query<{ id: string }>(
       `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, stake_pence, funding_source, idempotency_key)
        VALUES ($1,$2,$3,$4,$5,'card',$6)
        RETURNING id`,
-      [pending.draw_id, pending.member_id, prizeDrawNo, pending.selection, pending.amount_pence, `entry-purchase:${sessionId}`],
+      [pending.draw_id, pending.member_id, prizeDrawNo, pending.selection, TICKET_PRICE_PENCE.toString(), `entry-purchase:${sessionId}`],
     );
     const entryId = entryRows[0]!.id;
 
+    // The full block payment (may be more than this one entry's stake — the
+    // remaining prepaid blocks are drawn down automatically by
+    // generateDueEntries() as future draws open, the same path a standing
+    // order or an agent-collected physical ticket already uses).
     await client.query(
       `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
        VALUES ($1,'card',CURRENT_DATE,$2,'allocated',$3)

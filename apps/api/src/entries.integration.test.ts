@@ -102,6 +102,7 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
     const started = await startEntryPurchase(pool, gateway, {
       memberId,
       selection: [4, 2, 14, 9],
+      blocks: 1,
       returnUrl: 'https://portal.test/return',
       cancelUrl: 'https://portal.test/cancel',
     });
@@ -126,6 +127,7 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
     const started = await startEntryPurchase(pool, gateway, {
       memberId,
       selection: [1, 2, 3, 4],
+      blocks: 1,
       returnUrl: 'https://portal.test/return',
       cancelUrl: 'https://portal.test/cancel',
     });
@@ -140,9 +142,69 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
     const outcome = await startEntryPurchase(pool, gateway, {
       memberId,
       selection: [1, 2, 3],
+      blocks: 1,
       returnUrl: 'https://portal.test/return',
       cancelUrl: 'https://portal.test/cancel',
     });
     expect(outcome).toEqual({ kind: 'rejected', reason: 'A selection must be four distinct numbers between 1 and 20.' });
+  });
+
+  it('rejects a block size other than 1, 4, or 12', async () => {
+    const gateway = new FakeGateway();
+    const outcome = await startEntryPurchase(pool, gateway, {
+      memberId,
+      selection: [1, 2, 3, 4],
+      blocks: 2,
+      returnUrl: 'https://portal.test/return',
+      cancelUrl: 'https://portal.test/cancel',
+    });
+    expect(outcome).toEqual({ kind: 'rejected', reason: 'Choose 1, 4, or 12 draws.' });
+  });
+
+  it('buying a block of draws charges the full block, credits one entry now, saves a standing selection, and keeps the same prize draw number on a repeat purchase', async () => {
+    const gateway = new FakeGateway();
+    const started = await startEntryPurchase(pool, gateway, {
+      memberId,
+      selection: [1, 6, 11, 16],
+      blocks: 4,
+      returnUrl: 'https://portal.test/return',
+      cancelUrl: 'https://portal.test/cancel',
+    });
+    if (started.kind !== 'started') throw new Error('expected started');
+
+    const completed = await completeEntryPurchase(pool, gateway, started.sessionId);
+    if (completed.kind !== 'entry_created') throw new Error(`expected entry_created, got ${JSON.stringify(completed)}`);
+
+    const { rows: entryRows } = await pool.query(`SELECT stake_pence, prize_draw_no FROM entry WHERE id = $1`, [completed.entryId]);
+    expect(entryRows[0]).toMatchObject({ stake_pence: 200n });
+    const prizeDrawNo = entryRows[0].prize_draw_no;
+
+    const { rows: paymentRows } = await pool.query(
+      `SELECT amount_pence FROM payment WHERE member_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [memberId],
+    );
+    expect(paymentRows[0]).toMatchObject({ amount_pence: 800n });
+
+    const { rows: standingRows } = await pool.query(
+      `SELECT selection FROM selection_standing WHERE prize_draw_no = $1 AND effective_to IS NULL`,
+      [prizeDrawNo],
+    );
+    expect(standingRows[0]).toMatchObject({ selection: [1, 6, 11, 16] });
+
+    // A second purchase by the same member reuses the same prize draw number
+    // rather than minting a new one (FR-1.3's immutability applies here too).
+    const secondGateway = new FakeGateway();
+    const secondStarted = await startEntryPurchase(pool, secondGateway, {
+      memberId,
+      selection: [2, 7, 12, 17],
+      blocks: 1,
+      returnUrl: 'https://portal.test/return',
+      cancelUrl: 'https://portal.test/cancel',
+    });
+    if (secondStarted.kind !== 'started') throw new Error('expected started');
+    const secondCompleted = await completeEntryPurchase(pool, secondGateway, secondStarted.sessionId);
+    if (secondCompleted.kind !== 'entry_created') throw new Error(`expected entry_created, got ${JSON.stringify(secondCompleted)}`);
+    const { rows: secondEntryRows } = await pool.query(`SELECT prize_draw_no FROM entry WHERE id = $1`, [secondCompleted.entryId]);
+    expect(secondEntryRows[0]).toMatchObject({ prize_draw_no: prizeDrawNo });
   });
 });

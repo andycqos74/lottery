@@ -16,22 +16,26 @@ import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import {
   findMemberByEmail,
+  getDrawStats,
   getMemberDetails,
   getOpenDraw,
+  getStandingSelection,
   listMyEntries,
   listSettledDraws,
   registerMember,
   touchMemberLastLogin,
   updateMemberDetails,
 } from './db.js';
-import { completeEntryPurchase, startEntryPurchase } from './entries.js';
+import { completeEntryPurchase, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
 import { buildPaymentGateway } from './providers.js';
 import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
 import {
   accountPage,
+  detailsPage,
   drawPage,
   loginPage,
   pastDrawsPage,
+  paymentPage,
   purchaseReturnPage,
   registerPage,
   type ViewMember,
@@ -149,7 +153,8 @@ app.get('/results', async () => {
 app.get('/register', async (request, reply) => {
   const found = await viewMember(request);
   if (found) return reply.redirect('/account');
-  reply.type('text/html').send(registerPage({}));
+  const openDraw = await getOpenDraw(pool);
+  reply.type('text/html').send(registerPage({ ...(openDraw ? { openDraw } : {}) }));
 });
 
 app.post('/register', async (request, reply) => {
@@ -189,7 +194,8 @@ app.post('/register', async (request, reply) => {
 app.get('/login', async (request, reply) => {
   const found = await viewMember(request);
   if (found) return reply.redirect('/account');
-  reply.type('text/html').send(loginPage({}));
+  const openDraw = await getOpenDraw(pool);
+  reply.type('text/html').send(loginPage({ ...(openDraw ? { openDraw } : {}) }));
 });
 
 app.post('/login', async (request, reply) => {
@@ -241,10 +247,11 @@ app.post('/entries/purchase', async (request, reply) => {
   if (!auth) return reply.code(401).send({ error: 'Not logged in.' });
   if (!requireCsrf(request, reply, auth.session.csrf)) return;
 
-  const body = request.body as { selection?: number[] };
+  const body = request.body as { selection?: number[]; blocks?: number };
   const outcome = await startEntryPurchase(pool, paymentGateway, {
     memberId: auth.member.id,
     selection: body.selection ?? [],
+    blocks: body.blocks ?? 1,
     returnUrl: `${publicBaseUrl}/entries/purchase/return`,
     cancelUrl: `${publicBaseUrl}/entries/purchase/cancelled`,
   });
@@ -272,11 +279,39 @@ app.get('/entries/purchase/return', async (request, reply) => {
 
 // ── Browser pages ────────────────────────────────────────────────────────────
 
+function parseSelectionInput(raw: string | string[] | undefined): number[] {
+  return (Array.isArray(raw) ? raw : raw ? [raw] : []).map((s) => Number.parseInt(s, 10)).filter((n) => !Number.isNaN(n));
+}
+
 app.get('/draw', async (request, reply) => {
   const found = await viewMember(request);
   if (!found) return reply.redirect('/login');
-  const draw = await getOpenDraw(pool);
-  reply.type('text/html').send(drawPage({ member: found.view, ...(draw ? { draw } : {}) }));
+  const openDraw = await getOpenDraw(pool);
+  if (!openDraw) return reply.type('text/html').send(drawPage({ member: found.view }));
+
+  const [stats, entries] = await Promise.all([getDrawStats(pool, openDraw.id), listMyEntries(pool, found.auth.member.id)]);
+  const currentEntry = entries.find((e) => e.drawNumber === openDraw.drawNumber);
+  reply.type('text/html').send(drawPage({ member: found.view, openDraw, stats, ...(currentEntry ? { currentEntry } : {}) }));
+});
+
+app.get('/draw/pay', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  const openDraw = await getOpenDraw(pool);
+  if (!openDraw) return reply.redirect('/draw');
+
+  const query = request.query as { selection?: string | string[]; blocks?: string };
+  const selection = [...new Set(parseSelectionInput(query.selection))].sort((a, b) => a - b);
+  if (selection.length !== 4 || selection.some((n) => n < 1 || n > 20)) {
+    const stats = await getDrawStats(pool, openDraw.id);
+    return reply
+      .type('text/html')
+      .send(drawPage({ member: found.view, openDraw, stats, error: 'Pick four distinct numbers between 1 and 20 first.' }));
+  }
+  const blocks = PURCHASE_BLOCK_SIZES.includes(Number(query.blocks) as (typeof PURCHASE_BLOCK_SIZES)[number])
+    ? Number(query.blocks)
+    : 4;
+  reply.type('text/html').send(paymentPage({ member: found.view, openDraw, selection, blocks }));
 });
 
 app.post('/draw/enter', async (request, reply) => {
@@ -284,19 +319,30 @@ app.post('/draw/enter', async (request, reply) => {
   if (!found) return reply.redirect('/login');
   if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
 
-  const body = request.body as { selection?: string | string[]; csrf?: string };
-  const raw = body.selection;
-  const selection = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((s) => Number.parseInt(s, 10)).filter((n) => !Number.isNaN(n));
+  const body = request.body as { selection?: string | string[]; blocks?: string; csrf?: string };
+  const selection = [...new Set(parseSelectionInput(body.selection))].sort((a, b) => a - b);
+  const blocks = Number.parseInt(body.blocks ?? '', 10);
+
+  const openDraw = await getOpenDraw(pool);
+  if (!openDraw) return reply.type('text/html').send(drawPage({ member: found.view, error: 'No draw is currently open for entries.' }));
 
   const outcome = await startEntryPurchase(pool, paymentGateway, {
     memberId: found.auth.member.id,
     selection,
+    blocks,
     returnUrl: `${publicBaseUrl}/draw/return`,
     cancelUrl: `${publicBaseUrl}/draw`,
   });
   if (outcome.kind === 'rejected') {
-    const draw = await getOpenDraw(pool);
-    return reply.type('text/html').send(drawPage({ member: found.view, ...(draw ? { draw } : {}), error: outcome.reason }));
+    return reply.type('text/html').send(
+      paymentPage({
+        member: found.view,
+        openDraw,
+        selection,
+        blocks: PURCHASE_BLOCK_SIZES.includes(blocks as (typeof PURCHASE_BLOCK_SIZES)[number]) ? blocks : 4,
+        error: outcome.reason,
+      }),
+    );
   }
   return reply.redirect(outcome.redirectUrl);
 });
@@ -329,11 +375,24 @@ app.get('/draw/return', async (request, reply) => {
 app.get('/account', async (request, reply) => {
   const found = await viewMember(request);
   if (!found) return reply.redirect('/login');
-  const [details, entries] = await Promise.all([getMemberDetails(pool, found.auth.member.id), listMyEntries(pool, found.auth.member.id)]);
-  reply.type('text/html').send(accountPage({ member: found.view, details: details!, entries }));
+  const [openDraw, standingSelection, entries] = await Promise.all([
+    getOpenDraw(pool),
+    getStandingSelection(pool, found.auth.member.id),
+    listMyEntries(pool, found.auth.member.id),
+  ]);
+  reply.type('text/html').send(
+    accountPage({ member: found.view, ...(openDraw ? { openDraw } : {}), ...(standingSelection ? { standingSelection } : {}), entries }),
+  );
 });
 
-app.post('/account/details', async (request, reply) => {
+app.get('/details', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  const [openDraw, details] = await Promise.all([getOpenDraw(pool), getMemberDetails(pool, found.auth.member.id)]);
+  reply.type('text/html').send(detailsPage({ member: found.view, ...(openDraw ? { openDraw } : {}), details: details! }));
+});
+
+app.post('/details', async (request, reply) => {
   const found = await viewMember(request);
   if (!found) return reply.redirect('/login');
   if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
@@ -357,14 +416,18 @@ app.post('/account/details', async (request, reply) => {
     preferredContact,
   });
 
-  const [details, entries] = await Promise.all([getMemberDetails(pool, found.auth.member.id), listMyEntries(pool, found.auth.member.id)]);
-  reply.type('text/html').send(accountPage({ member: found.view, details: details!, entries, flash: 'Details saved.' }));
+  const [openDraw, details] = await Promise.all([getOpenDraw(pool), getMemberDetails(pool, found.auth.member.id)]);
+  reply.type('text/html').send(
+    detailsPage({ member: found.view, ...(openDraw ? { openDraw } : {}), details: details!, flash: 'Details saved.' }),
+  );
 });
 
 app.get('/past-draws', async (request, reply) => {
   const found = await viewMember(request);
-  const draws = await listSettledDraws(pool);
-  reply.type('text/html').send(pastDrawsPage({ ...(found ? { member: found.view } : {}), draws }));
+  const [openDraw, draws] = await Promise.all([getOpenDraw(pool), listSettledDraws(pool)]);
+  reply.type('text/html').send(
+    pastDrawsPage({ ...(found ? { member: found.view } : {}), ...(openDraw ? { openDraw } : {}), draws }),
+  );
 });
 
 await app.listen({ port, host: '0.0.0.0' });

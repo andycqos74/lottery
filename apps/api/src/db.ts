@@ -1,4 +1,5 @@
 import { withTransaction, type Pool } from '@qosfc/db';
+import { DEFAULT_JACKPOT_FLOOR_PENCE, jackpotPosition, pence, revenueFor, TICKET_PRICE_PENCE, type BasisPoints } from '@qosfc/domain';
 
 export interface Member {
   readonly id: string;
@@ -82,6 +83,40 @@ export async function getOpenDraw(pool: Pool): Promise<OpenDraw | undefined> {
   );
   const row = rows[0];
   return row ? { id: row.id, drawNumber: row.draw_number, drawDate: row.draw_date } : undefined;
+}
+
+export interface DrawStats {
+  readonly entriesCount: number;
+  /** MAX(floor, this draw's prize contribution so far + rollover in) — grows as more entries arrive; not the final figure until the draw closes. */
+  readonly jackpotEstimatePence: bigint;
+}
+
+export async function getDrawStats(pool: Pool, drawId: string): Promise<DrawStats> {
+  const [{ rows: entryRows }, { rows: splitRows }, { rows: lastRows }] = await Promise.all([
+    pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM entry WHERE draw_id = $1`, [drawId]),
+    pool.query<{ split_prize_bp: number }>(`SELECT split_prize_bp FROM config_version WHERE is_active = true`),
+    pool.query<{ rollover_out_pence: string | null }>(
+      `SELECT rollover_out_pence::text AS rollover_out_pence FROM draw WHERE status = 'settled' ORDER BY draw_number DESC LIMIT 1`,
+    ),
+  ]);
+  const entriesCount = Number(entryRows[0]!.n);
+  const prizeBp = (splitRows[0]?.split_prize_bp ?? 5000) as BasisPoints;
+  const rolloverIn = pence(BigInt(lastRows[0]?.rollover_out_pence ?? '0'));
+  const contribution = pence((revenueFor(entriesCount, TICKET_PRICE_PENCE) * BigInt(prizeBp)) / 10_000n);
+  const position = jackpotPosition(contribution, rolloverIn, DEFAULT_JACKPOT_FLOOR_PENCE);
+  return { entriesCount, jackpotEstimatePence: position.jackpotPreDrawPence };
+}
+
+export async function getStandingSelection(pool: Pool, memberId: string): Promise<number[] | undefined> {
+  const { rows } = await pool.query<{ selection: number[] }>(
+    `SELECT ss.selection
+       FROM selection_standing ss
+       JOIN member_number mn ON mn.prize_draw_no = ss.prize_draw_no
+      WHERE mn.member_id = $1 AND ss.slot = 1 AND ss.effective_to IS NULL
+      LIMIT 1`,
+    [memberId],
+  );
+  return rows[0]?.selection;
 }
 
 export interface MemberDetails {

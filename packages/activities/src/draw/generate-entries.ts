@@ -36,7 +36,9 @@ export interface GenerateDueEntriesResult {
 
 // 'agent_cash': manually-recorded physical tickets (recordManualTicket) buy
 // prepaid blocks exactly like a standing order does, so they count here too.
-const STANDING_ORDER_CHANNELS = ['so_fps', 'giro', 'branch_cash', 'direct_debit', 'agent_cash'] as const;
+// 'card': the portal's own multi-draw purchase (apps/api/src/entries.ts) is
+// the same thing again — a member paying online for 4 or 12 draws at once.
+const STANDING_ORDER_CHANNELS = ['so_fps', 'giro', 'branch_cash', 'direct_debit', 'agent_cash', 'card'] as const;
 
 export async function generateDueEntries(pool: Pool, request: GenerateDueEntriesRequest): Promise<GenerateDueEntriesResult> {
   return withTransaction(pool, async (client) => {
@@ -78,8 +80,13 @@ export async function generateDueEntries(pool: Pool, request: GenerateDueEntries
           WHERE member_id = $1 AND status = 'allocated' AND channel = ANY($2::payment_channel[])`,
         [candidate.member_id, STANDING_ORDER_CHANNELS],
       );
+      // 'card': the portal credits the member's very first entry immediately
+      // at checkout (apps/api/src/entries.ts), synchronously, rather than
+      // waiting for this activity to run — it consumes a block exactly like a
+      // 'prepaid' one does, so it must count here too or the balance below
+      // would over-credit by one entry's worth.
       const { rows: consumedRows } = await client.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM entry WHERE member_id = $1 AND funding_source = 'prepaid'`,
+        `SELECT count(*)::text AS n FROM entry WHERE member_id = $1 AND funding_source IN ('prepaid', 'card')`,
         [candidate.member_id],
       );
       const totalBlocks = Number(BigInt(purchasedRows[0]!.total) / cfg.ticketPricePence);
