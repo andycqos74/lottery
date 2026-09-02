@@ -558,9 +558,10 @@ app.get('/members', async (request, reply) => {
 app.post('/members', async (request, reply) => {
   if (!requireCsrf(request, reply, request.authCsrf!)) return;
 
-  const body = request.body as { forename?: string; surname?: string };
+  const body = request.body as { forename?: string; surname?: string; memberType?: string };
   const forename = (body.forename ?? '').trim();
   const surname = (body.surname ?? '').trim();
+  const memberType = body.memberType === 'agent' ? 'agent' : 'player';
   if (!forename || !surname) {
     const members = await listMembers(pool);
     return reply
@@ -568,7 +569,7 @@ app.post('/members', async (request, reply) => {
       .send(membersPage({ user: viewUser(request), members, error: 'Forename and surname are both required.' }));
   }
 
-  const { id } = await createMember(pool, { forename, surname });
+  const { id } = await createMember(pool, { forename, surname, memberType });
   await insertAuditLog(pool, {
     actorId: request.authUser!.id,
     actorLabel: request.authUser!.email,
