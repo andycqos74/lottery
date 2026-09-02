@@ -10,13 +10,32 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
+import type { FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
-import { findMemberByEmail, getOpenDraw, registerMember, touchMemberLastLogin } from './db.js';
+import {
+  findMemberByEmail,
+  getMemberDetails,
+  getOpenDraw,
+  listMyEntries,
+  listSettledDraws,
+  registerMember,
+  touchMemberLastLogin,
+  updateMemberDetails,
+} from './db.js';
 import { completeEntryPurchase, startEntryPurchase } from './entries.js';
 import { buildPaymentGateway } from './providers.js';
 import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
+import {
+  accountPage,
+  drawPage,
+  loginPage,
+  pastDrawsPage,
+  purchaseReturnPage,
+  registerPage,
+  type ViewMember,
+} from './views.js';
 
 const port = Number(process.env['PORT'] ?? 8080);
 const nodeEnv = process.env['NODE_ENV'] ?? 'development';
@@ -61,6 +80,37 @@ const app = Fastify({
 
 await app.register(cookie, { secret: sessionSecret });
 
+// The browser-facing pages below post regular HTML forms; the routes they
+// share with the JSON API (register/login/logout) tell the two apart by
+// content type and answer with a redirect instead of a JSON body.
+app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
+  try {
+    // Object.fromEntries would silently keep only the last value for a
+    // repeated key (the numbers-picker checkboxes all share name="selection"),
+    // so build the object by hand and collect repeats into an array.
+    const parsed: Record<string, string | string[]> = {};
+    for (const [key, value] of new URLSearchParams(body as string)) {
+      const existing = parsed[key];
+      if (existing === undefined) parsed[key] = value;
+      else if (Array.isArray(existing)) existing.push(value);
+      else parsed[key] = [existing, value];
+    }
+    done(null, parsed);
+  } catch (err) {
+    done(err as Error, undefined);
+  }
+});
+
+function isFormRequest(request: FastifyRequest): boolean {
+  return (request.headers['content-type'] ?? '').includes('application/x-www-form-urlencoded');
+}
+
+async function viewMember(request: FastifyRequest): Promise<{ auth: NonNullable<Awaited<ReturnType<typeof currentMember>>>; view: ViewMember } | undefined> {
+  const auth = await currentMember(pool, request);
+  if (!auth) return undefined;
+  return { auth, view: { forename: auth.member.forename, csrf: auth.session.csrf } };
+}
+
 app.get('/healthz', async () => ({ ok: true }));
 
 app.get('/readyz', async (_request, reply) => {
@@ -96,15 +146,27 @@ app.get('/results', async () => {
 // whom have no email on file — GAP-05) into a portal login is deferred
 // future-phase work, not attempted here.
 
+app.get('/register', async (request, reply) => {
+  const found = await viewMember(request);
+  if (found) return reply.redirect('/account');
+  reply.type('text/html').send(registerPage({}));
+});
+
 app.post('/register', async (request, reply) => {
+  const form = isFormRequest(request);
   const body = request.body as { forename?: string; surname?: string; email?: string; password?: string };
   const forename = (body.forename ?? '').trim();
   const surname = (body.surname ?? '').trim();
   const email = (body.email ?? '').trim().toLowerCase();
   const password = body.password ?? '';
 
+  const reject = (message: string) =>
+    form
+      ? reply.type('text/html').code(400).send(registerPage({ error: message }))
+      : reply.code(400).send({ error: message });
+
   if (!forename || !surname || !email || password.length < 10) {
-    return reply.code(400).send({ error: 'forename, surname, email, and a password of at least 10 characters are required.' });
+    return reject('forename, surname, email, and a password of at least 10 characters are required.');
   }
 
   const passwordHash = await argon2Hash(password);
@@ -112,16 +174,33 @@ app.post('/register', async (request, reply) => {
   if (outcome.kind === 'email_taken') {
     // Same shape as a validation error, not a 409 — confirming which emails
     // are registered is exactly the enumeration a login form must not offer.
-    return reply.code(400).send({ error: 'Could not register with those details.' });
+    return reject('Could not register with those details.');
   }
-  return reply.code(201).send({ memberId: outcome.memberId });
+
+  if (!form) return reply.code(201).send({ memberId: outcome.memberId });
+
+  await touchMemberLastLogin(pool, outcome.memberId);
+  const csrf = randomBytes(16).toString('hex');
+  const payload: SessionPayload = { mid: outcome.memberId, csrf };
+  reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(nodeEnv));
+  return reply.redirect('/draw');
+});
+
+app.get('/login', async (request, reply) => {
+  const found = await viewMember(request);
+  if (found) return reply.redirect('/account');
+  reply.type('text/html').send(loginPage({}));
 });
 
 app.post('/login', async (request, reply) => {
+  const form = isFormRequest(request);
   const body = request.body as { email?: string; password?: string };
   const email = (body.email ?? '').trim().toLowerCase();
   const password = body.password ?? '';
-  const invalid = () => reply.code(401).send({ error: 'Invalid email or password.' });
+  const invalid = () =>
+    form
+      ? reply.type('text/html').code(401).send(loginPage({ error: 'Invalid email or password.' }))
+      : reply.code(401).send({ error: 'Invalid email or password.' });
   if (!email || !password) return invalid();
 
   const member = await findMemberByEmail(pool, email);
@@ -133,11 +212,13 @@ app.post('/login', async (request, reply) => {
   const csrf = randomBytes(16).toString('hex');
   const payload: SessionPayload = { mid: member.id, csrf };
   reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(nodeEnv));
+  if (form) return reply.redirect('/draw');
   return { memberId: member.id, csrf };
 });
 
 app.post('/logout', async (request, reply) => {
   reply.clearCookie(SESSION_COOKIE, { path: '/' });
+  if (isFormRequest(request)) return reply.redirect('/login');
   return { ok: true };
 });
 
@@ -187,6 +268,103 @@ app.get('/entries/purchase/return', async (request, reply) => {
     case 'not_found':
       return reply.code(404).send({ error: 'Unknown purchase session.' });
   }
+});
+
+// ── Browser pages ────────────────────────────────────────────────────────────
+
+app.get('/draw', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  const draw = await getOpenDraw(pool);
+  reply.type('text/html').send(drawPage({ member: found.view, ...(draw ? { draw } : {}) }));
+});
+
+app.post('/draw/enter', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
+
+  const body = request.body as { selection?: string | string[]; csrf?: string };
+  const raw = body.selection;
+  const selection = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((s) => Number.parseInt(s, 10)).filter((n) => !Number.isNaN(n));
+
+  const outcome = await startEntryPurchase(pool, paymentGateway, {
+    memberId: found.auth.member.id,
+    selection,
+    returnUrl: `${publicBaseUrl}/draw/return`,
+    cancelUrl: `${publicBaseUrl}/draw`,
+  });
+  if (outcome.kind === 'rejected') {
+    const draw = await getOpenDraw(pool);
+    return reply.type('text/html').send(drawPage({ member: found.view, ...(draw ? { draw } : {}), error: outcome.reason }));
+  }
+  return reply.redirect(outcome.redirectUrl);
+});
+
+app.get('/draw/return', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+
+  const { session } = request.query as { session?: string };
+  if (!session) return reply.code(400).type('text/html').send(purchaseReturnPage({ member: found.view, status: 'not_found' }));
+
+  const outcome = await completeEntryPurchase(pool, paymentGateway, session);
+  const status =
+    outcome.kind === 'entry_created' || outcome.kind === 'already_completed'
+      ? 'paid'
+      : outcome.kind === 'not_found'
+        ? 'not_found'
+        : outcome.kind === 'payment_failed'
+          ? 'failed'
+          : 'pending';
+  reply.type('text/html').send(
+    purchaseReturnPage({
+      member: found.view,
+      status,
+      ...(outcome.kind === 'payment_failed' ? { reason: outcome.reason } : {}),
+    }),
+  );
+});
+
+app.get('/account', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  const [details, entries] = await Promise.all([getMemberDetails(pool, found.auth.member.id), listMyEntries(pool, found.auth.member.id)]);
+  reply.type('text/html').send(accountPage({ member: found.view, details: details!, entries }));
+});
+
+app.post('/account/details', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
+
+  const body = request.body as {
+    telephone?: string;
+    address1?: string;
+    address2?: string;
+    address3?: string;
+    postCode?: string;
+    preferredContact?: string;
+  };
+  const preferredContact = body.preferredContact === 'phone' || body.preferredContact === 'post' ? body.preferredContact : 'email';
+
+  await updateMemberDetails(pool, found.auth.member.id, {
+    telephone: (body.telephone ?? '').trim(),
+    address1: (body.address1 ?? '').trim(),
+    address2: (body.address2 ?? '').trim(),
+    address3: (body.address3 ?? '').trim(),
+    postCode: (body.postCode ?? '').trim(),
+    preferredContact,
+  });
+
+  const [details, entries] = await Promise.all([getMemberDetails(pool, found.auth.member.id), listMyEntries(pool, found.auth.member.id)]);
+  reply.type('text/html').send(accountPage({ member: found.view, details: details!, entries, flash: 'Details saved.' }));
+});
+
+app.get('/past-draws', async (request, reply) => {
+  const found = await viewMember(request);
+  const draws = await listSettledDraws(pool);
+  reply.type('text/html').send(pastDrawsPage({ ...(found ? { member: found.view } : {}), draws }));
 });
 
 await app.listen({ port, host: '0.0.0.0' });
