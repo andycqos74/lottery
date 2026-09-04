@@ -27,7 +27,7 @@ import {
   updateMemberDetails,
 } from './db.js';
 import { completeEntryPurchase, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
-import { buildPaymentGateway } from './providers.js';
+import { buildPaymentGateway, paypalBrowserConfig } from './providers.js';
 import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
 import {
   accountPage,
@@ -53,11 +53,16 @@ const pool = createPool({
   applicationName: 'qosfc-api',
   max: 10,
 });
-const paymentGateway = buildPaymentGateway({
+const paymentProviderEnv = {
   PAYMENT_GATEWAY: process.env['PAYMENT_GATEWAY'],
   SANDBOX_PROVIDERS_URL: process.env['SANDBOX_PROVIDERS_URL'],
   SANDBOX_WEBHOOK_SECRET_FILE: process.env['SANDBOX_WEBHOOK_SECRET_FILE'],
-});
+  PAYPAL_API_BASE: process.env['PAYPAL_API_BASE'],
+  PAYPAL_CLIENT_ID_FILE: process.env['PAYPAL_CLIENT_ID_FILE'],
+  PAYPAL_CLIENT_SECRET_FILE: process.env['PAYPAL_CLIENT_SECRET_FILE'],
+};
+const paymentGateway = buildPaymentGateway(paymentProviderEnv);
+const paypalConfig = paypalBrowserConfig(paymentProviderEnv);
 
 const app = Fastify({
   logger: {
@@ -311,12 +316,23 @@ app.get('/draw/pay', async (request, reply) => {
   const blocks = PURCHASE_BLOCK_SIZES.includes(Number(query.blocks) as (typeof PURCHASE_BLOCK_SIZES)[number])
     ? Number(query.blocks)
     : 4;
-  reply.type('text/html').send(paymentPage({ member: found.view, openDraw, selection, blocks }));
+  reply
+    .type('text/html')
+    .send(paymentPage({ member: found.view, openDraw, selection, blocks, ...(paypalConfig ? { paypal: paypalConfig } : {}) }));
 });
 
 app.post('/draw/enter', async (request, reply) => {
+  // The embedded PayPal Advanced Card Fields SDK calls this via fetch
+  // (application/json) to create the order before it confirms the card
+  // in-page; the plain <form> fallback (no live card gateway configured)
+  // posts application/x-www-form-urlencoded and expects a redirect.
+  const wantsJson = !isFormRequest(request);
+
   const found = await viewMember(request);
-  if (!found) return reply.redirect('/login');
+  if (!found) {
+    if (wantsJson) return reply.code(401).send({ error: 'Please log in again.' });
+    return reply.redirect('/login');
+  }
   if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
 
   const body = request.body as { selection?: string | string[]; blocks?: string; csrf?: string };
@@ -324,7 +340,10 @@ app.post('/draw/enter', async (request, reply) => {
   const blocks = Number.parseInt(body.blocks ?? '', 10);
 
   const openDraw = await getOpenDraw(pool);
-  if (!openDraw) return reply.type('text/html').send(drawPage({ member: found.view, error: 'No draw is currently open for entries.' }));
+  if (!openDraw) {
+    if (wantsJson) return reply.code(400).send({ error: 'No draw is currently open for entries.' });
+    return reply.type('text/html').send(drawPage({ member: found.view, error: 'No draw is currently open for entries.' }));
+  }
 
   const outcome = await startEntryPurchase(pool, paymentGateway, {
     memberId: found.auth.member.id,
@@ -334,6 +353,7 @@ app.post('/draw/enter', async (request, reply) => {
     cancelUrl: `${publicBaseUrl}/draw`,
   });
   if (outcome.kind === 'rejected') {
+    if (wantsJson) return reply.code(400).send({ error: outcome.reason });
     return reply.type('text/html').send(
       paymentPage({
         member: found.view,
@@ -344,6 +364,7 @@ app.post('/draw/enter', async (request, reply) => {
       }),
     );
   }
+  if (wantsJson) return reply.send({ sessionId: outcome.sessionId });
   return reply.redirect(outcome.redirectUrl);
 });
 

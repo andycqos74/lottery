@@ -78,6 +78,7 @@ const STYLE = `
     border:1px solid var(--line); background:var(--surface); color:var(--ink);
   }
   .field{ margin-bottom:0; }
+  .pp-field{ width:100%; padding:.5rem .7rem; border-radius:8px; border:1px solid var(--line); background:var(--surface); min-height:2.3rem; }
   .hint{ font-size:.78rem; color:var(--ink-soft); margin-top:.35rem; }
 
   .btn{ all:unset; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:.4rem; font-weight:700; font-size:.92rem;
@@ -412,11 +413,48 @@ export function paymentPage(opts: {
   selection: number[];
   blocks: number;
   error?: string;
+  /** Present only when PAYMENT_GATEWAY is a live PayPal adapter — enables embedded Advanced Card Fields instead of the cosmetic sandbox form. */
+  paypal?: { clientId: string };
 }): string {
   const { selection, blocks, openDraw } = opts;
   const selectionFields = selection.map((n) => `<input type="hidden" name="selection" value="${n}" />`).join('');
   const blockOption = (size: number, label: string) =>
     `<label class="radio-row"><input type="radio" name="blocks" value="${size}" ${blocks === size ? 'checked' : ''} />${label} <span class="amt">${formatPence(pence(200n * BigInt(size)))}</span></label>`;
+
+  const cardFieldsMarkup = opts.paypal
+    ? `
+            <div id="pay-card" class="stack">
+              <div class="field"><label>Name on card</label><div id="card-name-field" class="pp-field"></div></div>
+              <div class="row2">
+                <div class="field"><label>Card number</label><div id="card-number-field" class="pp-field"></div></div>
+                <div class="row2" style="grid-template-columns:1fr 1fr">
+                  <div class="field"><label>Expiry</label><div id="card-expiry-field" class="pp-field"></div></div>
+                  <div class="field"><label>CVC</label><div id="card-cvv-field" class="pp-field"></div></div>
+                </div>
+              </div>
+              <div id="card-fields-error" class="error" style="display:none;margin-top:.5rem"></div>
+              <div class="banner"><span>🔒</span><span>Card details are entered directly into PayPal's secure fields &mdash; they never pass through QOSFC's servers.</span></div>
+            </div>`
+    : `
+            <div id="pay-card" class="stack">
+              <div class="field"><label for="pc-name">Name on card</label><input id="pc-name" type="text" placeholder="Full name" /></div>
+              <div class="row2">
+                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" type="text" placeholder="4242 4242 4242 4242" /></div>
+                <div class="row2" style="grid-template-columns:1fr 1fr">
+                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" type="text" placeholder="MM/YY" /></div>
+                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" type="text" placeholder="123" /></div>
+                </div>
+              </div>
+              <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; this is a test transaction; no funds move, and no real card details are needed.</span></div>
+            </div>`;
+
+  const submitButton = opts.paypal
+    ? `<button class="btn btn-gold btn-block" type="button" id="card-submit-button">Pay <span class="blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span> &amp; enter →</button>`
+    : `<button class="btn btn-gold btn-block" type="submit">Pay <span class="blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span> &amp; enter →</button>`;
+
+  const hint = opts.paypal
+    ? `<p class="hint" style="text-align:center">Payments are processed by PayPal (sandbox test mode while a production acquirer is being confirmed).</p>`
+    : `<p class="hint" style="text-align:center">Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.</p>`;
 
   return layout({
     title: 'Payment',
@@ -447,23 +485,13 @@ export function paymentPage(opts: {
               <button type="button" role="tab" aria-selected="true" data-method="card">Debit / credit card</button>
               <button type="button" role="tab" aria-selected="false" data-method="dd">Direct Debit standing order</button>
             </div>
-            <div id="pay-card" class="stack">
-              <div class="field"><label for="pc-name">Name on card</label><input id="pc-name" type="text" placeholder="Full name" /></div>
-              <div class="row2">
-                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" type="text" placeholder="4242 4242 4242 4242" /></div>
-                <div class="row2" style="grid-template-columns:1fr 1fr">
-                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" type="text" placeholder="MM/YY" /></div>
-                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" type="text" placeholder="123" /></div>
-                </div>
-              </div>
-              <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; this is a test transaction; no funds move, and no real card details are needed.</span></div>
-            </div>
+            ${cardFieldsMarkup}
             <div id="pay-dd" class="stack" style="display:none">
               <div class="banner"><span>🏗️</span><span>Direct Debit standing orders aren't set up online yet &mdash; contact QOSFC to arrange one, or pay by card above.</span></div>
             </div>
 
-            <button class="btn btn-gold btn-block" type="submit">Pay <span class="blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span> &amp; enter →</button>
-            <p class="hint" style="text-align:center">Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.</p>
+            ${submitButton}
+            ${hint}
           </form>
         </div>
         <div class="card stack" style="align-self:start">
@@ -496,6 +524,65 @@ export function paymentPage(opts: {
         });
       })();
       </script>
+      ${
+        opts.paypal
+          ? `<script src="https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(opts.paypal.clientId)}&currency=GBP&components=card-fields&intent=capture"></script>
+      <script>
+      (function(){
+        if (!window.paypal || !window.paypal.CardFields) {
+          document.getElementById('card-fields-error').style.display = '';
+          document.getElementById('card-fields-error').textContent = 'Card payment is temporarily unavailable — please try again shortly.';
+          document.getElementById('card-submit-button').disabled = true;
+          return;
+        }
+        var errBox = document.getElementById('card-fields-error');
+        function showError(msg) { errBox.style.display = ''; errBox.textContent = msg; }
+        function clearError() { errBox.style.display = 'none'; errBox.textContent = ''; }
+
+        var cardFields = window.paypal.CardFields({
+          createOrder: function () {
+            clearError();
+            var selection = Array.prototype.map.call(document.querySelectorAll('input[name=selection]'), function (el) { return el.value; });
+            var blocksInput = document.querySelector('input[name=blocks]:checked');
+            var body = { selection: selection, blocks: blocksInput ? blocksInput.value : '1', csrf: ${JSON.stringify(opts.member.csrf)} };
+            return fetch('/draw/enter', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+              .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+              .then(function (result) {
+                if (!result.ok || result.data.error) throw new Error(result.data.error || 'Could not start the payment.');
+                return result.data.sessionId;
+              });
+          },
+          onApprove: function (data) {
+            window.location.href = '/draw/return?session=' + encodeURIComponent(data.orderID);
+          },
+          onError: function (err) {
+            showError((err && err.message) || 'The card was declined or the details could not be verified. Please check them and try again.');
+          },
+        });
+
+        if (cardFields.isEligible()) {
+          cardFields.NameField().render('#card-name-field');
+          cardFields.NumberField().render('#card-number-field');
+          cardFields.ExpiryField().render('#card-expiry-field');
+          cardFields.CVVField().render('#card-cvv-field');
+          document.getElementById('card-submit-button').addEventListener('click', function () {
+            clearError();
+            cardFields.submit().catch(function (err) {
+              showError((err && err.message) || 'Payment could not be submitted. Please check your card details.');
+            });
+          });
+        } else {
+          showError('Card payment is not available in this browser — please try another browser or device.');
+          document.getElementById('card-submit-button').disabled = true;
+        }
+      })();
+      </script>`
+          : ''
+      }
     `,
   });
 }
