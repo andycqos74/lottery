@@ -448,15 +448,15 @@ export function paymentPage(opts: {
               <button type="button" role="tab" aria-selected="false" data-method="dd">Direct Debit standing order</button>
             </div>
             <div id="pay-card" class="stack">
-              <div class="field"><label for="pc-name">Name on card</label><input id="pc-name" type="text" placeholder="Full name" /></div>
+              <div class="field"><label for="pc-name">Name on card</label><input id="pc-name" name="pc-name" type="text" placeholder="Full name" autocomplete="off" required /></div>
               <div class="row2">
-                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" type="text" placeholder="4242 4242 4242 4242" /></div>
+                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" name="pc-num" type="text" placeholder="4242 4242 4242 4242" autocomplete="off" required /></div>
                 <div class="row2" style="grid-template-columns:1fr 1fr">
-                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" type="text" placeholder="MM/YY" /></div>
-                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" type="text" placeholder="123" /></div>
+                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" name="pc-exp" type="text" placeholder="MM/YY" autocomplete="off" required /></div>
+                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" name="pc-cvc" type="text" placeholder="123" autocomplete="off" required /></div>
                 </div>
               </div>
-              <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; this is a test transaction; no funds move, and no real card details are needed.</span></div>
+              <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; any name, card number, expiry and CVC are accepted; this is a test transaction and no funds move.</span></div>
             </div>
             <div id="pay-dd" class="stack" style="display:none">
               <div class="banner"><span>🏗️</span><span>Direct Debit standing orders aren't set up online yet &mdash; contact QOSFC to arrange one, or pay by card above.</span></div>

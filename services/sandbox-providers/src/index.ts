@@ -49,9 +49,13 @@ app.post<{ Body: { amountPence: string; reference: string; returnUrl: string } }
     const key = request.headers['idempotency-key'] as string | undefined;
     return withIdempotency(key, () => {
       const sessionId = `sess_${randomUUID()}`;
-      const declined = Math.random() < declineRate;
+      // Card entry on /draw/pay is a stub — it mimics entering card details but
+      // never actually sends them anywhere (T-9.1), so there is nothing about the
+      // "card" a decline could plausibly be based on. Unlike BACS/notify below,
+      // this endpoint always approves so the online purchase flow can be run
+      // end-to-end in dev without hitting SANDBOX_DECLINE_RATE's random failures.
       sessions.set(sessionId, {
-        status: declined ? 'failed' : 'succeeded',
+        status: 'succeeded',
         amountPence: request.body.amountPence,
         providerRef: `pay_${randomUUID()}`,
       });
