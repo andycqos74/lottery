@@ -8,7 +8,6 @@
     { "path": "../../packages/temporal-common" },
     { "path": "../../packages/domain" },
     { "path": "../../packages/ports" },
-    { "path": "../../packages/adapters-sandbox" },
-    { "path": "../../packages/adapters-live" }
+    { "path": "../../packages/adapters-sandbox" }
   ]
 }

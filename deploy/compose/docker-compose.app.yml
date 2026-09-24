@@ -108,21 +108,11 @@ services:
       PORT: 8080
       SESSION_SECRET_FILE: /run/secrets/session_secret
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set in .env}
-      # GAP-09: still "sandbox" (the dummy PSP) by default — flip to
-      # paypal_sandbox once PayPal's sandbox payee account is actually
-      # entitled for card processing (see the PAYEE_NOT_ENABLED_FOR_CARD_PROCESSING
-      # note this was left on). The adapter and page are already built either way.
-      PAYMENT_GATEWAY: ${PAYMENT_GATEWAY:-sandbox}
-      PAYPAL_API_BASE: ${PAYPAL_API_BASE:-https://api-m.sandbox.paypal.com}
-      PAYPAL_CLIENT_ID_FILE: /run/secrets/paypal_client_id
-      PAYPAL_CLIENT_SECRET_FILE: /run/secrets/paypal_client_secret
     secrets:
       - source: codec_key
         target: codec
       - app_role_password
       - session_secret
-      - paypal_client_id
-      - paypal_client_secret
     networks: [edge, app, core]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -213,8 +203,3 @@ secrets:
   app_role_password: { file: ../secrets/app_role_password }
   session_secret:   { file: ../secrets/session_secret }
   admin_mfa_key:    { file: ../secrets/admin_mfa_key }
-  # GAP-09: PayPal sandbox, wired but not yet activated by default — see the
-  # api service's PAYMENT_GATEWAY. Not a secret in the traditional sense (the
-  # client ID is meant to be public; the secret is the API-authenticating half).
-  paypal_client_id:     { file: ../secrets/paypal_client_id }
-  paypal_client_secret: { file: ../secrets/paypal_client_secret }
