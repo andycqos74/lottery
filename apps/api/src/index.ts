@@ -10,7 +10,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
@@ -30,7 +30,7 @@ import {
   touchMemberLastLogin,
   updateMemberDetails,
 } from './db.js';
-import { completeDirectDebitSetup, startDirectDebitSetup } from './direct-debit.js';
+import { cancelDirectDebit, completeDirectDebitSetup, getActiveDirectDebit, startDirectDebitSetup } from './direct-debit.js';
 import { completeEntryPurchase, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
 import { buildBacsBureau, buildNotifier, buildPaymentGateway } from './providers.js';
 import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
@@ -419,7 +419,8 @@ app.get('/draw/pay', async (request, reply) => {
   const blocks = PURCHASE_BLOCK_SIZES.includes(Number(query.blocks) as (typeof PURCHASE_BLOCK_SIZES)[number])
     ? Number(query.blocks)
     : 4;
-  reply.type('text/html').send(paymentPage({ member: found.view, openDraw, selection, blocks }));
+  const hasDirectDebit = (await getActiveDirectDebit(pool, found.auth.member.id)) !== undefined;
+  reply.type('text/html').send(paymentPage({ member: found.view, openDraw, selection, blocks, hasDirectDebit }));
 });
 
 app.post('/draw/enter', async (request, reply) => {
@@ -448,6 +449,7 @@ app.post('/draw/enter', async (request, reply) => {
         openDraw,
         selection,
         blocks: PURCHASE_BLOCK_SIZES.includes(blocks as (typeof PURCHASE_BLOCK_SIZES)[number]) ? blocks : 4,
+        method: 'card',
         error: outcome.reason,
       }),
     );
@@ -522,6 +524,7 @@ app.post('/direct-debit/setup', async (request, reply) => {
         openDraw,
         selection,
         blocks: 4,
+        method: 'dd',
         error: outcome.reason,
       }),
     );
@@ -547,17 +550,45 @@ app.get('/direct-debit/return', async (request, reply) => {
   );
 });
 
-app.get('/account', async (request, reply) => {
+app.post('/direct-debit/cancel', async (request, reply) => {
   const found = await viewMember(request);
   if (!found) return reply.redirect('/login');
-  const [openDraw, standingSelection, entries] = await Promise.all([
+  if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
+
+  const { cancelled } = await cancelDirectDebit(pool, found.auth.member.id);
+  if (cancelled > 0) app.log.info({ memberId: found.auth.member.id }, 'direct debit cancelled by member');
+  return sendAccountPage(
+    found,
+    reply,
+    cancelled > 0
+      ? 'Your Direct Debit is cancelled. You will not be entered into any more draws by Direct Debit.'
+      : 'You do not have an active Direct Debit.',
+  );
+});
+
+async function sendAccountPage(found: NonNullable<Awaited<ReturnType<typeof viewMember>>>, reply: FastifyReply, flash?: string) {
+  const [openDraw, standingSelection, entries, directDebit] = await Promise.all([
     getOpenDraw(pool),
     getStandingSelection(pool, found.auth.member.id),
     listMyEntries(pool, found.auth.member.id),
+    getActiveDirectDebit(pool, found.auth.member.id),
   ]);
-  reply.type('text/html').send(
-    accountPage({ member: found.view, ...(openDraw ? { openDraw } : {}), ...(standingSelection ? { standingSelection } : {}), entries }),
+  return reply.type('text/html').send(
+    accountPage({
+      member: found.view,
+      ...(openDraw ? { openDraw } : {}),
+      ...(standingSelection ? { standingSelection } : {}),
+      entries,
+      ...(directDebit ? { directDebit } : {}),
+      ...(flash ? { flash } : {}),
+    }),
   );
+}
+
+app.get('/account', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  return sendAccountPage(found, reply);
 });
 
 app.get('/details', async (request, reply) => {

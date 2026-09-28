@@ -18,6 +18,12 @@
  * prize draw number is a no-op — the same idempotency key
  * (`<drawId>:<prizeDrawNo>:1`) the manual admin entry path already uses
  * (T-8.2) makes a second attempt harmless.
+ *
+ * Direct Debit (GitHub #9) is the exception to prepaid blocks: a member with
+ * an active mandate is entered into every draw until it is cancelled. The
+ * admin console runs this automatically before a draw is closed (GitHub #11),
+ * so multi-week purchases reach every future draw without anyone having to
+ * remember a button.
  */
 import { withTransaction, type Pool } from '@qosfc/db';
 import { entriesDue, TICKET_PRICE_PENCE, ZERO, type EntryGenerationConfig, type MemberEntryState } from '@qosfc/domain';
@@ -31,7 +37,9 @@ export interface GenerateDueEntriesRequest {
 
 export interface GenerateDueEntriesResult {
   readonly candidatesConsidered: number;
+  /** Every entry created, Direct Debit ones included. */
   readonly generated: number;
+  readonly directDebitGenerated: number;
 }
 
 // 'agent_cash': manually-recorded physical tickets (recordManualTicket) buy
@@ -42,12 +50,19 @@ const STANDING_ORDER_CHANNELS = ['so_fps', 'giro', 'branch_cash', 'direct_debit'
 
 export async function generateDueEntries(pool: Pool, request: GenerateDueEntriesRequest): Promise<GenerateDueEntriesResult> {
   return withTransaction(pool, async (client) => {
-    const { rows: drawRows } = await client.query<{ status: string }>(`SELECT status FROM draw WHERE id = $1`, [request.drawId]);
+    const { rows: drawRows } = await client.query<{ status: string; entries_close_at: Date | null }>(
+      `SELECT status, entries_close_at FROM draw WHERE id = $1`,
+      [request.drawId],
+    );
     const draw = drawRows[0];
     if (!draw) throw new Error(`Draw ${request.drawId} does not exist.`);
     if (draw.status !== 'open') {
       throw new Error(`Draw ${request.drawId} is '${draw.status}', not 'open' — entries can only be generated before a draw closes.`);
     }
+    // Money or a mandate arriving after entries closed buys the NEXT draw, not
+    // this one — even though this runs (at the latest) when the draw is run,
+    // which is after the cutoff. NULL on draws that predate cutoffs.
+    const cutoff = draw.entries_close_at;
 
     const { rows: cfgRows } = await client.query<{
       entry_strategy: string | null;
@@ -73,12 +88,53 @@ export async function generateDueEntries(pool: Pool, request: GenerateDueEntries
     );
 
     let generated = 0;
+    let directDebitGenerated = 0;
     for (const candidate of candidates) {
+      // Already in this draw under this number — most often the portal's card
+      // checkout, which enters the member's first draw immediately under its
+      // own idempotency key. Generating again would enter them twice and burn
+      // one of the weeks they paid for on a duplicate.
+      const { rows: existingRows } = await client.query(`SELECT 1 FROM entry WHERE draw_id = $1 AND prize_draw_no = $2 LIMIT 1`, [
+        request.drawId,
+        candidate.prize_draw_no,
+      ]);
+      if (existingRows.length > 0) continue;
+
+      const idempotencyKey = `${request.drawId}:${candidate.prize_draw_no}:1`;
+
+      // #9: an active Direct Debit enters the member into every draw until it
+      // is cancelled. It is a recurring subscription, not a prepaid block, so
+      // it neither consults nor consumes the prepaid balance below — any
+      // prepaid weeks the member also holds are kept for if the DD stops.
+      const { rows: ddRows } = await client.query(
+        `SELECT 1 FROM payment_method
+          WHERE member_id = $1 AND type = 'direct_debit' AND active
+            AND COALESCE(mandate_status, '') NOT IN ('cancelled', 'failed')
+            AND ($2::timestamptz IS NULL OR created_at <= $2)
+          LIMIT 1`,
+        [candidate.member_id, cutoff],
+      );
+      if (ddRows.length > 0) {
+        const { rows: insertedRows } = await client.query<{ id: string }>(
+          `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, stake_pence, funding_source, idempotency_key)
+           VALUES ($1,$2,$3,$4,$5,'direct_debit',$6)
+           ON CONFLICT (idempotency_key) DO NOTHING
+           RETURNING id`,
+          [request.drawId, candidate.member_id, candidate.prize_draw_no, candidate.selection, cfg.ticketPricePence, idempotencyKey],
+        );
+        if (insertedRows[0]) {
+          generated++;
+          directDebitGenerated++;
+        }
+        continue;
+      }
+
       const { rows: purchasedRows } = await client.query<{ total: string }>(
         `SELECT COALESCE(SUM(amount_pence), 0)::text AS total
            FROM payment
-          WHERE member_id = $1 AND status = 'allocated' AND channel = ANY($2::payment_channel[])`,
-        [candidate.member_id, STANDING_ORDER_CHANNELS],
+          WHERE member_id = $1 AND status = 'allocated' AND channel = ANY($2::payment_channel[])
+            AND ($3::timestamptz IS NULL OR created_at <= $3)`,
+        [candidate.member_id, STANDING_ORDER_CHANNELS, cutoff],
       );
       // 'card': the portal credits the member's very first entry immediately
       // at checkout (apps/api/src/entries.ts), synchronously, rather than
@@ -97,11 +153,14 @@ export async function generateDueEntries(pool: Pool, request: GenerateDueEntries
         scheduledEntriesPerDraw: 0,
         isAgentCollected: false,
       };
+      // Nothing to spend: don't ask entriesDue(), which halts on an unset
+      // GAP-17 strategy — a member with no prepaid weeks must not block a
+      // draw that only has Direct Debit members in it.
+      if (state.prepaidEntriesRemaining === 0) continue;
 
       const due = entriesDue(state, cfg);
       if (due.count === 0) continue;
 
-      const idempotencyKey = `${request.drawId}:${candidate.prize_draw_no}:1`;
       const { rows: insertedRows } = await client.query<{ id: string }>(
         `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, stake_pence, funding_source, idempotency_key)
          VALUES ($1,$2,$3,$4,$5,'prepaid',$6)
@@ -118,9 +177,9 @@ export async function generateDueEntries(pool: Pool, request: GenerateDueEntries
       action: 'draw.entries_generated',
       entity: 'draw',
       entityId: request.drawId,
-      after: { candidatesConsidered: candidates.length, generated },
+      after: { candidatesConsidered: candidates.length, generated, directDebitGenerated },
     });
 
-    return { candidatesConsidered: candidates.length, generated };
+    return { candidatesConsidered: candidates.length, generated, directDebitGenerated };
   });
 }

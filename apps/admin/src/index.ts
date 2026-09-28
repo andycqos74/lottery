@@ -26,11 +26,12 @@ import {
   type ManualTicketSelectionInput,
 } from '@qosfc/activities';
 import { CsvBankFeed } from '@qosfc/adapters-live';
+import { formatPence, pence, TICKET_PRICE_PENCE } from '@qosfc/domain';
 import {
   addEntry,
   countEntries,
   closeDrawAndRecordWorkflow,
-  createDraw,
+  createDraws,
   createMember,
   dashboardCounts,
   findUserByEmail,
@@ -38,6 +39,8 @@ import {
   getBankStatement,
   getBankTransactionForReview,
   getDraw,
+  getDrawFormDefaults,
+  getJackpotInputs,
   getTask,
   insertAuditLog,
   listBankStatements,
@@ -45,6 +48,8 @@ import {
   listAgentMembers,
   listMembers,
   listTasksByStatus,
+  nextDrawNumber,
+  renameDraw,
   resolveTaskStep,
   touchLastLogin,
   type AppUser,
@@ -61,7 +66,9 @@ import {
   newDrawPage,
   taskDetailPage,
   tasksPage,
+  type NewDrawFormValues,
 } from './views.js';
+import { planOneOffDraw, planRecurringDraws, type Recurrence } from './draw-schedule.js';
 import { decryptSecret } from './secret-box.js';
 import { verifyTotp } from './totp.js';
 import { deliverTaskDecision, startDrawWorkflow } from './temporal.js';
@@ -288,57 +295,150 @@ app.get('/tasks', async (request, reply) => {
 });
 
 app.get('/draws', async (request, reply) => {
-  const draws = await listDraws(pool);
-  reply.type('text/html').send(drawsPage({ user: viewUser(request), draws }));
+  const [draws, jackpotInputs] = await Promise.all([listDraws(pool), getJackpotInputs(pool)]);
+  reply.type('text/html').send(drawsPage({ user: viewUser(request), draws, jackpotInputs }));
 });
 
+async function newDrawFormDefaults(): Promise<NewDrawFormValues> {
+  const [drawNumber, defaults] = await Promise.all([nextDrawNumber(pool), getDrawFormDefaults(pool)]);
+  // #4: deliberately no default draw date — it used to be silently "today".
+  return {
+    mode: 'one_off',
+    name: '',
+    drawNumber: String(drawNumber),
+    drawAt: '',
+    entriesCloseAt: '',
+    startDate: '',
+    endDate: '',
+    recurrence: 'weekly',
+    drawTime: defaults.drawTimeLocal,
+    cutoffHours: String(defaults.cutoffHoursBefore),
+  };
+}
+
 app.get('/draws/new', async (request, reply) => {
-  reply.type('text/html').send(newDrawPage({ user: viewUser(request) }));
+  reply.type('text/html').send(newDrawPage({ user: viewUser(request), values: await newDrawFormDefaults() }));
 });
 
 app.post('/draws', async (request, reply) => {
   if (!requireCsrf(request, reply, request.authCsrf!)) return;
 
-  const body = request.body as { drawNumber?: string };
-  const drawNumber = Number.parseInt(body.drawNumber ?? '', 10);
-  if (!Number.isInteger(drawNumber) || drawNumber <= 0) {
-    return reply
-      .type('text/html')
-      .send(newDrawPage({ user: viewUser(request), error: 'Draw number must be a positive whole number.' }));
-  }
+  const body = request.body as Partial<Record<keyof NewDrawFormValues, string>>;
+  const values: NewDrawFormValues = {
+    mode: body.mode === 'recurring' ? 'recurring' : 'one_off',
+    name: (body.name ?? '').trim(),
+    drawNumber: (body.drawNumber ?? '').trim(),
+    drawAt: (body.drawAt ?? '').trim(),
+    entriesCloseAt: (body.entriesCloseAt ?? '').trim(),
+    startDate: (body.startDate ?? '').trim(),
+    endDate: (body.endDate ?? '').trim(),
+    recurrence: (body.recurrence ?? 'weekly').trim(),
+    drawTime: (body.drawTime ?? '').trim(),
+    cutoffHours: (body.cutoffHours ?? '').trim(),
+  };
+  const respond = (error: string) => reply.type('text/html').send(newDrawPage({ user: viewUser(request), values, error }));
 
-  const outcome = await createDraw(pool, { drawNumber });
-  if (outcome.kind === 'rejected') {
-    return reply.type('text/html').send(newDrawPage({ user: viewUser(request), error: outcome.reason }));
-  }
+  const drawNumber = /^\d+$/.test(values.drawNumber) ? Number(values.drawNumber) : NaN;
+  if (!Number.isInteger(drawNumber) || drawNumber <= 0) return respond('Draw number must be a positive whole number.');
+  if (values.name.length > 120) return respond('Draw name must be 120 characters or fewer.');
 
-  await insertAuditLog(pool, {
-    actorId: request.authUser!.id,
-    actorLabel: request.authUser!.email,
-    action: 'draw_created',
-    entity: 'draw',
-    entityId: outcome.id,
+  const plan =
+    values.mode === 'recurring'
+      ? planRecurringDraws({
+          firstDrawNumber: drawNumber,
+          startDate: values.startDate,
+          endDate: values.endDate,
+          recurrence: values.recurrence as Recurrence,
+          drawTimeLocal: values.drawTime,
+          cutoffHoursBefore: /^\d+$/.test(values.cutoffHours) ? Number(values.cutoffHours) : NaN,
+        })
+      : planOneOffDraw({ drawNumber, drawAtLocal: values.drawAt, entriesCloseAtLocal: values.entriesCloseAt });
+  if (plan.kind === 'rejected') return respond(plan.reason);
+
+  const outcome = await createDraws(pool, {
+    name: values.name || null,
+    draws: plan.draws,
+    createdBy: request.authUser!.id,
+    ...(values.mode === 'recurring'
+      ? {
+          schedule: {
+            startDate: values.startDate,
+            endDate: values.endDate,
+            recurrence: values.recurrence,
+            drawTimeLocal: values.drawTime,
+            cutoffHoursBefore: Number(values.cutoffHours),
+          },
+        }
+      : {}),
   });
-  reply.redirect(`/draws/${outcome.id}`);
+  if (outcome.kind === 'rejected') return respond(outcome.reason);
+
+  for (const [i, id] of outcome.ids.entries()) {
+    await insertAuditLog(pool, {
+      actorId: request.authUser!.id,
+      actorLabel: request.authUser!.email,
+      action: 'draw_created',
+      entity: 'draw',
+      entityId: id,
+      after: { ...plan.draws[i], name: values.name || null, mode: values.mode },
+    });
+  }
+  reply.redirect(outcome.ids.length === 1 ? `/draws/${outcome.ids[0]}` : '/draws');
 });
 
-app.get('/draws/:id', async (request, reply) => {
-  const { id } = request.params as { id: string };
+/** Re-reads the draw (and, while it is open, the entry forms' pick lists) and renders its page. */
+async function sendDrawPage(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  id: string,
+  message: { error?: string; flash?: string } = {},
+): Promise<FastifyReply> {
   const draw = await getDraw(pool, id);
   if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
   const open = draw.status === 'open';
-  const members = open ? await listMembers(pool) : undefined;
-  const agents = open ? await listAgentMembers(pool) : undefined;
-  const liveEntryCount = open ? await countEntries(pool, id) : undefined;
-  reply.type('text/html').send(
+  const [jackpotInputs, members, agents] = await Promise.all([
+    getJackpotInputs(pool),
+    open ? listMembers(pool) : undefined,
+    open ? listAgentMembers(pool) : undefined,
+  ]);
+  return reply.type('text/html').send(
     drawDetailPage({
       user: viewUser(request),
       draw,
+      jackpotInputs,
       ...(members ? { members } : {}),
       ...(agents ? { agents } : {}),
-      ...(liveEntryCount !== undefined ? { liveEntryCount } : {}),
+      ...message,
     }),
   );
+}
+
+app.get('/draws/:id', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  return sendDrawPage(request, reply, id);
+});
+
+app.post('/draws/:id/name', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+
+  const { id } = request.params as { id: string };
+  const draw = await getDraw(pool, id);
+  if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
+
+  const name = ((request.body as { name?: string }).name ?? '').trim();
+  if (name.length > 120) return sendDrawPage(request, reply, id, { error: 'Draw name must be 120 characters or fewer.' });
+
+  await renameDraw(pool, id, name || null);
+  await insertAuditLog(pool, {
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+    action: 'draw_renamed',
+    entity: 'draw',
+    entityId: id,
+    before: { name: draw.name },
+    after: { name: name || null },
+  });
+  return sendDrawPage(request, reply, id, { flash: name ? `Draw name saved.` : 'Draw name cleared.' });
 });
 
 app.post('/draws/:id/entries', async (request, reply) => {
@@ -355,15 +455,10 @@ app.post('/draws/:id/entries', async (request, reply) => {
     .map((s) => Number.parseInt(s.trim(), 10))
     .filter((n) => !Number.isNaN(n));
 
-  const respond = async (error: string) => {
-    const members = await listMembers(pool);
-    return reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw, members, error }));
-  };
-
-  if (!memberId) return respond('A member is required.');
+  if (!memberId) return sendDrawPage(request, reply, id, { error: 'A member is required.' });
 
   const outcome = await addEntry(pool, { drawId: id, memberId, selection });
-  if (outcome.kind === 'rejected') return respond(outcome.reason);
+  if (outcome.kind === 'rejected') return sendDrawPage(request, reply, id, { error: outcome.reason });
 
   await insertAuditLog(pool, {
     actorId: request.authUser!.id,
@@ -373,10 +468,11 @@ app.post('/draws/:id/entries', async (request, reply) => {
     entityId: outcome.entryId,
   });
 
-  const refreshed = (await getDraw(pool, id))!;
-  const members = await listMembers(pool);
-  reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw: refreshed, members, flash: 'Entry added.' }));
+  return sendDrawPage(request, reply, id, { flash: 'Entry added.' });
 });
+
+// A physical ticket can cover up to two years of weekly draws.
+const MAX_TICKET_WEEKS = 104;
 
 app.post('/draws/:id/manual-tickets', async (request, reply) => {
   if (!requireCsrf(request, reply, request.authCsrf!)) return;
@@ -389,17 +485,12 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
     agentMemberId?: string;
     physicalTicketNumber?: string;
     purchaseDate?: string;
-    amountPounds?: string;
+    weeks?: string;
+    confirmPaid?: string;
     selectionMode?: string;
     selection?: string;
   };
-
-  const respond = async (error: string) => {
-    const members = await listMembers(pool);
-    const agents = await listAgentMembers(pool);
-    const liveEntryCount = await countEntries(pool, id);
-    return reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw, members, agents, liveEntryCount, error }));
-  };
+  const respond = (error: string) => sendDrawPage(request, reply, id, { error });
 
   const agentMemberId = (body.agentMemberId ?? '').trim();
   const physicalTicketNumber = (body.physicalTicketNumber ?? '').trim();
@@ -408,12 +499,14 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
   if (!physicalTicketNumber) return respond('A physical ticket number is required.');
   if (!purchaseDate) return respond('A purchase date is required.');
 
-  // Parsed as a string, never a float (T-2.1): "12", "12.3" or "12.34" only.
-  const amountMatch = /^(\d+)(?:\.(\d{1,2}))?$/.exec((body.amountPounds ?? '').trim());
-  if (!amountMatch) return respond('Amount paid must be a number of pounds, e.g. 4.00.');
-  const [, poundsStr, penceStr = ''] = amountMatch;
-  const amountPence = BigInt(poundsStr!) * 100n + BigInt(penceStr.padEnd(2, '0'));
-  if (amountPence <= 0n) return respond('Amount paid must be a positive number.');
+  // #6: the admin enters weeks; the amount is derived, never typed.
+  const weeksRaw = (body.weeks ?? '').trim();
+  const weeks = /^\d+$/.test(weeksRaw) ? Number(weeksRaw) : NaN;
+  if (!Number.isInteger(weeks) || weeks < 1 || weeks > MAX_TICKET_WEEKS) {
+    return respond(`Number of weeks must be a whole number from 1 to ${MAX_TICKET_WEEKS}.`);
+  }
+  if (body.confirmPaid !== 'yes') return respond('Tick the box to confirm the money for this ticket has been paid.');
+  const amountPence = TICKET_PRICE_PENCE * BigInt(weeks);
 
   const selection: ManualTicketSelectionInput =
     body.selectionMode === 'manual'
@@ -439,12 +532,13 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
   if (outcome.kind === 'rejected') return respond(outcome.reason);
   if (outcome.kind === 'already_recorded') return respond(`Ticket ${physicalTicketNumber} was already recorded.`);
 
-  // Enter it into this draw right away — future draws consume the remaining
-  // prepaid blocks the same way a standing order's do, via "Generate
-  // standing-order entries" below. GAP-17 may still be unactivated in a given
-  // environment (config_version.entry_strategy unset) — the ticket is already
-  // recorded at this point, so that failure must not look like the whole
-  // action failed; report it as a flash, not a 500.
+  // Enter it into this draw right away — later draws use up the remaining
+  // weeks when each is run (generateDueEntries). A ticket recorded after this
+  // draw's cutoff is not counted for it (generateDueEntries ignores payments
+  // made after entries closed), so its first week goes to the next draw.
+  // GAP-17 may still be unactivated in a given environment — the ticket is
+  // already recorded at this point, so that failure must not look like the
+  // whole action failed; report it as a flash, not a 500.
   let entryFlash = '';
   try {
     const generated = await generateDueEntries(pool, { drawId: id, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
@@ -460,23 +554,19 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
     action: 'manual_ticket_entered',
     entity: 'draw',
     entityId: id,
-    after: { paymentId: outcome.paymentId, prizeDrawNo: outcome.prizeDrawNo, blocksPurchased: outcome.blocksPurchased },
+    after: {
+      paymentId: outcome.paymentId,
+      prizeDrawNo: outcome.prizeDrawNo,
+      weeks,
+      amountPence: amountPence.toString(),
+      paymentConfirmed: true,
+      blocksPurchased: outcome.blocksPurchased,
+    },
   });
 
-  const refreshed = (await getDraw(pool, id))!;
-  const members = await listMembers(pool);
-  const agents = await listAgentMembers(pool);
-  const liveEntryCount = await countEntries(pool, id);
-  reply.type('text/html').send(
-    drawDetailPage({
-      user: viewUser(request),
-      draw: refreshed,
-      members,
-      agents,
-      liveEntryCount,
-      flash: `Recorded ticket ${physicalTicketNumber}: ${outcome.blocksPurchased} block(s) purchased. ${entryFlash}`,
-    }),
-  );
+  return sendDrawPage(request, reply, id, {
+    flash: `Recorded ticket ${physicalTicketNumber}: ${weeks} week${weeks === 1 ? '' : 's'}, ${formatPence(pence(amountPence))} paid. ${entryFlash}`,
+  });
 });
 
 app.post('/draws/:id/generate-entries', async (request, reply) => {
@@ -496,18 +586,9 @@ app.post('/draws/:id/generate-entries', async (request, reply) => {
       entityId: id,
       after: result,
     });
-    const refreshed = (await getDraw(pool, id))!;
-    const members = await listMembers(pool);
-    const liveEntryCount = await countEntries(pool, id);
-    reply.type('text/html').send(
-      drawDetailPage({
-        user: viewUser(request),
-        draw: refreshed,
-        members,
-        liveEntryCount,
-        flash: `Generated ${result.generated} of ${result.candidatesConsidered} standing-order entries considered.`,
-      }),
-    );
+    return sendDrawPage(request, reply, id, {
+      flash: `Generated ${result.generated} entries (${result.directDebitGenerated} Direct Debit, ${result.generated - result.directDebitGenerated} prepaid) from ${result.candidatesConsidered} members considered.`,
+    });
   } catch (error) {
     // GAP-17 is resolved (prepaid_blocks), but that only takes effect once
     // `pnpm activate-config` has actually written and activated a
@@ -515,9 +596,7 @@ app.post('/draws/:id/generate-entries', async (request, reply) => {
     // exactly as it's meant to (gap-register.md), and this is where that
     // becomes a readable message instead of a 500.
     const message = error instanceof Error ? error.message : String(error);
-    const members = await listMembers(pool);
-    const liveEntryCount = await countEntries(pool, id);
-    reply.type('text/html').send(drawDetailPage({ user: viewUser(request), draw, members, liveEntryCount, error: message }));
+    return sendDrawPage(request, reply, id, { error: message });
   }
 });
 
@@ -527,10 +606,21 @@ app.post('/draws/:id/run', async (request, reply) => {
   const { id } = request.params as { id: string };
   const draw = await getDraw(pool, id);
   if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
-  if (draw.status !== 'open') {
-    return reply
-      .type('text/html')
-      .send(drawDetailPage({ user: viewUser(request), draw, error: `Draw is already '${draw.status}'.` }));
+  if (draw.status !== 'open') return sendDrawPage(request, reply, id, { error: `Draw is already '${draw.status}'.` });
+
+  // #9/#11: every Direct Debit member, and every member with prepaid weeks
+  // left, is entered before the entry set is frozen — otherwise their entries
+  // depend on someone remembering to press "Generate" first. If that can't
+  // run (e.g. GAP-17 not activated) the draw does not run either: running it
+  // anyway would silently leave paid-up members out.
+  let generated;
+  try {
+    generated = await generateDueEntries(pool, { drawId: id, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return sendDrawPage(request, reply, id, {
+      error: `The draw was not run: standing-order and Direct Debit entries could not be generated first. ${message}`,
+    });
   }
 
   const entriesCount = await countEntries(pool, id);
@@ -544,7 +634,7 @@ app.post('/draws/:id/run', async (request, reply) => {
     entity: 'draw',
     entityId: id,
     workflowId,
-    after: { entriesCount },
+    after: { entriesCount, generatedEntries: generated.generated, directDebitEntries: generated.directDebitGenerated },
   });
 
   reply.redirect(`/draws/${id}`);

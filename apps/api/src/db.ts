@@ -135,14 +135,45 @@ export interface OpenDraw {
   readonly id: string;
   readonly drawNumber: number;
   readonly drawDate: string;
+  /** GitHub #5 — may be NULL. */
+  readonly name: string | null;
+  /** GitHub #4 — NULL on draws created before draw times/cutoffs existed. */
+  readonly drawAt: Date | null;
+  readonly entriesCloseAt: Date | null;
 }
 
+/**
+ * The draw a member entering now would go into: the soonest open draw whose
+ * entries haven't closed (GitHub #4). With recurring draws created ahead of
+ * time several can be open at once — the next one is the one on sale, not
+ * the highest-numbered.
+ */
 export async function getOpenDraw(pool: Pool): Promise<OpenDraw | undefined> {
-  const { rows } = await pool.query<{ id: string; draw_number: number; draw_date: string }>(
-    `SELECT id, draw_number, draw_date::text AS draw_date FROM draw WHERE status = 'open' ORDER BY draw_number DESC LIMIT 1`,
+  const { rows } = await pool.query<{
+    id: string;
+    draw_number: number;
+    draw_date: string;
+    name: string | null;
+    draw_at: Date | null;
+    entries_close_at: Date | null;
+  }>(
+    `SELECT id, draw_number, draw_date::text AS draw_date, name, draw_at, entries_close_at
+       FROM draw
+      WHERE status = 'open' AND (entries_close_at IS NULL OR entries_close_at > now())
+      ORDER BY COALESCE(draw_at, draw_date::timestamptz), draw_number
+      LIMIT 1`,
   );
   const row = rows[0];
-  return row ? { id: row.id, drawNumber: row.draw_number, drawDate: row.draw_date } : undefined;
+  return row
+    ? {
+        id: row.id,
+        drawNumber: row.draw_number,
+        drawDate: row.draw_date,
+        name: row.name,
+        drawAt: row.draw_at,
+        entriesCloseAt: row.entries_close_at,
+      }
+    : undefined;
 }
 
 export interface DrawStats {

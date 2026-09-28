@@ -16,9 +16,10 @@
  * the member's standing selection — it does NOT fabricate a `payment` row.
  * No money has moved yet; that only happens on an actual collection cycle,
  * which this system does not yet run (BacsBureau.submitCollections has no
- * caller). A member who sets up Direct Debit today has their numbers "in"
- * but zero funded entries until that collection pipeline exists — honest,
- * not a bug.
+ * caller). Entries don't wait for it: an active mandate enters the member
+ * into every draw until it is cancelled (GitHub #9, `generateDueEntries`,
+ * funding source 'direct_debit') — the collection pipeline, once built, is
+ * what reconciles the money against those entries.
  */
 import { withTransaction, type Pool } from '@qosfc/db';
 import { idempotencyKey, type BacsBureau } from '@qosfc/ports';
@@ -113,6 +114,13 @@ export async function completeDirectDebitSetup(pool: Pool, bacsBureau: BacsBurea
       [prizeDrawNo, pending.selection],
     );
 
+    // One Direct Debit per member: setting up again (e.g. to change numbers)
+    // replaces the earlier mandate rather than entering them twice a draw.
+    await client.query(
+      `UPDATE payment_method SET active = false, mandate_status = 'cancelled'
+        WHERE member_id = $1 AND type = 'direct_debit' AND active`,
+      [pending.member_id],
+    );
     await client.query(
       `INSERT INTO payment_method (member_id, type, mandate_ref, mandate_status, active) VALUES ($1, 'direct_debit', $2, $3, true)`,
       [pending.member_id, mandateRef, mandate.status],
@@ -122,4 +130,40 @@ export async function completeDirectDebitSetup(pool: Pool, bacsBureau: BacsBurea
 
     return { kind: 'active', memberId: pending.member_id };
   });
+}
+
+export interface DirectDebitStatus {
+  readonly mandateRef: string | null;
+  readonly since: Date;
+}
+
+/** The member's active Direct Debit, if any — what keeps them entered into every draw (GitHub #9). */
+export async function getActiveDirectDebit(pool: Pool, memberId: string): Promise<DirectDebitStatus | undefined> {
+  const { rows } = await pool.query<{ mandate_ref: string | null; created_at: Date }>(
+    `SELECT mandate_ref, created_at FROM payment_method
+      WHERE member_id = $1 AND type = 'direct_debit' AND active
+        AND COALESCE(mandate_status, '') NOT IN ('cancelled', 'failed')
+      ORDER BY created_at DESC LIMIT 1`,
+    [memberId],
+  );
+  const row = rows[0];
+  return row ? { mandateRef: row.mandate_ref, since: row.created_at } : undefined;
+}
+
+/**
+ * Stops the member being entered into further draws by Direct Debit
+ * (GitHub #9 — "until cancelled"). Entries already made stand: a draw whose
+ * entries were generated before this still includes them.
+ *
+ * GAP-10: the `BacsBureau` port has no cancellation call yet, so this is
+ * recorded here only. Once a real bureau is chosen the mandate must also be
+ * cancelled there, or collections would continue without entries.
+ */
+export async function cancelDirectDebit(pool: Pool, memberId: string): Promise<{ readonly cancelled: number }> {
+  const { rowCount } = await pool.query(
+    `UPDATE payment_method SET active = false, mandate_status = 'cancelled'
+      WHERE member_id = $1 AND type = 'direct_debit' AND active`,
+    [memberId],
+  );
+  return { cancelled: rowCount ?? 0 };
 }
