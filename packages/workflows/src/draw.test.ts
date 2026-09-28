@@ -160,11 +160,13 @@ describeWf('DrawWorkflow (TestWorkflowEnvironment)', () => {
         generateWinningNumbers: async () => ({ numbers: [1, 2, 3, 4], source: 'fake', seed: 'fake' }),
         identifyWinners: async () => ({ winningEntries: [{ entryId: 'e1', memberId: 'm1' }] }),
         settleDraw: async () => ({ winnersCount: 1, jackpotPaidPence: '2500000', rolloverOutPence: '0' }),
+        notifyWinners: async () => ({ notified: 1, pending: 0 }),
       },
       (handle) => handle.result(),
     );
     expect(state.status).toBe('settled');
     expect(state.winnersCount).toBe(1);
     expect(state.blockedOn).toBeUndefined();
+    expect(state.winnersNotified).toBe(1);
   });
 });

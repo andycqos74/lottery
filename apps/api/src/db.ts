@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { withTransaction, type Pool } from '@qosfc/db';
 import { DEFAULT_JACKPOT_FLOOR_PENCE, jackpotPosition, pence, revenueFor, TICKET_PRICE_PENCE, type BasisPoints } from '@qosfc/domain';
 
@@ -69,6 +70,65 @@ export async function registerMember(
 
 export async function touchMemberLastLogin(pool: Pool, memberId: string): Promise<void> {
   await pool.query(`UPDATE member_credential SET last_login_at = now() WHERE member_id = $1`, [memberId]);
+}
+
+const PASSWORD_RESET_TTL = "interval '1 hour'";
+
+/**
+ * Returns undefined if there's no active member with a portal login for this
+ * email — the caller must respond identically either way (T-1.3-style
+ * enumeration guard, same convention as /register's "Could not register with
+ * those details" and /login's "Invalid email or password").
+ *
+ * Any previous unresolved request for this member is superseded (deleted) so
+ * only the most recently requested link ever works.
+ */
+export async function createPasswordReset(
+  pool: Pool,
+  email: string,
+): Promise<{ readonly memberId: string; readonly token: string } | undefined> {
+  const member = await findMemberByEmail(pool, email);
+  if (!member) return undefined;
+
+  const token = randomBytes(32).toString('base64url');
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+
+  await withTransaction(pool, async (client) => {
+    await client.query(`DELETE FROM member_password_reset WHERE member_id = $1 AND used_at IS NULL`, [member.id]);
+    await client.query(
+      `INSERT INTO member_password_reset (member_id, token_hash, expires_at) VALUES ($1, $2, now() + ${PASSWORD_RESET_TTL})`,
+      [member.id, tokenHash],
+    );
+  });
+
+  return { memberId: member.id, token };
+}
+
+export type ConsumePasswordResetOutcome =
+  | { readonly kind: 'reset'; readonly memberId: string }
+  | { readonly kind: 'invalid' }
+  | { readonly kind: 'expired' };
+
+export async function consumePasswordReset(
+  pool: Pool,
+  token: string,
+  newPasswordHash: string,
+): Promise<ConsumePasswordResetOutcome> {
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ id: string; member_id: string; expires_at: string; used_at: string | null }>(
+      `SELECT id, member_id, expires_at, used_at FROM member_password_reset WHERE token_hash = $1 FOR UPDATE`,
+      [tokenHash],
+    );
+    const row = rows[0];
+    if (!row || row.used_at) return { kind: 'invalid' };
+    if (new Date(row.expires_at).getTime() < Date.now()) return { kind: 'expired' };
+
+    await client.query(`UPDATE member_password_reset SET used_at = now() WHERE id = $1`, [row.id]);
+    await client.query(`UPDATE member_credential SET password_hash = $1 WHERE member_id = $2`, [newPasswordHash, row.member_id]);
+    return { kind: 'reset', memberId: row.member_id };
+  });
 }
 
 export interface OpenDraw {

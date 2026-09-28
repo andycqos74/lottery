@@ -20,7 +20,7 @@ import {
 } from '@qosfc/domain';
 import type { createActivities } from '@qosfc/activities';
 
-const { openHumanTask, generateWinningNumbers, identifyWinners, settleDraw } = workflow.proxyActivities<
+const { openHumanTask, generateWinningNumbers, identifyWinners, settleDraw, notifyWinners } = workflow.proxyActivities<
   ReturnType<typeof createActivities>
 >({
   startToCloseTimeout: '2 minutes',
@@ -45,6 +45,8 @@ export interface DrawState {
   readonly jackpotPreDrawPence?: string;
   readonly winnersCount?: number;
   readonly jackpotPaidPence?: string;
+  readonly winnersNotified?: number;
+  readonly winnersNotificationPending?: number;
 }
 
 export interface DrawWorkflowInput {
@@ -143,11 +145,26 @@ export async function DrawWorkflow(input: DrawWorkflowInput): Promise<DrawState>
   // draw's jackpot.
   void alloc;
 
+  // The money already moved in settleDraw above — a notification fault must
+  // not fail settlement or leave the draw stuck. GAP-46 (retry/abandonment
+  // policy) is unresolved, so a failure here is surfaced via get_state for an
+  // operator to notice (winnersNotificationPending), not retried indefinitely
+  // or silently dropped.
+  let notifyResult: { notified: number; pending: number } | undefined;
+  if (settled.winnersCount > 0) {
+    try {
+      notifyResult = await notifyWinners({ drawId: input.drawId, drawNumber: input.drawNumber });
+    } catch (error) {
+      workflow.log.error('notifyWinners failed; winning prize rows remain pending_notification', { error });
+    }
+  }
+
   state = {
     ...state,
     status: 'settled',
     winnersCount: settled.winnersCount,
     jackpotPaidPence: settled.jackpotPaidPence,
+    ...(notifyResult ? { winnersNotified: notifyResult.notified, winnersNotificationPending: notifyResult.pending } : {}),
   };
   return state;
 }

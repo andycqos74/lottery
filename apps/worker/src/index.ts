@@ -27,7 +27,7 @@ const pool = createPool({
   max: 10,
 });
 
-const providers = buildProviderRegistry(process.env);
+const providers = buildProviderRegistry(process.env, pool);
 const activities = createActivities({ pool, providers });
 
 const connection = await NativeConnection.connect({ address: config.address });

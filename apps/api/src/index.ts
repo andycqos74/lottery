@@ -7,14 +7,18 @@
  * directly, so every state change carries a workflow's durability, idempotency
  * and audit trail rather than depending on a request completing.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import type { FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
+import { formatPence, pence } from '@qosfc/domain';
+import { idempotencyKey } from '@qosfc/ports';
 import {
+  consumePasswordReset,
+  createPasswordReset,
   findMemberByEmail,
   getDrawStats,
   getMemberDetails,
@@ -26,18 +30,22 @@ import {
   touchMemberLastLogin,
   updateMemberDetails,
 } from './db.js';
+import { completeDirectDebitSetup, startDirectDebitSetup } from './direct-debit.js';
 import { completeEntryPurchase, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
-import { buildPaymentGateway } from './providers.js';
+import { buildBacsBureau, buildNotifier, buildPaymentGateway } from './providers.js';
 import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
 import {
   accountPage,
   detailsPage,
+  directDebitReturnPage,
   drawPage,
+  forgotPasswordPage,
   loginPage,
   pastDrawsPage,
   paymentPage,
   purchaseReturnPage,
   registerPage,
+  resetPasswordPage,
   type ViewMember,
 } from './views.js';
 
@@ -57,6 +65,20 @@ const paymentGateway = buildPaymentGateway({
   PAYMENT_GATEWAY: process.env['PAYMENT_GATEWAY'],
   SANDBOX_PROVIDERS_URL: process.env['SANDBOX_PROVIDERS_URL'],
   SANDBOX_WEBHOOK_SECRET_FILE: process.env['SANDBOX_WEBHOOK_SECRET_FILE'],
+});
+const bacsBureau = buildBacsBureau({
+  BACS_BUREAU: process.env['BACS_BUREAU'],
+  SANDBOX_PROVIDERS_URL: process.env['SANDBOX_PROVIDERS_URL'],
+  SANDBOX_WEBHOOK_SECRET_FILE: process.env['SANDBOX_WEBHOOK_SECRET_FILE'],
+});
+const notifier = buildNotifier(pool, {
+  NOTIFIER: process.env['NOTIFIER'],
+  SANDBOX_PROVIDERS_URL: process.env['SANDBOX_PROVIDERS_URL'],
+  SANDBOX_WEBHOOK_SECRET_FILE: process.env['SANDBOX_WEBHOOK_SECRET_FILE'],
+  SOCKETLABS_SERVER_ID_FILE: process.env['SOCKETLABS_SERVER_ID_FILE'],
+  SOCKETLABS_API_KEY_FILE: process.env['SOCKETLABS_API_KEY_FILE'],
+  SOCKETLABS_FROM_EMAIL: process.env['SOCKETLABS_FROM_EMAIL'],
+  SOCKETLABS_FROM_NAME: process.env['SOCKETLABS_FROM_NAME'],
 });
 
 const app = Fastify({
@@ -182,6 +204,18 @@ app.post('/register', async (request, reply) => {
     return reject('Could not register with those details.');
   }
 
+  // Best-effort: a welcome email that fails to send must not fail signup —
+  // the account already exists in Postgres by this point either way.
+  notifier
+    .send({
+      idempotencyKey: idempotencyKey(`welcome:${outcome.memberId}`),
+      memberRef: outcome.memberId,
+      channel: 'email',
+      templateId: 'welcome_signup',
+      mergeData: {},
+    })
+    .catch((error: unknown) => app.log.error({ err: error, memberId: outcome.memberId }, 'welcome_signup notification failed'));
+
   if (!form) return reply.code(201).send({ memberId: outcome.memberId });
 
   await touchMemberLastLogin(pool, outcome.memberId);
@@ -220,6 +254,80 @@ app.post('/login', async (request, reply) => {
   reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(nodeEnv));
   if (form) return reply.redirect('/draw');
   return { memberId: member.id, csrf };
+});
+
+app.get('/forgot-password', async (request, reply) => {
+  const found = await viewMember(request);
+  if (found) return reply.redirect('/account');
+  const openDraw = await getOpenDraw(pool);
+  reply.type('text/html').send(forgotPasswordPage({ ...(openDraw ? { openDraw } : {}) }));
+});
+
+app.post('/forgot-password', async (request, reply) => {
+  const body = request.body as { email?: string };
+  const email = (body.email ?? '').trim().toLowerCase();
+  const openDraw = await getOpenDraw(pool);
+
+  if (!email) {
+    return reply
+      .type('text/html')
+      .code(400)
+      .send(forgotPasswordPage({ error: 'Enter your email address.', ...(openDraw ? { openDraw } : {}) }));
+  }
+
+  const reset = await createPasswordReset(pool, email);
+  // Same response whether or not the address is registered — confirming which
+  // emails have accounts is exactly the enumeration a reset form must not offer.
+  if (reset) {
+    const resetUrl = `${publicBaseUrl}/reset-password?token=${encodeURIComponent(reset.token)}`;
+    await notifier
+      .send({
+        idempotencyKey: idempotencyKey(`password_reset:${reset.memberId}:${createHash('sha256').update(reset.token).digest('hex')}`),
+        memberRef: reset.memberId,
+        channel: 'email',
+        templateId: 'password_reset',
+        mergeData: { resetUrl },
+      })
+      .catch((error: unknown) => app.log.error({ err: error, memberId: reset.memberId }, 'password_reset notification failed'));
+  }
+
+  reply.type('text/html').send(forgotPasswordPage({ sent: true, ...(openDraw ? { openDraw } : {}) }));
+});
+
+app.get('/reset-password', async (request, reply) => {
+  const found = await viewMember(request);
+  if (found) return reply.redirect('/account');
+  const { token } = request.query as { token?: string };
+  if (!token) return reply.redirect('/forgot-password');
+  reply.type('text/html').send(resetPasswordPage({ token }));
+});
+
+app.post('/reset-password', async (request, reply) => {
+  const body = request.body as { token?: string; password?: string };
+  const token = body.token ?? '';
+  const password = body.password ?? '';
+
+  if (!token) return reply.redirect('/forgot-password');
+  if (password.length < 10) {
+    return reply.type('text/html').code(400).send(resetPasswordPage({ token, error: 'Password must be at least 10 characters.' }));
+  }
+
+  const passwordHash = await argon2Hash(password);
+  const outcome = await consumePasswordReset(pool, token, passwordHash);
+  if (outcome.kind === 'expired') {
+    return reply
+      .type('text/html')
+      .code(400)
+      .send(resetPasswordPage({ token, error: 'That reset link has expired. Request a new one below.' }));
+  }
+  if (outcome.kind === 'invalid') {
+    return reply
+      .type('text/html')
+      .code(400)
+      .send(resetPasswordPage({ token, error: 'That reset link is invalid or has already been used.' }));
+  }
+
+  reply.type('text/html').send(loginPage({ notice: 'Password reset. Log in with your new password.' }));
 });
 
 app.post('/logout', async (request, reply) => {
@@ -355,6 +463,25 @@ app.get('/draw/return', async (request, reply) => {
   if (!session) return reply.code(400).type('text/html').send(purchaseReturnPage({ member: found.view, status: 'not_found' }));
 
   const outcome = await completeEntryPurchase(pool, paymentGateway, session);
+  if (outcome.kind === 'entry_created') {
+    // Only on the transition into 'completed' — a reload of this page (which
+    // re-runs completeEntryPurchase and gets 'already_completed' back) must
+    // not resend the email.
+    notifier
+      .send({
+        idempotencyKey: idempotencyKey(`entry_confirmation:${outcome.entryId}`),
+        memberRef: outcome.memberId,
+        channel: 'email',
+        templateId: 'entry_confirmation',
+        mergeData: {
+          drawNumber: String(outcome.drawNumber),
+          numbers: outcome.selection.join(', '),
+          amount: formatPence(pence(BigInt(outcome.amountPence))),
+          blocks: String(outcome.blocks),
+        },
+      })
+      .catch((error: unknown) => app.log.error({ err: error, entryId: outcome.entryId }, 'entry_confirmation notification failed'));
+  }
   const status =
     outcome.kind === 'entry_created' || outcome.kind === 'already_completed'
       ? 'paid'
@@ -368,6 +495,54 @@ app.get('/draw/return', async (request, reply) => {
       member: found.view,
       status,
       ...(outcome.kind === 'payment_failed' ? { reason: outcome.reason } : {}),
+    }),
+  );
+});
+
+app.post('/direct-debit/setup', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
+
+  const body = request.body as { selection?: string | string[]; csrf?: string };
+  const selection = [...new Set(parseSelectionInput(body.selection))].sort((a, b) => a - b);
+
+  const openDraw = await getOpenDraw(pool);
+  if (!openDraw) return reply.type('text/html').send(drawPage({ member: found.view, error: 'No draw is currently open for entries.' }));
+
+  const outcome = await startDirectDebitSetup(pool, bacsBureau, {
+    memberId: found.auth.member.id,
+    selection,
+    returnUrl: `${publicBaseUrl}/direct-debit/return`,
+  });
+  if (outcome.kind === 'rejected') {
+    return reply.type('text/html').send(
+      paymentPage({
+        member: found.view,
+        openDraw,
+        selection,
+        blocks: 4,
+        error: outcome.reason,
+      }),
+    );
+  }
+  return reply.redirect(outcome.redirectUrl);
+});
+
+app.get('/direct-debit/return', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+
+  const { mandate } = request.query as { mandate?: string };
+  if (!mandate) return reply.code(400).type('text/html').send(directDebitReturnPage({ member: found.view, status: 'not_found' }));
+
+  const outcome = await completeDirectDebitSetup(pool, bacsBureau, mandate);
+  const status = outcome.kind === 'active' ? 'active' : outcome.kind === 'failed' ? 'failed' : 'not_found';
+  reply.type('text/html').send(
+    directDebitReturnPage({
+      member: found.view,
+      status,
+      ...(outcome.kind === 'failed' ? { reason: outcome.reason } : {}),
     }),
   );
 });

@@ -269,7 +269,7 @@ export function registerPage(opts: { error?: string; openDraw?: OpenDraw | undef
   });
 }
 
-export function loginPage(opts: { error?: string; openDraw?: OpenDraw | undefined }): string {
+export function loginPage(opts: { error?: string; notice?: string; openDraw?: OpenDraw | undefined }): string {
   return layout({
     title: 'Log in',
     active: 'login',
@@ -281,13 +281,67 @@ export function loginPage(opts: { error?: string; openDraw?: OpenDraw | undefine
       </div>
       <div class="card stack" style="max-width:420px">
         ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.notice ? `<div class="banner"><span>✅</span><span>${escapeHtml(opts.notice)}</span></div>` : ''}
         <form method="post" action="/login" class="stack">
           <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autofocus autocomplete="username" /></div>
           <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" required autocomplete="current-password" /></div>
           <button class="btn btn-primary btn-block" type="submit">Log in</button>
         </form>
+        <p class="hint" style="text-align:center"><a href="/forgot-password">Forgotten your password?</a></p>
         <hr class="divider">
         <p class="hint" style="text-align:center">New to the Draw? <a href="/register">Create an account</a></p>
+      </div>
+    `,
+  });
+}
+
+export function forgotPasswordPage(opts: { error?: string; sent?: boolean; openDraw?: OpenDraw | undefined }): string {
+  return layout({
+    title: 'Forgotten password',
+    active: 'login',
+    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
+    body: `
+      <div class="page-head">
+        <h1>Forgotten password</h1>
+        <p>Enter the email address on your account and we'll send you a link to reset your password.</p>
+      </div>
+      <div class="card stack" style="max-width:420px">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${
+          opts.sent
+            ? `<div class="banner"><span>✉️</span><span>If that email address is registered, a reset link is on its way &mdash; it expires in an hour.</span></div>`
+            : `<form method="post" action="/forgot-password" class="stack">
+                 <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autofocus autocomplete="username" /></div>
+                 <button class="btn btn-primary btn-block" type="submit">Send reset link</button>
+               </form>`
+        }
+        <p class="hint" style="text-align:center"><a href="/login">Back to log in</a></p>
+      </div>
+    `,
+  });
+}
+
+export function resetPasswordPage(opts: {
+  token: string;
+  error?: string;
+  openDraw?: OpenDraw | undefined;
+}): string {
+  return layout({
+    title: 'Reset password',
+    active: 'login',
+    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
+    body: `
+      <div class="page-head">
+        <h1>Choose a new password</h1>
+      </div>
+      <div class="card stack" style="max-width:420px">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        <form method="post" action="/reset-password" class="stack">
+          <input type="hidden" name="token" value="${escapeHtml(opts.token)}" />
+          <div class="field"><label for="password">New password</label><input id="password" name="password" type="password" required minlength="10" autocomplete="new-password" autofocus />
+            <p class="hint">At least 10 characters.</p></div>
+          <button class="btn btn-primary btn-block" type="submit">Reset password</button>
+        </form>
       </div>
     `,
   });
@@ -459,11 +513,19 @@ export function paymentPage(opts: {
               <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; any name, card number, expiry and CVC are accepted; this is a test transaction and no funds move.</span></div>
             </div>
             <div id="pay-dd" class="stack" style="display:none">
-              <div class="banner"><span>🏗️</span><span>Direct Debit standing orders aren't set up online yet &mdash; contact QOSFC to arrange one, or pay by card above.</span></div>
+              <div class="field"><label for="dd-name">Name of account holder</label><input id="dd-name" name="dd-name" type="text" placeholder="Full name" autocomplete="off" /></div>
+              <div class="row2">
+                <div class="field"><label for="dd-sort">Sort code</label><input id="dd-sort" name="dd-sort" type="text" placeholder="00-00-00" autocomplete="off" /></div>
+                <div class="field"><label for="dd-acc">Account number</label><input id="dd-acc" name="dd-acc" type="text" placeholder="12345678" autocomplete="off" /></div>
+              </div>
+              <div class="banner"><span>🧪</span><span><b>Sandbox Direct Debit</b> &mdash; any name, sort code and account number are accepted; this is a test mandate and no funds move.</span></div>
             </div>
 
-            <button class="btn btn-gold btn-block" type="submit">Pay <span class="blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span> &amp; enter →</button>
-            <p class="hint" style="text-align:center">Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.</p>
+            <button class="btn btn-gold btn-block" type="submit" id="pay-submit">
+              <span id="submit-card-label">Pay <span class="blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span> &amp; enter →</span>
+              <span id="submit-dd-label" style="display:none">Set up Direct Debit →</span>
+            </button>
+            <p class="hint" style="text-align:center" id="pay-hint">Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.</p>
           </form>
         </div>
         <div class="card stack" style="align-self:start">
@@ -476,6 +538,11 @@ export function paymentPage(opts: {
       </div>
       <script>
       (function(){
+        var form = document.getElementById('pay-form');
+        var hint = document.getElementById('pay-hint');
+        var cardLabel = document.getElementById('submit-card-label');
+        var ddLabel = document.getElementById('submit-dd-label');
+        var cardRequired = document.querySelectorAll('#pay-card [required]');
         document.querySelectorAll('.method-tabs button').forEach(function(btn){
           btn.addEventListener('click', function(){
             document.querySelectorAll('.method-tabs button').forEach(function(b){ b.setAttribute('aria-selected','false'); });
@@ -483,6 +550,14 @@ export function paymentPage(opts: {
             var isCard = btn.dataset.method === 'card';
             document.getElementById('pay-card').style.display = isCard ? '' : 'none';
             document.getElementById('pay-dd').style.display = isCard ? 'none' : '';
+            // A hidden-but-required card field blocks submitting the DD tab.
+            cardRequired.forEach(function(el){ el.required = isCard; });
+            form.action = isCard ? '/draw/enter' : '/direct-debit/setup';
+            cardLabel.style.display = isCard ? '' : 'none';
+            ddLabel.style.display = isCard ? 'none' : '';
+            hint.textContent = isCard
+              ? "Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up."
+              : "Direct Debit setup runs through QOSFC's sandbox Bacs bureau while a real route is being set up. No payment is taken today.";
           });
         });
         var summary = document.getElementById('summary-line');
@@ -517,6 +592,23 @@ export function purchaseReturnPage(opts: {
              <p style="margin-top:1rem"><a class="btn btn-primary" href="/draw">Try again</a></p>`
           : `<div class="page-head"><h1>Unknown payment session</h1></div><p class="muted">We couldn't find that payment attempt.</p>`;
   return layout({ title: 'Payment', member: opts.member, active: 'draw', ...(opts.openDraw ? { openDraw: opts.openDraw } : {}), body });
+}
+
+export function directDebitReturnPage(opts: {
+  member: ViewMember;
+  openDraw?: OpenDraw | undefined;
+  status: 'active' | 'failed' | 'not_found';
+  reason?: string;
+}): string {
+  const body =
+    opts.status === 'active'
+      ? `<div class="page-head"><h1>Direct Debit set up</h1></div><div class="flash">Your mandate is in place &mdash; your numbers are entered from the next open draw onward.</div>
+         <p style="margin-top:1rem"><a class="btn btn-primary" href="/account">View my numbers</a></p>`
+      : opts.status === 'failed'
+        ? `<div class="page-head"><h1>Direct Debit setup did not complete</h1></div><div class="error">${escapeHtml(opts.reason ?? 'The mandate setup was not successful.')}</div>
+           <p style="margin-top:1rem"><a class="btn btn-primary" href="/draw">Try again</a></p>`
+        : `<div class="page-head"><h1>Unknown Direct Debit setup</h1></div><p class="muted">We couldn't find that setup attempt.</p>`;
+  return layout({ title: 'Direct Debit', member: opts.member, active: 'draw', ...(opts.openDraw ? { openDraw: opts.openDraw } : {}), body });
 }
 
 function entryHistoryRow(e: MyEntry): string {

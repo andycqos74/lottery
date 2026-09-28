@@ -66,7 +66,15 @@ export async function startEntryPurchase(
 }
 
 export type CompletePurchaseOutcome =
-  | { readonly kind: 'entry_created'; readonly entryId: string }
+  | {
+      readonly kind: 'entry_created';
+      readonly entryId: string;
+      readonly memberId: string;
+      readonly drawNumber: number;
+      readonly selection: readonly number[];
+      readonly amountPence: string;
+      readonly blocks: number;
+    }
   | { readonly kind: 'already_completed'; readonly entryId: string }
   | { readonly kind: 'payment_failed'; readonly reason: string }
   | { readonly kind: 'pending' }
@@ -88,11 +96,13 @@ export async function completeEntryPurchase(
     draw_id: string;
     selection: number[];
     amount_pence: string;
+    blocks: number;
     status: string;
     entry_id: string | null;
-  }>(`SELECT member_id, draw_id, selection, amount_pence, status, entry_id FROM pending_entry_purchase WHERE session_id = $1`, [
-    sessionId,
-  ]);
+  }>(
+    `SELECT member_id, draw_id, selection, amount_pence, blocks, status, entry_id FROM pending_entry_purchase WHERE session_id = $1`,
+    [sessionId],
+  );
   const pending = rows[0];
   if (!pending) return { kind: 'not_found' };
   if (pending.status === 'completed') return { kind: 'already_completed', entryId: pending.entry_id! };
@@ -114,11 +124,15 @@ export async function completeEntryPurchase(
     const current = recheck[0]!;
     if (current.status === 'completed') return { kind: 'already_completed', entryId: current.entry_id! };
 
-    const { rows: drawRows } = await client.query<{ status: string }>(`SELECT status FROM draw WHERE id = $1`, [pending.draw_id]);
+    const { rows: drawRows } = await client.query<{ status: string; draw_number: number }>(
+      `SELECT status, draw_number FROM draw WHERE id = $1`,
+      [pending.draw_id],
+    );
     if (drawRows[0]?.status !== 'open') {
       await client.query(`UPDATE pending_entry_purchase SET status = 'failed' WHERE session_id = $1`, [sessionId]);
       return { kind: 'payment_failed', reason: 'The draw closed before this payment completed. Contact QOSFC for a refund.' };
     }
+    const drawNumber = drawRows[0].draw_number;
 
     // A member who has already bought entries keeps the same legacy-shaped
     // identifier (FR-1.3's immutability applies to a portal-minted number too
@@ -175,7 +189,15 @@ export async function completeEntryPurchase(
       entryId,
     ]);
 
-    return { kind: 'entry_created', entryId };
+    return {
+      kind: 'entry_created',
+      entryId,
+      memberId: pending.member_id,
+      drawNumber,
+      selection: pending.selection,
+      amountPence: pending.amount_pence,
+      blocks: pending.blocks,
+    };
   });
 }
 
