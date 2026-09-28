@@ -13,6 +13,7 @@ import { openHumanTask, type OpenTaskRequest } from './tasks/human-tasks.js';
 import { generateWinningNumbers, type GenerateNumbersRequest } from './draw/rng.js';
 import { identifyWinners, type IdentifyWinnersRequest } from './draw/winners.js';
 import { settleDraw, type SettleDrawRequest } from './draw/settle.js';
+import { getRolloverIn, type GetRolloverInRequest } from './draw/rollover.js';
 import { notifyWinners, type NotifyWinnersRequest } from './draw/notify-winners.js';
 import { ingestNewStatements, type IngestNewStatementsRequest } from './reconcile/ingest-statement.js';
 import { recordManualTicket, type RecordManualTicketRequest } from './entries/record-manual-ticket.js';
@@ -25,6 +26,8 @@ export function createActivities(ctx: ActivityContext) {
       generateWinningNumbers(ctx.pool, ctx.providers.randomness, request),
 
     identifyWinners: (request: IdentifyWinnersRequest) => identifyWinners(ctx.pool, request),
+
+    getRolloverIn: (request: GetRolloverInRequest) => getRolloverIn(ctx.pool, request),
 
     settleDraw: (request: SettleDrawRequest) => settleDraw(ctx.pool, request),
 
@@ -50,6 +53,7 @@ export type { OpenTaskRequest, OpenTaskResult } from './tasks/human-tasks.js';
 export type { GenerateNumbersRequest, GenerateNumbersResult } from './draw/rng.js';
 export type { IdentifyWinnersRequest, IdentifyWinnersResult } from './draw/winners.js';
 export type { SettleDrawRequest, SettleDrawResult } from './draw/settle.js';
+export { getRolloverIn, type GetRolloverInRequest, type GetRolloverInResult } from './draw/rollover.js';
 export type { NotifyWinnersRequest, NotifyWinnersResult } from './draw/notify-winners.js';
 export { ingestNewStatements } from './reconcile/ingest-statement.js';
 export type { IngestNewStatementsRequest, IngestedStatement } from './reconcile/ingest-statement.js';

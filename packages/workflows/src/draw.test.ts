@@ -43,7 +43,8 @@ describeWf('DrawWorkflow (TestWorkflowEnvironment)', () => {
       connection: testEnv.nativeConnection,
       taskQueue: 'draw',
       workflowsPath: fileURLToPath(new URL('../dist/draw.js', import.meta.url)),
-      activities,
+      // No previous draw unless a test says otherwise.
+      activities: { getRolloverIn: async () => ({ rolloverInPence: '0', fromDrawId: null }), ...activities },
     });
 
     return worker.runUntil(async () => {
@@ -168,5 +169,25 @@ describeWf('DrawWorkflow (TestWorkflowEnvironment)', () => {
     expect(state.winnersCount).toBe(1);
     expect(state.blockedOn).toBeUndefined();
     expect(state.winnersNotified).toBe(1);
+  });
+
+  it('GitHub #10: carries the previous draw rollover into this jackpot and records it at settlement', async () => {
+    let settledWith: { jackpotPreDrawPence: string; rolloverInPence?: string } | undefined;
+    const state = await runInWorker(
+      SMALL_DRAW,
+      {
+        getRolloverIn: async () => ({ rolloverInPence: '50000', fromDrawId: 'draw-before' }),
+        generateWinningNumbers: async () => ({ numbers: [1, 2, 3, 4], source: 'fake', seed: 'fake' }),
+        identifyWinners: async () => ({ winningEntries: [] }),
+        settleDraw: async (req) => {
+          settledWith = req;
+          return { winnersCount: 0, jackpotPaidPence: '0', rolloverOutPence: req.jackpotPreDrawPence };
+        },
+      },
+      (handle) => handle.result(),
+    );
+    // 100 entries -> 10,000p prize share, plus the 50,000p rolled in: above the floor, so no top-up.
+    expect(state.jackpotPreDrawPence).toBe('60000');
+    expect(settledWith).toMatchObject({ jackpotPreDrawPence: '60000', rolloverInPence: '50000', floorTopupPence: '0' });
   });
 });

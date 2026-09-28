@@ -20,7 +20,7 @@ import {
 } from '@qosfc/domain';
 import type { createActivities } from '@qosfc/activities';
 
-const { openHumanTask, generateWinningNumbers, identifyWinners, settleDraw, notifyWinners } = workflow.proxyActivities<
+const { openHumanTask, generateWinningNumbers, identifyWinners, getRolloverIn, settleDraw, notifyWinners } = workflow.proxyActivities<
   ReturnType<typeof createActivities>
 >({
   startToCloseTimeout: '2 minutes',
@@ -75,7 +75,14 @@ export async function DrawWorkflow(input: DrawWorkflowInput): Promise<DrawState>
   const revenue = revenueFor(input.entriesCount, ticketPrice);
   const alloc = allocate(revenue, split);
 
-  const rolloverIn: Pence = pence(0); // Phase 6: fetched by activity from the ledger
+  // GitHub #10: start from what the previous draw rolled forward. Patched so a
+  // draw already in flight when this shipped replays its original history
+  // (which started from zero) instead of failing on an unexpected activity.
+  let rolloverIn: Pence = pence(0);
+  if (workflow.patched('rollover-in-from-previous-draw')) {
+    const previous = await getRolloverIn({ drawId: input.drawId });
+    rolloverIn = pence(BigInt(previous.rolloverInPence));
+  }
   const position = jackpotPosition(alloc.prizeContributionPence, rolloverIn, pence(50_000));
 
   // ── The RNG. An ACTIVITY, never workflow randomness (T-6.1) ─────────────────
@@ -138,6 +145,8 @@ export async function DrawWorkflow(input: DrawWorkflowInput): Promise<DrawState>
     drawId: input.drawId,
     winningEntries,
     jackpotPreDrawPence: position.jackpotPreDrawPence.toString(),
+    rolloverInPence: position.rolloverInPence.toString(),
+    floorTopupPence: position.floorTopupPence.toString(),
   });
   void drawn;
   // Entry-purchase-time revenue recognition (good cause / admin shares) is a
