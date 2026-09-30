@@ -282,10 +282,19 @@ export async function resolveTaskStep(
 export interface DrawSummary {
   readonly id: string;
   readonly drawNumber: number;
+  /** #5: free-text name, e.g. "Christmas Special". */
+  readonly name: string | null;
   readonly drawDate: Date;
+  /** #4: when the draw takes place, and when entries close. NULL on draws created before either existed. */
+  readonly drawAt: Date | null;
+  readonly entriesCloseAt: Date | null;
   readonly status: string;
+  /** Frozen at close — NULL while the draw is still open. */
   readonly entriesCount: number | null;
+  /** #7: counted from `entry` directly, so it is meaningful while the draw is open too. */
+  readonly liveEntriesCount: number;
   readonly jackpotPreDrawPence: bigint | null;
+  readonly rolloverInPence: bigint | null;
   readonly winningNumbers: number[] | null;
   readonly winnersCount: number | null;
   readonly jackpotPaidPence: bigint | null;
@@ -295,13 +304,18 @@ export interface DrawSummary {
   readonly workflowId: string | null;
 }
 
-function mapDrawRow(row: {
+interface DrawRow {
   id: string;
   draw_number: number;
+  name: string | null;
   draw_date: Date;
+  draw_at: Date | null;
+  entries_close_at: Date | null;
   status: string;
   entries_count: number | null;
+  live_entries_count: string;
   jackpot_pre_draw_pence: bigint | null;
+  rollover_in_pence: bigint | null;
   winning_numbers: number[] | null;
   winners_count: number | null;
   jackpot_paid_pence: bigint | null;
@@ -309,14 +323,21 @@ function mapDrawRow(row: {
   drawn_at: Date | null;
   settled_at: Date | null;
   workflow_id: string | null;
-}): DrawSummary {
+}
+
+function mapDrawRow(row: DrawRow): DrawSummary {
   return {
     id: row.id,
     drawNumber: row.draw_number,
+    name: row.name,
     drawDate: row.draw_date,
+    drawAt: row.draw_at,
+    entriesCloseAt: row.entries_close_at,
     status: row.status,
     entriesCount: row.entries_count,
+    liveEntriesCount: Number(row.live_entries_count),
     jackpotPreDrawPence: row.jackpot_pre_draw_pence,
+    rolloverInPence: row.rollover_in_pence,
     winningNumbers: row.winning_numbers,
     winnersCount: row.winners_count,
     jackpotPaidPence: row.jackpot_paid_pence,
@@ -327,18 +348,44 @@ function mapDrawRow(row: {
   };
 }
 
-const DRAW_COLUMNS = `id, draw_number, draw_date, status, entries_count, jackpot_pre_draw_pence,
-       winning_numbers, winners_count, jackpot_paid_pence, rollover_out_pence, drawn_at, settled_at, workflow_id`;
+const DRAW_COLUMNS = `d.id, d.draw_number, d.name, d.draw_date, d.draw_at, d.entries_close_at, d.status, d.entries_count,
+       (SELECT count(*) FROM entry e WHERE e.draw_id = d.id) AS live_entries_count,
+       d.jackpot_pre_draw_pence, d.rollover_in_pence, d.winning_numbers, d.winners_count, d.jackpot_paid_pence,
+       d.rollover_out_pence, d.drawn_at, d.settled_at, d.workflow_id`;
 
-export async function listDraws(pool: Pool, limit = 50): Promise<DrawSummary[]> {
-  const { rows } = await pool.query(`SELECT ${DRAW_COLUMNS} FROM draw ORDER BY draw_number DESC LIMIT $1`, [limit]);
+export async function listDraws(pool: Pool, limit = 200): Promise<DrawSummary[]> {
+  const { rows } = await pool.query<DrawRow>(`SELECT ${DRAW_COLUMNS} FROM draw d ORDER BY d.draw_number DESC LIMIT $1`, [limit]);
   return rows.map(mapDrawRow);
 }
 
 export async function getDraw(pool: Pool, id: string): Promise<DrawSummary | undefined> {
-  const { rows } = await pool.query(`SELECT ${DRAW_COLUMNS} FROM draw WHERE id = $1`, [id]);
+  const { rows } = await pool.query<DrawRow>(`SELECT ${DRAW_COLUMNS} FROM draw d WHERE d.id = $1`, [id]);
   const row = rows[0];
   return row ? mapDrawRow(row) : undefined;
+}
+
+export interface JackpotInputs {
+  readonly prizeBp: number;
+  readonly floorPence: bigint;
+  /** What the next draw to settle carries in — the most recent settled draw's rollover out. */
+  readonly pendingRolloverPence: bigint;
+}
+
+/** #7: what the jackpot figures for draws that haven't settled yet are estimated from. */
+export async function getJackpotInputs(pool: Pool): Promise<JackpotInputs> {
+  const [{ rows: cfgRows }, { rows: lastRows }] = await Promise.all([
+    pool.query<{ split_prize_bp: number; jackpot_floor_pence: bigint }>(
+      `SELECT split_prize_bp, jackpot_floor_pence FROM config_version WHERE is_active = true`,
+    ),
+    pool.query<{ rollover_out_pence: bigint | null }>(
+      `SELECT rollover_out_pence FROM draw WHERE status = 'settled' ORDER BY draw_date DESC, draw_number DESC LIMIT 1`,
+    ),
+  ]);
+  return {
+    prizeBp: cfgRows[0]?.split_prize_bp ?? 5000,
+    floorPence: cfgRows[0]?.jackpot_floor_pence ?? 50_000n,
+    pendingRolloverPence: lastRows[0]?.rollover_out_pence ?? 0n,
+  };
 }
 
 export async function countEntries(pool: Pool, drawId: string): Promise<number> {
@@ -346,29 +393,120 @@ export async function countEntries(pool: Pool, drawId: string): Promise<number> 
   return Number(rows[0]!.n);
 }
 
+export async function nextDrawNumber(pool: Pool): Promise<number> {
+  const { rows } = await pool.query<{ next: number }>(`SELECT COALESCE(MAX(draw_number), 0) + 1 AS next FROM draw`);
+  return rows[0]!.next;
+}
+
+/**
+ * GAP-16's confirmed schedule (Friday 12:00, entries close 12h before) as the
+ * starting values of the recurring-draw form — only a default for a human to
+ * change, so an unset config falls back to the same values rather than halting.
+ */
+export async function getDrawFormDefaults(pool: Pool): Promise<{ drawTimeLocal: string; cutoffHoursBefore: number }> {
+  const { rows } = await pool.query<{ draw_time: string | null; cutoff_hours: string | null }>(
+    `SELECT to_char(draw_time_local, 'HH24:MI') AS draw_time,
+            (EXTRACT(EPOCH FROM selection_cutoff_before) / 3600)::int::text AS cutoff_hours
+       FROM config_version WHERE is_active = true`,
+  );
+  return {
+    drawTimeLocal: rows[0]?.draw_time ?? '12:00',
+    cutoffHoursBefore: rows[0]?.cutoff_hours != null ? Number(rows[0].cutoff_hours) : 12,
+  };
+}
+
 export async function getActiveConfigVersionId(pool: Pool): Promise<string | undefined> {
   const { rows } = await pool.query<{ id: string }>(`SELECT id FROM config_version WHERE is_active = true`);
   return rows[0]?.id;
 }
 
-export type CreateDrawOutcome = { readonly kind: 'created'; readonly id: string } | { readonly kind: 'rejected'; readonly reason: string };
+export type CreateDrawsOutcome =
+  | { readonly kind: 'created'; readonly ids: readonly string[] }
+  | { readonly kind: 'rejected'; readonly reason: string };
 
-export async function createDraw(pool: Pool, input: { drawNumber: number }): Promise<CreateDrawOutcome> {
+export interface DrawScheduleRecord {
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly recurrence: string;
+  readonly drawTimeLocal: string;
+  readonly cutoffHoursBefore: number;
+}
+
+/**
+ * #4/#5: inserts every planned draw in one transaction — a series with one
+ * clashing draw number creates none of it. Wall-clock values are naive
+ * Europe/London times, converted to instants here so BST/GMT comes from the
+ * tz database; `draw_date` is kept as the London calendar date of the draw.
+ */
+export async function createDraws(
+  pool: Pool,
+  input: {
+    name: string | null;
+    draws: readonly { drawNumber: number; drawAtLocal: string; entriesCloseAtLocal: string }[];
+    schedule?: DrawScheduleRecord;
+    createdBy: string;
+  },
+): Promise<CreateDrawsOutcome> {
   const configVersionId = await getActiveConfigVersionId(pool);
   if (!configVersionId) return { kind: 'rejected', reason: 'No active configuration exists — cannot create a draw.' };
+
+  const { rows: clashes } = await pool.query<{ draw_number: number }>(
+    `SELECT draw_number FROM draw WHERE draw_number = ANY($1::int[]) ORDER BY draw_number`,
+    [input.draws.map((d) => d.drawNumber)],
+  );
+  if (clashes.length > 0) {
+    const list = clashes.map((c) => c.draw_number).join(', ');
+    return clashes.length === 1
+      ? { kind: 'rejected', reason: `Draw number ${list} already exists.` }
+      : { kind: 'rejected', reason: `Draw numbers ${list} already exist.` };
+  }
+
   try {
-    const { rows } = await pool.query<{ id: string }>(
-      `INSERT INTO draw (draw_number, draw_date, status, config_version_id)
-       VALUES ($1, CURRENT_DATE, 'open', $2) RETURNING id`,
-      [input.drawNumber, configVersionId],
-    );
-    return { kind: 'created', id: rows[0]!.id };
+    const ids = await withTransaction(pool, async (client) => {
+      let scheduleId: string | null = null;
+      if (input.schedule) {
+        const { rows } = await client.query<{ id: string }>(
+          `INSERT INTO draw_schedule (name, start_date, end_date, recurrence, draw_time_local, cutoff_hours_before, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [
+            input.name,
+            input.schedule.startDate,
+            input.schedule.endDate,
+            input.schedule.recurrence,
+            input.schedule.drawTimeLocal,
+            input.schedule.cutoffHoursBefore,
+            input.createdBy,
+          ],
+        );
+        scheduleId = rows[0]!.id;
+      }
+
+      const created: string[] = [];
+      for (const draw of input.draws) {
+        const { rows } = await client.query<{ id: string }>(
+          `INSERT INTO draw (draw_number, name, draw_date, draw_at, entries_close_at, draw_schedule_id, status, config_version_id)
+           VALUES ($1, $2, ($3::timestamp)::date, $3::timestamp AT TIME ZONE 'Europe/London',
+                   $4::timestamp AT TIME ZONE 'Europe/London', $5, 'open', $6)
+           RETURNING id`,
+          [draw.drawNumber, input.name, draw.drawAtLocal, draw.entriesCloseAtLocal, scheduleId, configVersionId],
+        );
+        created.push(rows[0]!.id);
+      }
+      return created;
+    });
+    return { kind: 'created', ids };
   } catch (error) {
+    // Lost a race with another admin creating the same number between the check above and the insert.
     if (error instanceof Error && /duplicate key/.test(error.message)) {
-      return { kind: 'rejected', reason: `Draw number ${input.drawNumber} already exists.` };
+      return { kind: 'rejected', reason: 'One of those draw numbers was just taken — reload and try again.' };
     }
     throw error;
   }
+}
+
+/** #5: a draw's name is presentation only, so it may be changed at any status. */
+export async function renameDraw(pool: Pool, drawId: string, name: string | null): Promise<void> {
+  await pool.query(`UPDATE draw SET name = $2 WHERE id = $1`, [drawId, name]);
 }
 
 export async function closeDrawAndRecordWorkflow(
@@ -460,8 +598,8 @@ export async function addEntry(
   }
 
   return withTransaction(pool, async (client) => {
-    const { rows: drawRows } = await client.query<{ status: string }>(
-      `SELECT status FROM draw WHERE id = $1 FOR UPDATE`,
+    const { rows: drawRows } = await client.query<{ status: string; past_cutoff: boolean }>(
+      `SELECT status, COALESCE(entries_close_at <= now(), false) AS past_cutoff FROM draw WHERE id = $1 FOR UPDATE`,
       [input.drawId],
     );
     const draw = drawRows[0];
@@ -469,6 +607,8 @@ export async function addEntry(
     if (draw.status !== 'open') {
       return { kind: 'rejected', reason: `Draw is '${draw.status}' — entries can only be added while a draw is open.` };
     }
+    // #4: the cutoff is the point after which entries are not allowed.
+    if (draw.past_cutoff) return { kind: 'rejected', reason: 'Entries for this draw have closed.' };
 
     const { rows: nextNoRows } = await client.query<{ next: number }>(
       `SELECT COALESCE(MAX(prize_draw_no), 99999) + 1 AS next FROM member_number`,

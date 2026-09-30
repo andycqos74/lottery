@@ -16,7 +16,8 @@ import {
   SandboxPaymentGateway,
   SandboxPrintHandoff,
 } from '@qosfc/adapters-sandbox';
-import { CsvBankFeed, OwnSunBacsBureau, RandomOrgRandomnessSource, ThirdPartyCardPortalGateway } from '@qosfc/adapters-live';
+import { CsvBankFeed, OwnSunBacsBureau, RandomOrgRandomnessSource, SocketLabsNotifier, ThirdPartyCardPortalGateway } from '@qosfc/adapters-live';
+import type { Pool } from '@qosfc/db';
 import {
   assertNoSandboxInProduction,
   type BacsBureau,
@@ -33,13 +34,17 @@ export interface ProviderEnv {
   readonly BANK_FEED?: string | undefined;
   readonly BANK_FEED_CSV_DIR?: string | undefined;
   readonly NOTIFIER?: string | undefined;
+  readonly SOCKETLABS_SERVER_ID_FILE?: string | undefined;
+  readonly SOCKETLABS_API_KEY_FILE?: string | undefined;
+  readonly SOCKETLABS_FROM_EMAIL?: string | undefined;
+  readonly SOCKETLABS_FROM_NAME?: string | undefined;
   readonly RANDOMNESS_SOURCE?: string | undefined;
   readonly SANDBOX_PROVIDERS_URL?: string | undefined;
   readonly SANDBOX_WEBHOOK_SECRET_FILE?: string | undefined;
   readonly NODE_ENV?: string | undefined;
 }
 
-export function buildProviderRegistry(env: ProviderEnv): ProviderRegistry {
+export function buildProviderRegistry(env: ProviderEnv, pool: Pool): ProviderRegistry {
   const sandbox = {
     baseUrl: env.SANDBOX_PROVIDERS_URL ?? 'http://sandbox-providers:9090',
     webhookSecret: readSecret(env.SANDBOX_WEBHOOK_SECRET_FILE) ?? 'sandbox-development-secret',
@@ -67,8 +72,10 @@ export function buildProviderRegistry(env: ProviderEnv): ProviderRegistry {
       sandbox: () => new SandboxBankFeed(sandbox),
       csv: () => new CsvBankFeed(env.BANK_FEED_CSV_DIR ?? '/data/bank-statements'),
     }),
+    // GAP-30, resolved for email: SocketLabs (client decision, 2026-09-24).
     notifier: select<Notifier>(env.NOTIFIER, 'NOTIFIER', 'GAP-30', {
       sandbox: () => new SandboxNotifier(sandbox),
+      socketlabs: () => buildSocketLabsNotifier(pool, env),
     }),
     printHandoff: new SandboxPrintHandoff(sandbox),
     randomness: buildRandomnessSource(env.RANDOMNESS_SOURCE),
@@ -127,6 +134,18 @@ function select<T>(
       `${Object.keys(options).join(', ')}. A new live adapter belongs in packages/adapters-live and must pass ` +
       `the shared contract suite before it is wired in here.`,
   );
+}
+
+function buildSocketLabsNotifier(pool: Pool, env: ProviderEnv): SocketLabsNotifier {
+  const serverId = readSecret(env.SOCKETLABS_SERVER_ID_FILE);
+  const apiKey = readSecret(env.SOCKETLABS_API_KEY_FILE);
+  const fromEmail = env.SOCKETLABS_FROM_EMAIL;
+  if (!serverId || !apiKey || !fromEmail) {
+    throw new Error(
+      'NOTIFIER=socketlabs needs SOCKETLABS_SERVER_ID_FILE, SOCKETLABS_API_KEY_FILE, and SOCKETLABS_FROM_EMAIL to be set and readable.',
+    );
+  }
+  return new SocketLabsNotifier(pool, { serverId, apiKey, fromEmail, fromName: env.SOCKETLABS_FROM_NAME });
 }
 
 function readSecret(path: string | undefined): string | undefined {

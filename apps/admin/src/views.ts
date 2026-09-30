@@ -1,4 +1,4 @@
-import { formatPence, pence } from '@qosfc/domain';
+import { formatPence, jackpotPosition, pence, revenueFor, TICKET_PRICE_PENCE } from '@qosfc/domain';
 import type {
   BankStatementDetail,
   BankStatementSummary,
@@ -7,6 +7,7 @@ import type {
   DashboardCounts,
   DrawSummary,
   HumanTask,
+  JackpotInputs,
   MemberSummary,
 } from './db.js';
 
@@ -29,10 +30,10 @@ const STYLE = `
   header a { color: #fff; text-decoration: none; font-weight: 600; }
   header nav a { margin-left: 1.25rem; color: #c7d2e6; font-weight: 400; font-size: 0.9rem; }
   header nav a:hover { color: #fff; }
-  main { max-width: 760px; margin: 2rem auto; padding: 0 1.5rem; }
+  main { max-width: 980px; margin: 2rem auto; padding: 0 1.5rem; }
   .auth-shell main { max-width: 380px; margin-top: 4rem; }
   h1 { font-size: 1.4rem; margin: 0 0 1rem; }
-  .card { background: #fff; border: 1px solid #e2e5ea; border-radius: 8px; padding: 1.25rem 1.5rem;
+  .card { background: #fff; border: 1px solid #e2e5ea; border-radius: 8px; padding: 1.25rem 1.5rem; overflow-x: auto;
           margin-bottom: 1.25rem; }
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
   .stat { text-align: center; }
@@ -40,7 +41,8 @@ const STYLE = `
   .stat .l { font-size: 0.8rem; color: #5b6472; }
   .stat.warn .n { color: #b3261e; }
   label { display: block; font-size: 0.85rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }
-  input[type=email], input[type=password], input[type=text], textarea {
+  input[type=email], input[type=password], input[type=text], input[type=number], input[type=date],
+  input[type=datetime-local], input[type=time], select, textarea {
     width: 100%; padding: 0.55rem 0.65rem; border: 1px solid #cbd1db; border-radius: 6px; font-size: 0.95rem;
   }
   textarea { min-height: 4.5rem; font-family: inherit; }
@@ -216,19 +218,61 @@ export function tasksPage(opts: {
   });
 }
 
-function drawRow(draw: DrawSummary): string {
+const LONDON_DATE_TIME = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Europe/London',
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function formatLondon(value: Date | null): string {
+  return value ? LONDON_DATE_TIME.format(value) : '—';
+}
+
+function drawTitle(draw: DrawSummary): string {
+  return draw.name ? `Draw ${draw.drawNumber} — ${draw.name}` : `Draw ${draw.drawNumber}`;
+}
+
+/**
+ * #7: the jackpot for every draw. Settled draws show the figure settlement
+ * recorded; anything not yet settled is estimated exactly the way the draw
+ * workflow will compute it — this draw's prize share of its entries so far,
+ * plus the rollover waiting from the last settled draw, never below the floor.
+ */
+function drawJackpot(draw: DrawSummary, inputs: JackpotInputs): { readonly pence: bigint; readonly estimate: boolean } {
+  if (draw.jackpotPreDrawPence !== null) return { pence: draw.jackpotPreDrawPence, estimate: false };
+  const entries = draw.entriesCount ?? draw.liveEntriesCount;
+  const contribution = (revenueFor(entries, TICKET_PRICE_PENCE) * BigInt(inputs.prizeBp)) / 10_000n;
+  const position = jackpotPosition(pence(contribution), pence(inputs.pendingRolloverPence), pence(inputs.floorPence));
+  return { pence: position.jackpotPreDrawPence, estimate: true };
+}
+
+function formatJackpot(j: { pence: bigint; estimate: boolean }): string {
+  return `${formatPence(pence(j.pence))}${j.estimate ? ' <span class="muted">(est.)</span>' : ''}`;
+}
+
+function drawRow(draw: DrawSummary, inputs: JackpotInputs): string {
+  const entries = draw.entriesCount ?? draw.liveEntriesCount;
   return `<tr>
-    <td><a class="row-link" href="/draws/${draw.id}">Draw ${draw.drawNumber}</a></td>
+    <td><a class="row-link" href="/draws/${draw.id}">${escapeHtml(drawTitle(draw))}</a></td>
     <td><span class="badge">${escapeHtml(draw.status)}</span></td>
-    <td>${draw.drawDate.toISOString().slice(0, 10)}</td>
-    <td>${draw.entriesCount ?? '—'}</td>
+    <td>${draw.drawAt ? escapeHtml(formatLondon(draw.drawAt)) : draw.drawDate.toISOString().slice(0, 10)}</td>
+    <td>${escapeHtml(formatLondon(draw.entriesCloseAt))}</td>
+    <td>${entries}</td>
+    <td>${formatJackpot(drawJackpot(draw, inputs))}</td>
     <td>${draw.winningNumbers ? draw.winningNumbers.join(' · ') : '—'}</td>
     <td>${draw.jackpotPaidPence !== null ? formatPence(pence(draw.jackpotPaidPence)) : '—'}</td>
   </tr>`;
 }
 
-export function drawsPage(opts: { user: { displayName: string; csrf: string }; draws: DrawSummary[] }): string {
-  const rows = opts.draws.map(drawRow).join('\n');
+export function drawsPage(opts: { user: { displayName: string; csrf: string }; draws: DrawSummary[]; jackpotInputs: JackpotInputs }): string {
+  const rows = opts.draws.map((d) => drawRow(d, opts.jackpotInputs)).join('\n');
+  const open = opts.draws.filter((d) => d.status === 'open');
+  const openEntries = open.reduce((sum, d) => sum + d.liveEntriesCount, 0);
+  const totalJackpot = opts.draws.reduce((sum, d) => sum + drawJackpot(d, opts.jackpotInputs).pence, 0n);
   return layout({
     title: 'Draws',
     user: opts.user,
@@ -236,13 +280,26 @@ export function drawsPage(opts: { user: { displayName: string; csrf: string }; d
       <h1>Draws</h1>
       <p><a href="/draws/new"><button type="button">New draw</button></a></p>
       <div class="card">
+        <div class="stat-grid">
+          <div class="stat"><span class="n">${open.length}</span><span class="l">Open draws</span></div>
+          <div class="stat"><span class="n">${openEntries}</span><span class="l">Entries in open draws</span></div>
+          <div class="stat"><span class="n">${formatPence(pence(opts.jackpotInputs.pendingRolloverPence))}</span><span class="l">Rollover waiting</span></div>
+          <div class="stat"><span class="n">${formatPence(pence(totalJackpot))}</span><span class="l">Total jackpot, all draws listed</span></div>
+        </div>
+      </div>
+      <div class="card">
         ${
           opts.draws.length === 0
             ? '<p class="muted">No draws yet.</p>'
             : `<table>
-                 <thead><tr><th>Draw</th><th>Status</th><th>Date</th><th>Entries</th><th>Winning numbers</th><th>Paid</th></tr></thead>
+                 <thead><tr><th>Draw</th><th>Status</th><th>Draw time</th><th>Entries close</th><th>Entries</th><th>Jackpot</th><th>Winning numbers</th><th>Paid</th></tr></thead>
                  <tbody>${rows}</tbody>
-               </table>`
+               </table>
+               <p class="muted" style="margin-top:0.75rem">
+                 Jackpots marked (est.) are not settled yet: this draw's 50% prize share of its entries so far, plus the
+                 rollover waiting from the last settled draw, never below the floor. Every open draw shows that same
+                 rollover — only the next one to be run actually receives it.
+               </p>`
         }
       </div>
     `,
@@ -257,25 +314,26 @@ function memberOption(m: MemberSummary): string {
 export function drawDetailPage(opts: {
   user: { displayName: string; csrf: string };
   draw: DrawSummary;
+  jackpotInputs: JackpotInputs;
   members?: MemberSummary[];
   agents?: MemberSummary[];
-  liveEntryCount?: number;
   error?: string;
   flash?: string;
 }): string {
   const { draw } = opts;
-  const entriesDisplay =
-    opts.liveEntryCount !== undefined
-      ? `${opts.liveEntryCount} (open)`
-      : draw.entriesCount !== null
-        ? String(draw.entriesCount)
-        : '—';
+  const open = draw.status === 'open';
+  const pastCutoff = draw.entriesCloseAt !== null && draw.entriesCloseAt.getTime() <= Date.now();
+  const entriesDisplay = open ? `${draw.liveEntriesCount} (open)` : String(draw.entriesCount ?? draw.liveEntriesCount);
+  const jackpot = drawJackpot(draw, opts.jackpotInputs);
   const meta = [
+    ['Name', draw.name ?? '—'],
     ['Status', draw.status],
-    ['Draw date', draw.drawDate.toISOString().slice(0, 10)],
+    ['Draw time', draw.drawAt ? formatLondon(draw.drawAt) : draw.drawDate.toISOString().slice(0, 10)],
+    ['Entries close', draw.entriesCloseAt ? `${formatLondon(draw.entriesCloseAt)}${open && pastCutoff ? ' (closed)' : ''}` : '—'],
     ['Entries', entriesDisplay],
     ['Winning numbers', draw.winningNumbers ? draw.winningNumbers.join(' · ') : '—'],
-    ['Jackpot pre-draw', draw.jackpotPreDrawPence !== null ? formatPence(pence(draw.jackpotPreDrawPence)) : '—'],
+    ['Rollover in', draw.rolloverInPence !== null ? formatPence(pence(draw.rolloverInPence)) : '—'],
+    [jackpot.estimate ? 'Jackpot (estimated)' : 'Jackpot pre-draw', formatPence(pence(jackpot.pence))],
     ['Winners', draw.winnersCount !== null ? String(draw.winnersCount) : '—'],
     ['Jackpot paid', draw.jackpotPaidPence !== null ? formatPence(pence(draw.jackpotPaidPence)) : '—'],
     ['Rollover out', draw.rolloverOutPence !== null ? formatPence(pence(draw.rolloverOutPence)) : '—'],
@@ -286,68 +344,93 @@ export function drawDetailPage(opts: {
     .map(([k, v]) => `<dt>${escapeHtml(k!)}</dt><dd>${escapeHtml(v!)}</dd>`)
     .join('');
 
+  const renameForm = `
+    <form method="post" action="/draws/${draw.id}/name" style="display:flex;gap:0.5rem;align-items:flex-end;margin-top:1rem">
+      ${csrfField(opts.user.csrf)}
+      <div style="flex:1">
+        <label for="drawName" style="margin-top:0">Draw name</label>
+        <input type="text" id="drawName" name="name" maxlength="120" value="${escapeHtml(draw.name ?? '')}" placeholder="e.g. Christmas Special" />
+      </div>
+      <button type="submit" class="secondary" style="margin-top:0">Save name</button>
+    </form>`;
+
   let openSection = '';
-  if (draw.status === 'open') {
+  if (open) {
     const members = opts.members ?? [];
+    const agents = opts.agents ?? [];
+    const addEntry = pastCutoff
+      ? `<p class="muted">Entries closed at ${escapeHtml(formatLondon(draw.entriesCloseAt))} — no more entries can be added to this draw.</p>`
+      : members.length === 0
+        ? `<p class="muted">No members yet — <a href="/members">add one</a> first.</p>`
+        : `<form method="post" action="/draws/${draw.id}/entries">
+             ${csrfField(opts.user.csrf)}
+             <label for="memberId">Member</label>
+             <select id="memberId" name="memberId" required>${members.map(memberOption).join('')}</select>
+             <label for="selection">Numbers (four, 1&ndash;20)</label>
+             <input type="text" id="selection" name="selection" required placeholder="2, 4, 5, 14" />
+             <button type="submit">Add entry</button>
+           </form>`;
+    const manualTicket =
+      agents.length === 0
+        ? `<p class="muted">No agent members yet — <a href="/members">add one</a> first (Type: Agent).</p>`
+        : `<form method="post" action="/draws/${draw.id}/manual-tickets" id="manual-ticket-form">
+             ${csrfField(opts.user.csrf)}
+             <label for="agentMemberId">Agent</label>
+             <select id="agentMemberId" name="agentMemberId" required>${agents.map(memberOption).join('')}</select>
+             <p class="muted" style="margin:0.2rem 0 0.6rem">
+               The ticket is attributed to the agent, not the player — the player has no account
+               and QOSFC cannot contact them directly. If it wins, notification goes to the agent.
+             </p>
+             <label for="physicalTicketNumber">Physical ticket number</label>
+             <input type="text" id="physicalTicketNumber" name="physicalTicketNumber" required placeholder="e.g. 4471" />
+             <label for="purchaseDate">Purchase date</label>
+             <input type="date" id="purchaseDate" name="purchaseDate" required />
+             <label for="weeks">Number of weeks</label>
+             <input type="number" id="weeks" name="weeks" required min="1" max="104" step="1" value="1" />
+             <label for="amountDisplay">Amount paid</label>
+             <input type="text" id="amountDisplay" value="${formatPence(TICKET_PRICE_PENCE)}" readonly tabindex="-1" aria-describedby="amountHint" />
+             <p class="muted" id="amountHint" style="margin:0.2rem 0 0">Worked out from the number of weeks at ${formatPence(TICKET_PRICE_PENCE)} a week.</p>
+             <fieldset style="border:none;padding:0;margin:0.5rem 0">
+               <label><input type="radio" name="selectionMode" value="random" checked /> Pick random numbers</label>
+               <label><input type="radio" name="selectionMode" value="manual" /> Enter numbers from the ticket</label>
+               <input type="text" name="selection" placeholder="2, 4, 5, 14" />
+             </fieldset>
+             <label style="font-weight:400"><input type="checkbox" name="confirmPaid" value="yes" required /> I confirm the money for this ticket has been paid</label>
+             <button type="submit">Record ticket</button>
+           </form>
+           <p class="muted" style="margin:0.4rem 0 0">
+             Each week bought is one prepaid entry (GAP-17): ${pastCutoff ? 'entries for this draw have closed, so the first is used by the next open draw' : 'the first goes into this draw now'},
+             and each later draw uses one more automatically when it is run, exactly like a standing order.
+           </p>
+           <script>
+           (function(){
+             var weeks = document.getElementById('weeks');
+             var amount = document.getElementById('amountDisplay');
+             function update(){
+               var n = parseInt(weeks.value, 10);
+               amount.value = n > 0 ? '£' + (n * ${Number(TICKET_PRICE_PENCE)} / 100).toFixed(2) : '';
+             }
+             weeks.addEventListener('input', update);
+             update();
+           })();
+           </script>`;
+
     openSection = `
       <div class="card">
         ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
         ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
         <h2 style="font-size:1.05rem;margin-top:0">Add entry</h2>
-        ${
-          members.length === 0
-            ? `<p class="muted">No members yet — <a href="/members">add one</a> first.</p>`
-            : `<form method="post" action="/draws/${draw.id}/entries">
-                 ${csrfField(opts.user.csrf)}
-                 <label for="memberId">Member</label>
-                 <select id="memberId" name="memberId" required>${members.map(memberOption).join('')}</select>
-                 <label for="selection">Numbers (four, 1&ndash;20)</label>
-                 <input type="text" id="selection" name="selection" required placeholder="2, 4, 5, 14" />
-                 <button type="submit">Add entry</button>
-               </form>`
-        }
-        ${(() => {
-          const agents = opts.agents ?? [];
-          return `<h2 style="font-size:1.05rem;margin-top:1.5rem">Record a physical/agent ticket</h2>
-               ${
-                 agents.length === 0
-                   ? `<p class="muted">No agent members yet — <a href="/members">add one</a> first (Type: Agent).</p>`
-                   : `<form method="post" action="/draws/${draw.id}/manual-tickets">
-                 ${csrfField(opts.user.csrf)}
-                 <label for="agentMemberId">Agent</label>
-                 <select id="agentMemberId" name="agentMemberId" required>${agents.map(memberOption).join('')}</select>
-                 <p class="muted" style="margin:0.2rem 0 0.6rem">
-                   The ticket is attributed to the agent, not the player — the player has no account
-                   and QOSFC cannot contact them directly. If it wins, notification goes to the agent.
-                 </p>
-                 <label for="physicalTicketNumber">Physical ticket number</label>
-                 <input type="text" id="physicalTicketNumber" name="physicalTicketNumber" required placeholder="e.g. 4471" />
-                 <label for="purchaseDate">Purchase date</label>
-                 <input type="date" id="purchaseDate" name="purchaseDate" required />
-                 <label for="amountPounds">Amount paid (&pound;)</label>
-                 <input type="number" id="amountPounds" name="amountPounds" required min="2" step="2" placeholder="2.00" />
-                 <fieldset style="border:none;padding:0;margin:0.5rem 0">
-                   <label><input type="radio" name="selectionMode" value="random" checked /> Pick random numbers</label>
-                   <label><input type="radio" name="selectionMode" value="manual" /> Enter numbers from the ticket</label>
-                   <input type="text" name="selection" placeholder="2, 4, 5, 14" />
-                 </fieldset>
-                 <button type="submit">Record ticket</button>
-               </form>
-               <p class="muted" style="margin:0.4rem 0 0">
-                 Amount paid must be a whole multiple of &pound;2 — it buys that many prepaid blocks (GAP-17),
-                 entered into this draw now and into each future open draw automatically, exactly like a
-                 standing order.
-               </p>`
-               }`;
-        })()}
+        ${addEntry}
+        <h2 style="font-size:1.05rem;margin-top:1.5rem">Record a physical/agent ticket</h2>
+        ${manualTicket}
         <form method="post" action="/draws/${draw.id}/generate-entries" style="margin-top:1.25rem">
           ${csrfField(opts.user.csrf)}
-          <button type="submit">Generate standing-order entries (GAP-17)</button>
+          <button type="submit">Generate standing-order &amp; Direct Debit entries now</button>
         </form>
         <p class="muted" style="margin:0.4rem 0 0">
-          Consumes one prepaid ticket block per member with an active persistent selection and an
-          allocated standing-order/Giro/branch payment — do this before closing entries, or those
-          members get nothing this draw.
+          Enters every member with an active Direct Debit, and uses one prepaid week for each member with
+          weeks left (card blocks, standing orders, physical tickets). Running the draw does this automatically
+          first, so this is only needed to see the entries before then.
         </p>
         <form method="post" action="/draws/${draw.id}/run" style="margin-top:1.25rem">
           ${csrfField(opts.user.csrf)}
@@ -355,23 +438,45 @@ export function drawDetailPage(opts: {
         </form>
       </div>
     `;
+  } else if (opts.error || opts.flash) {
+    openSection = `<div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
+      </div>`;
   }
 
   return layout({
-    title: `Draw ${draw.drawNumber}`,
+    title: drawTitle(draw),
     user: opts.user,
     body: `
       <p><a class="muted" href="/draws">← Back to draws</a></p>
-      <h1>Draw ${draw.drawNumber}</h1>
+      <h1>${escapeHtml(drawTitle(draw))}</h1>
       <div class="card">
         <dl class="kv">${meta}</dl>
+        ${renameForm}
       </div>
       ${openSection}
     `,
   });
 }
 
-export function newDrawPage(opts: { user: { displayName: string; csrf: string }; error?: string }): string {
+export interface NewDrawFormValues {
+  readonly mode: 'one_off' | 'recurring';
+  readonly name: string;
+  readonly drawNumber: string;
+  readonly drawAt: string;
+  readonly entriesCloseAt: string;
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly recurrence: string;
+  readonly drawTime: string;
+  readonly cutoffHours: string;
+}
+
+export function newDrawPage(opts: { user: { displayName: string; csrf: string }; values: NewDrawFormValues; error?: string }): string {
+  const v = opts.values;
+  const recurrenceOption = (value: string, label: string) =>
+    `<option value="${value}" ${v.recurrence === value ? 'selected' : ''}>${label}</option>`;
   return layout({
     title: 'New draw',
     user: opts.user,
@@ -380,14 +485,68 @@ export function newDrawPage(opts: { user: { displayName: string; csrf: string };
       <h1>New draw</h1>
       <div class="card">
         ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
-        <form method="post" action="/draws">
+        <form method="post" action="/draws" id="new-draw-form">
           ${csrfField(opts.user.csrf)}
-          <label for="drawNumber">Draw number</label>
-          <input type="number" id="drawNumber" name="drawNumber" required min="1" />
-          <button type="submit">Create draw</button>
+          <fieldset style="border:none;padding:0;margin:0">
+            <label style="font-weight:400;display:inline-block;margin-right:1.25rem"><input type="radio" name="mode" value="one_off" ${v.mode === 'one_off' ? 'checked' : ''} /> One-off draw</label>
+            <label style="font-weight:400;display:inline-block"><input type="radio" name="mode" value="recurring" ${v.mode === 'recurring' ? 'checked' : ''} /> Recurring draws</label>
+          </fieldset>
+
+          <label for="name">Draw name <span class="muted">(optional)</span></label>
+          <input type="text" id="name" name="name" maxlength="120" value="${escapeHtml(v.name)}" placeholder="e.g. Christmas Special" />
+
+          <label for="drawNumber" id="drawNumberLabel">${v.mode === 'recurring' ? 'First draw number' : 'Draw number'}</label>
+          <input type="number" id="drawNumber" name="drawNumber" required min="1" value="${escapeHtml(v.drawNumber)}" />
+
+          <div id="one-off-fields">
+            <label for="drawAt">Draw date and time</label>
+            <input type="datetime-local" id="drawAt" name="drawAt" value="${escapeHtml(v.drawAt)}" />
+            <label for="entriesCloseAt">Entries close</label>
+            <input type="datetime-local" id="entriesCloseAt" name="entriesCloseAt" value="${escapeHtml(v.entriesCloseAt)}" />
+            <p class="muted" style="margin:0.3rem 0 0">No entries are accepted after this time.</p>
+          </div>
+
+          <div id="recurring-fields">
+            <label for="startDate">First draw date</label>
+            <input type="date" id="startDate" name="startDate" value="${escapeHtml(v.startDate)}" />
+            <label for="endDate">Last possible draw date</label>
+            <input type="date" id="endDate" name="endDate" value="${escapeHtml(v.endDate)}" />
+            <label for="recurrence">Repeats</label>
+            <select id="recurrence" name="recurrence">
+              ${recurrenceOption('weekly', 'Every week')}
+              ${recurrenceOption('fortnightly', 'Every two weeks')}
+              ${recurrenceOption('monthly', 'Every month (same day of month)')}
+            </select>
+            <label for="drawTime">Draw time</label>
+            <input type="time" id="drawTime" name="drawTime" value="${escapeHtml(v.drawTime)}" />
+            <label for="cutoffHours">Entries close (hours before each draw)</label>
+            <input type="number" id="cutoffHours" name="cutoffHours" min="0" max="336" step="1" value="${escapeHtml(v.cutoffHours)}" />
+            <p class="muted" style="margin:0.3rem 0 0">e.g. 10 closes entries at 02:00 for a 12:00 draw. Every draw in the series is created now, each numbered one after the last.</p>
+          </div>
+
+          <button type="submit" id="createButton">${v.mode === 'recurring' ? 'Create draws' : 'Create draw'}</button>
         </form>
-        <p class="muted">Draw date is set to today. Add entries once the draw is created; nothing is drawn until you close it.</p>
+        <p class="muted">All times are UK time. Nothing is drawn until you run a draw from its page.</p>
       </div>
+      <script>
+      (function(){
+        var oneOff = document.getElementById('one-off-fields');
+        var recurring = document.getElementById('recurring-fields');
+        var numberLabel = document.getElementById('drawNumberLabel');
+        var button = document.getElementById('createButton');
+        function update(){
+          var isRecurring = document.querySelector('input[name=mode]:checked').value === 'recurring';
+          oneOff.style.display = isRecurring ? 'none' : '';
+          recurring.style.display = isRecurring ? '' : 'none';
+          oneOff.querySelectorAll('input').forEach(function(el){ el.required = !isRecurring; });
+          recurring.querySelectorAll('input,select').forEach(function(el){ el.required = isRecurring; });
+          numberLabel.textContent = isRecurring ? 'First draw number' : 'Draw number';
+          button.textContent = isRecurring ? 'Create draws' : 'Create draw';
+        }
+        document.querySelectorAll('input[name=mode]').forEach(function(r){ r.addEventListener('change', update); });
+        update();
+      })();
+      </script>
     `,
   });
 }

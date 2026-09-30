@@ -1,6 +1,7 @@
 import { formatPence, pence } from '@qosfc/domain';
 import type { DrawStats, MemberDetails, MyEntry, OpenDraw, SettledDraw } from './db.js';
 import { PURCHASE_BLOCK_SIZES } from './entries.js';
+import type { DirectDebitStatus } from './direct-debit.js';
 
 export function escapeHtml(value: string): string {
   return value
@@ -125,9 +126,13 @@ const STYLE = `
   .error{ background:#fdecea; color:#b3261e; border:1px solid #f3c1bd; border-radius:10px; padding:.75rem 1rem; font-size:.9rem; }
   .flash{ background:var(--good-soft); color:var(--good); border:1px solid var(--good); border-radius:10px; padding:.75rem 1rem; font-size:.9rem; }
 
-  .method-tabs{ display:flex; gap:.4rem; border-bottom:1px solid var(--line); margin-bottom:1rem; }
-  .method-tabs button{ all:unset; cursor:pointer; padding:.6rem .2rem; margin-right:1.2rem; font-weight:700; font-size:.88rem; color:var(--ink-soft); border-bottom:2px solid transparent; }
-  .method-tabs button[aria-selected="true"]{ color:var(--royal); border-color:var(--royal); }
+  .method-choices{ display:grid; grid-template-columns:1fr 1fr; gap:.6rem; }
+  .method-choice{ display:flex; gap:.6rem; align-items:flex-start; padding:.75rem .8rem; border:1px solid var(--line); border-radius:10px; cursor:pointer; background:var(--surface); }
+  .method-choice b{ display:block; font-size:.92rem; }
+  .method-choice .hint{ display:block; margin-top:.15rem; }
+  .method-choice:has(input:checked){ border-color:var(--royal); background:var(--royal-soft); }
+  @media (max-width: 640px){ .method-choices{ grid-template-columns:1fr; } }
+  [hidden]{ display:none !important; }
 
   .muted{ color:var(--ink-soft); }
   .sep-label{ font-size:.72rem; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-soft); margin:1.6rem 0 .7rem; }
@@ -149,6 +154,28 @@ const STYLE = `
     .ball-grid{ grid-template-columns:repeat(5,2.5rem); }
   }
 `;
+
+const LONDON_DATE_TIME = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Europe/London',
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+/** All draw times are UK times, whatever timezone the server runs in. */
+function formatLondon(value: Date): string {
+  return LONDON_DATE_TIME.format(value);
+}
+
+function drawWhen(draw: OpenDraw): string {
+  return draw.drawAt ? formatLondon(draw.drawAt) : draw.drawDate;
+}
+
+function drawHeading(draw: OpenDraw): string {
+  return draw.name ? `${draw.name} — Draw No. ${draw.drawNumber}` : `Draw No. ${draw.drawNumber}`;
+}
 
 function csrfField(csrf: string): string {
   return `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}" />`;
@@ -197,7 +224,11 @@ function layout(opts: {
     ? `<form method="post" action="/logout">${csrfField(opts.member.csrf)}<button type="submit">Log out</button></form>`
     : '';
   const countdown = opts.openDraw
-    ? `<div class="countdown"><span class="lbl">Draw No. ${opts.openDraw.drawNumber}</span><div class="val">${escapeHtml(opts.openDraw.drawDate)}</div></div>`
+    ? `<div class="countdown"><span class="lbl">Draw No. ${opts.openDraw.drawNumber}</span><div class="val">${escapeHtml(drawWhen(opts.openDraw))}</div>${
+        opts.openDraw.entriesCloseAt
+          ? `<div class="lbl" style="margin-top:.45rem">Entries close</div><div class="val" style="font-size:.9rem">${escapeHtml(formatLondon(opts.openDraw.entriesCloseAt))}</div>`
+          : ''
+      }</div>`
     : `<div class="countdown"><span class="lbl">Next draw</span><div class="val">None open right now</div></div>`;
 
   return `<!doctype html>
@@ -269,7 +300,7 @@ export function registerPage(opts: { error?: string; openDraw?: OpenDraw | undef
   });
 }
 
-export function loginPage(opts: { error?: string; openDraw?: OpenDraw | undefined }): string {
+export function loginPage(opts: { error?: string; notice?: string; openDraw?: OpenDraw | undefined }): string {
   return layout({
     title: 'Log in',
     active: 'login',
@@ -281,13 +312,67 @@ export function loginPage(opts: { error?: string; openDraw?: OpenDraw | undefine
       </div>
       <div class="card stack" style="max-width:420px">
         ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.notice ? `<div class="banner"><span>✅</span><span>${escapeHtml(opts.notice)}</span></div>` : ''}
         <form method="post" action="/login" class="stack">
           <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autofocus autocomplete="username" /></div>
           <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" required autocomplete="current-password" /></div>
           <button class="btn btn-primary btn-block" type="submit">Log in</button>
         </form>
+        <p class="hint" style="text-align:center"><a href="/forgot-password">Forgotten your password?</a></p>
         <hr class="divider">
         <p class="hint" style="text-align:center">New to the Draw? <a href="/register">Create an account</a></p>
+      </div>
+    `,
+  });
+}
+
+export function forgotPasswordPage(opts: { error?: string; sent?: boolean; openDraw?: OpenDraw | undefined }): string {
+  return layout({
+    title: 'Forgotten password',
+    active: 'login',
+    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
+    body: `
+      <div class="page-head">
+        <h1>Forgotten password</h1>
+        <p>Enter the email address on your account and we'll send you a link to reset your password.</p>
+      </div>
+      <div class="card stack" style="max-width:420px">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${
+          opts.sent
+            ? `<div class="banner"><span>✉️</span><span>If that email address is registered, a reset link is on its way &mdash; it expires in an hour.</span></div>`
+            : `<form method="post" action="/forgot-password" class="stack">
+                 <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autofocus autocomplete="username" /></div>
+                 <button class="btn btn-primary btn-block" type="submit">Send reset link</button>
+               </form>`
+        }
+        <p class="hint" style="text-align:center"><a href="/login">Back to log in</a></p>
+      </div>
+    `,
+  });
+}
+
+export function resetPasswordPage(opts: {
+  token: string;
+  error?: string;
+  openDraw?: OpenDraw | undefined;
+}): string {
+  return layout({
+    title: 'Reset password',
+    active: 'login',
+    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
+    body: `
+      <div class="page-head">
+        <h1>Choose a new password</h1>
+      </div>
+      <div class="card stack" style="max-width:420px">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        <form method="post" action="/reset-password" class="stack">
+          <input type="hidden" name="token" value="${escapeHtml(opts.token)}" />
+          <div class="field"><label for="password">New password</label><input id="password" name="password" type="password" required minlength="10" autocomplete="new-password" autofocus />
+            <p class="hint">At least 10 characters.</p></div>
+          <button class="btn btn-primary btn-block" type="submit">Reset password</button>
+        </form>
       </div>
     `,
   });
@@ -338,8 +423,10 @@ export function drawPage(opts: {
     openDraw: draw,
     body: `
       <div class="page-head">
-        <h1>Draw No. ${draw.drawNumber}</h1>
-        <p>Draw date ${escapeHtml(draw.drawDate)}. Pick 4 numbers from 1 to 20, or let us pick for you.</p>
+        <h1>${escapeHtml(drawHeading(draw))}</h1>
+        <p>Drawn ${escapeHtml(drawWhen(draw))}${
+          draw.entriesCloseAt ? ` &mdash; entries close ${escapeHtml(formatLondon(draw.entriesCloseAt))}` : ''
+        }. Pick 4 numbers from 1 to 20, or let us pick for you.</p>
       </div>
       ${opts.error ? `<div class="error" style="margin-bottom:1rem">${escapeHtml(opts.error)}</div>` : ''}
       <div class="grid2">
@@ -355,7 +442,7 @@ export function drawPage(opts: {
               <button class="btn btn-primary" type="submit">Continue to payment →</button>
             </div>
           </form>
-          <p class="hint">Buy in blocks of 4 or 12 on the payment page and your numbers stay entered automatically &mdash; no need to pick again next week.</p>
+          <p class="hint">Pay by Direct Debit, or buy 4 or 12 draws by card, and your numbers stay entered automatically &mdash; no need to pick again next week.</p>
         </div>
         <div class="stack">
           <div class="card stack">
@@ -406,17 +493,30 @@ function formatEstimate(p: bigint | undefined): string {
   return p === undefined ? '—' : formatPence(pence(p));
 }
 
+export type PaymentMethodChoice = 'card' | 'dd';
+
+/**
+ * GitHub #8: how to pay is the first choice. Card reveals the number-of-draws
+ * selector and the card fields; Direct Debit shows only the bank fields — a
+ * DD enters every draw until cancelled, so there is no number of draws.
+ */
 export function paymentPage(opts: {
   member: ViewMember;
   openDraw: OpenDraw;
   selection: number[];
   blocks: number;
+  method?: PaymentMethodChoice;
+  hasDirectDebit?: boolean;
   error?: string;
 }): string {
   const { selection, blocks, openDraw } = opts;
+  const method = opts.method;
   const selectionFields = selection.map((n) => `<input type="hidden" name="selection" value="${n}" />`).join('');
   const blockOption = (size: number, label: string) =>
     `<label class="radio-row"><input type="radio" name="blocks" value="${size}" ${blocks === size ? 'checked' : ''} />${label} <span class="amt">${formatPence(pence(200n * BigInt(size)))}</span></label>`;
+  const methodOption = (value: PaymentMethodChoice, title: string, detail: string) =>
+    `<label class="method-choice"><input type="radio" name="method" value="${value}" ${method === value ? 'checked' : ''} required />
+       <span><b>${title}</b><span class="hint">${detail}</span></span></label>`;
 
   return layout({
     title: 'Payment',
@@ -426,7 +526,7 @@ export function paymentPage(opts: {
     body: `
       <div class="page-head">
         <h1>Pay for your entries</h1>
-        <p>${formatPence(pence(200n))} buys one entry into one open draw. Buy in blocks to skip the weekly top-up.</p>
+        <p>${formatPence(pence(200n))} buys one entry into one draw. Pay by card for a set number of draws, or by Direct Debit to stay entered every draw.</p>
       </div>
       ${opts.error ? `<div class="error" style="margin-bottom:1rem">${escapeHtml(opts.error)}</div>` : ''}
       <div class="grid2">
@@ -435,55 +535,98 @@ export function paymentPage(opts: {
             <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0;margin-bottom:.5rem">Your numbers for Draw ${openDraw.drawNumber}</h3>
             <div class="ball-row">${selection.map((n) => `<span class="ball picked">${n}</span>`).join('')}</div>
           </div>
-          <form method="post" action="/draw/enter" id="pay-form" class="stack">
+          <form method="post" action="${method === 'dd' ? '/direct-debit/setup' : '/draw/enter'}" id="pay-form" class="stack">
             ${csrfField(opts.member.csrf)}
             ${selectionFields}
             <fieldset>
-              <legend>How many draws?</legend>
-              ${PURCHASE_BLOCK_SIZES.map((size) => blockOption(size, size === 1 ? '1 draw' : `${size} draws`)).join('')}
+              <legend>How would you like to pay?</legend>
+              <div class="method-choices">
+                ${methodOption('card', 'Debit / credit card', 'Pay now for 1, 4 or 12 draws')}
+                ${methodOption('dd', 'Direct Debit', `Entered every draw until you cancel — ${formatPence(pence(200n))} a draw`)}
+              </div>
             </fieldset>
+            ${
+              opts.hasDirectDebit
+                ? `<div class="banner"><span>ℹ️</span><span>You already pay by Direct Debit. Setting it up again replaces your current mandate and numbers; paying by card buys extra draws on top.</span></div>`
+                : ''
+            }
 
-            <div class="method-tabs" role="tablist">
-              <button type="button" role="tab" aria-selected="true" data-method="card">Debit / credit card</button>
-              <button type="button" role="tab" aria-selected="false" data-method="dd">Direct Debit standing order</button>
-            </div>
-            <div id="pay-card" class="stack">
-              <div class="field"><label for="pc-name">Name on card</label><input id="pc-name" name="pc-name" type="text" placeholder="Full name" autocomplete="off" required /></div>
+            <div id="pay-card" class="stack" ${method === 'card' ? '' : 'hidden'}>
+              <fieldset>
+                <legend>How many draws?</legend>
+                ${PURCHASE_BLOCK_SIZES.map((size) => blockOption(size, size === 1 ? '1 draw' : `${size} draws`)).join('')}
+              </fieldset>
+              <div class="field"><label for="pc-name">Name on card</label><input id="pc-name" name="pc-name" type="text" placeholder="Full name" autocomplete="off" data-required /></div>
               <div class="row2">
-                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" name="pc-num" type="text" placeholder="4242 4242 4242 4242" autocomplete="off" required /></div>
+                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" name="pc-num" type="text" placeholder="4242 4242 4242 4242" autocomplete="off" data-required /></div>
                 <div class="row2" style="grid-template-columns:1fr 1fr">
-                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" name="pc-exp" type="text" placeholder="MM/YY" autocomplete="off" required /></div>
-                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" name="pc-cvc" type="text" placeholder="123" autocomplete="off" required /></div>
+                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" name="pc-exp" type="text" placeholder="MM/YY" autocomplete="off" data-required /></div>
+                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" name="pc-cvc" type="text" placeholder="123" autocomplete="off" data-required /></div>
                 </div>
               </div>
               <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; any name, card number, expiry and CVC are accepted; this is a test transaction and no funds move.</span></div>
             </div>
-            <div id="pay-dd" class="stack" style="display:none">
-              <div class="banner"><span>🏗️</span><span>Direct Debit standing orders aren't set up online yet &mdash; contact QOSFC to arrange one, or pay by card above.</span></div>
+
+            <div id="pay-dd" class="stack" ${method === 'dd' ? '' : 'hidden'}>
+              <div class="field"><label for="dd-name">Name of account holder</label><input id="dd-name" name="dd-name" type="text" placeholder="Full name" autocomplete="off" data-required /></div>
+              <div class="row2">
+                <div class="field"><label for="dd-sort">Sort code</label><input id="dd-sort" name="dd-sort" type="text" placeholder="00-00-00" autocomplete="off" data-required /></div>
+                <div class="field"><label for="dd-acc">Account number</label><input id="dd-acc" name="dd-acc" type="text" placeholder="12345678" autocomplete="off" data-required /></div>
+              </div>
+              <div class="banner"><span>🧪</span><span><b>Sandbox Direct Debit</b> &mdash; any name, sort code and account number are accepted; this is a test mandate and no funds move.</span></div>
             </div>
 
-            <button class="btn btn-gold btn-block" type="submit">Pay <span class="blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span> &amp; enter →</button>
-            <p class="hint" style="text-align:center">Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.</p>
+            <button class="btn btn-gold btn-block" type="submit" id="pay-submit" ${method ? '' : 'hidden'}>
+              <span id="submit-card-label" ${method === 'card' ? '' : 'hidden'}>Pay <span class="blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span> &amp; enter →</span>
+              <span id="submit-dd-label" ${method === 'dd' ? '' : 'hidden'}>Set up Direct Debit →</span>
+            </button>
+            <p class="hint" style="text-align:center" id="pay-hint"></p>
           </form>
         </div>
         <div class="card stack" style="align-self:start">
           <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Order summary</h3>
-          <div style="display:flex;justify-content:space-between;font-size:.9rem"><span id="summary-line">${blocks} × entry (from Draw ${openDraw.drawNumber})</span><span class="amt blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span></div>
-          <hr class="divider">
-          <div style="display:flex;justify-content:space-between;font-weight:700"><span>Total due today</span><span class="amt blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span></div>
-          <p class="hint">Your saved numbers carry into every future open draw automatically until the blocks run out or you change them.</p>
+          <div id="summary-none" ${method ? 'hidden' : ''}><p class="muted">Choose how you'd like to pay.</p></div>
+          <div id="summary-card" class="stack" ${method === 'card' ? '' : 'hidden'}>
+            <div style="display:flex;justify-content:space-between;font-size:.9rem"><span id="summary-line">${blocks} × entry (from Draw ${openDraw.drawNumber})</span><span class="amt blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span></div>
+            <hr class="divider">
+            <div style="display:flex;justify-content:space-between;font-weight:700"><span>Total due today</span><span class="amt blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span></div>
+            <p class="hint">Your numbers go into this draw now and each following draw automatically until the draws you've paid for run out.</p>
+          </div>
+          <div id="summary-dd" class="stack" ${method === 'dd' ? '' : 'hidden'}>
+            <div style="display:flex;justify-content:space-between;font-size:.9rem"><span>Each draw, from Draw ${openDraw.drawNumber}</span><span class="amt">${formatPence(pence(200n))}</span></div>
+            <hr class="divider">
+            <div style="display:flex;justify-content:space-between;font-weight:700"><span>Due today</span><span class="amt">${formatPence(pence(0n))}</span></div>
+            <p class="hint">Your numbers are entered into every draw until you cancel the Direct Debit from "My numbers".</p>
+          </div>
         </div>
       </div>
       <script>
       (function(){
-        document.querySelectorAll('.method-tabs button').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            document.querySelectorAll('.method-tabs button').forEach(function(b){ b.setAttribute('aria-selected','false'); });
-            btn.setAttribute('aria-selected','true');
-            var isCard = btn.dataset.method === 'card';
-            document.getElementById('pay-card').style.display = isCard ? '' : 'none';
-            document.getElementById('pay-dd').style.display = isCard ? 'none' : '';
-          });
+        var form = document.getElementById('pay-form');
+        var submit = document.getElementById('pay-submit');
+        var hint = document.getElementById('pay-hint');
+        var HINTS = {
+          card: "Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.",
+          dd: "Direct Debit setup runs through QOSFC's sandbox Bacs bureau while a real route is being set up. No payment is taken today."
+        };
+        function show(id, on){ document.getElementById(id).hidden = !on; }
+        function choose(method){
+          var isCard = method === 'card';
+          show('pay-card', isCard); show('pay-dd', !isCard);
+          show('summary-none', false); show('summary-card', isCard); show('summary-dd', !isCard);
+          show('submit-card-label', isCard); show('submit-dd-label', !isCard);
+          submit.hidden = false;
+          // Only the visible section's fields are required — and the number of
+          // draws only exists for card: a Direct Debit has no end.
+          document.querySelectorAll('#pay-card [data-required]').forEach(function(el){ el.required = isCard; });
+          document.querySelectorAll('#pay-dd [data-required]').forEach(function(el){ el.required = !isCard; });
+          document.querySelectorAll('input[name=blocks]').forEach(function(el){ el.disabled = !isCard; });
+          form.action = isCard ? '/draw/enter' : '/direct-debit/setup';
+          hint.textContent = HINTS[method];
+        }
+        document.querySelectorAll('input[name=method]').forEach(function(r){
+          r.addEventListener('change', function(){ choose(r.value); });
+          if (r.checked) choose(r.value);
         });
         var summary = document.getElementById('summary-line');
         var totals = document.querySelectorAll('.blocks-total');
@@ -519,6 +662,23 @@ export function purchaseReturnPage(opts: {
   return layout({ title: 'Payment', member: opts.member, active: 'draw', ...(opts.openDraw ? { openDraw: opts.openDraw } : {}), body });
 }
 
+export function directDebitReturnPage(opts: {
+  member: ViewMember;
+  openDraw?: OpenDraw | undefined;
+  status: 'active' | 'failed' | 'not_found';
+  reason?: string;
+}): string {
+  const body =
+    opts.status === 'active'
+      ? `<div class="page-head"><h1>Direct Debit set up</h1></div><div class="flash">Your mandate is in place &mdash; your numbers are entered into every draw, starting with the current one, until you cancel it.</div>
+         <p style="margin-top:1rem"><a class="btn btn-primary" href="/account">View my numbers</a></p>`
+      : opts.status === 'failed'
+        ? `<div class="page-head"><h1>Direct Debit setup did not complete</h1></div><div class="error">${escapeHtml(opts.reason ?? 'The mandate setup was not successful.')}</div>
+           <p style="margin-top:1rem"><a class="btn btn-primary" href="/draw">Try again</a></p>`
+        : `<div class="page-head"><h1>Unknown Direct Debit setup</h1></div><p class="muted">We couldn't find that setup attempt.</p>`;
+  return layout({ title: 'Direct Debit', member: opts.member, active: 'draw', ...(opts.openDraw ? { openDraw: opts.openDraw } : {}), body });
+}
+
 function entryHistoryRow(e: MyEntry): string {
   const balls = e.selection
     .map((n) => `<span class="ball win" style="width:2rem;height:2rem;font-size:.8rem">${n}</span>`)
@@ -539,9 +699,23 @@ export function accountPage(opts: {
   openDraw?: OpenDraw | undefined;
   standingSelection?: number[] | undefined;
   entries: MyEntry[];
+  directDebit?: DirectDebitStatus | undefined;
   flash?: string;
 }): string {
-  const { entries, standingSelection } = opts;
+  const { entries, standingSelection, directDebit } = opts;
+  const ddCard = directDebit
+    ? `<div class="card stack">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Direct Debit</h3>
+          <span class="pill pill-open">Active</span>
+        </div>
+        <p class="hint">Set up ${escapeHtml(formatLondon(directDebit.since))}. Your numbers are entered into every draw, ${formatPence(pence(200n))} a draw, until you cancel.</p>
+        <form method="post" action="/direct-debit/cancel" onsubmit="return confirm('Cancel your Direct Debit? You will not be entered into any more draws by Direct Debit.');">
+          ${csrfField(opts.member.csrf)}
+          <button class="btn btn-ghost" type="submit">Cancel Direct Debit</button>
+        </form>
+      </div>`
+    : '';
   const rows = entries.map(entryHistoryRow).join('\n');
   return layout({
     title: 'My numbers',
@@ -564,6 +738,7 @@ export function accountPage(opts: {
           }
           <a class="btn btn-ghost" href="/draw">Change my numbers</a>
         </div>
+        ${ddCard}
         <div class="card stack">
           <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Entry history</h3>
           ${

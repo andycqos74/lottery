@@ -23,6 +23,13 @@ export interface SettleDrawRequest {
   readonly winningEntries: readonly WinningEntry[];
   /** Pence crosses the Temporal wire as a string — bigint isn't JSON-serialisable. */
   readonly jackpotPreDrawPence: string;
+  /**
+   * GitHub #10: what this draw carried in from the previous one, and what the
+   * floor added on top. Optional only so a workflow started before these
+   * existed can still settle; absent means zero.
+   */
+  readonly rolloverInPence?: string;
+  readonly floorTopupPence?: string;
 }
 
 export interface SettleDrawResult {
@@ -103,6 +110,28 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
     // Runs net negative until entry-purchase-time revenue recognition posts
     // credits here — a later, unbuilt phase (GAP-09/10/27). Expected, not a bug.
     const prizeFundId = await getOrCreateSingletonAccount(client, 'prize_fund', 'Prize fund');
+
+    // GitHub #10: the rollover this draw's jackpot was built on leaves the
+    // rollover account and joins the prize fund, so the money a no-winner
+    // draw rolled forward is paid out (or rolled on again) from here.
+    const rolloverInPence = pence(BigInt(request.rolloverInPence ?? '0'));
+    if (rolloverInPence > 0n) {
+      const rolloverAccountId = await getOrCreateSingletonAccount(client, 'rollover', 'Rollover');
+      await postLeg(client, {
+        txnId,
+        accountId: rolloverAccountId,
+        amountPence: pence(-rolloverInPence),
+        drawId: request.drawId,
+        description: `Rollover out to draw ${request.drawId}`,
+      });
+      await postLeg(client, {
+        txnId,
+        accountId: prizeFundId,
+        amountPence: rolloverInPence,
+        drawId: request.drawId,
+        description: `Rollover in — draw ${request.drawId}`,
+      });
+    }
 
     if (winnersCount > 0) {
       const { rows: configRows } = await client.query<{
@@ -187,9 +216,18 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
     await client.query(
       `UPDATE draw
           SET status = 'settled', winners_count = $2, jackpot_paid_pence = $3,
-              rollover_out_pence = $4, settled_at = now()
+              rollover_out_pence = $4, settled_at = now(),
+              jackpot_pre_draw_pence = $5, rollover_in_pence = $6, floor_topup_pence = $7
         WHERE id = $1`,
-      [request.drawId, winnersCount, outcome.jackpotPaidPence, outcome.rolloverOutPence],
+      [
+        request.drawId,
+        winnersCount,
+        outcome.jackpotPaidPence,
+        outcome.rolloverOutPence,
+        jackpotPreDrawPence,
+        rolloverInPence,
+        BigInt(request.floorTopupPence ?? '0'),
+      ],
     );
 
     await writeAudit(client, {
@@ -201,6 +239,8 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
         winnersCount,
         jackpotPaidPence: outcome.jackpotPaidPence.toString(),
         rolloverOutPence: outcome.rolloverOutPence.toString(),
+        rolloverInPence: rolloverInPence.toString(),
+        jackpotPreDrawPence: jackpotPreDrawPence.toString(),
       },
     });
 

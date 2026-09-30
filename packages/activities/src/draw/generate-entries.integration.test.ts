@@ -107,4 +107,108 @@ describeDb('generateDueEntries (GAP-17: prepaid blocks)', () => {
     await expect(generateDueEntries(pool, { drawId, actorLabel: 'test' })).rejects.toThrow(/is 'closed', not 'open'/);
     await pool.query(`UPDATE draw SET status = 'open' WHERE id = $1`, [drawId]);
   });
+
+  // ── Testing-feedback round (GitHub #9, #11) ─────────────────────────────────
+  // Config is prepaid_blocks from here on (activated above). Each test makes
+  // its own members and draws so it reads on its own.
+
+  let nextDrawNumber = 100;
+  async function openDraw(entriesCloseAt?: string): Promise<string> {
+    const cfgId = (await pool.query(`SELECT id FROM config_version WHERE is_active`)).rows[0].id;
+    return (
+      await pool.query(
+        `INSERT INTO draw (draw_number, draw_date, config_version_id, status, entries_close_at)
+         VALUES ($1, CURRENT_DATE, $2, 'open', $3) RETURNING id`,
+        [nextDrawNumber++, cfgId, entriesCloseAt ?? null],
+      )
+    ).rows[0].id;
+  }
+
+  async function entriesFor(memberId: string): Promise<{ draw_id: string; funding_source: string }[]> {
+    return (
+      await pool.query(`SELECT draw_id, funding_source::text FROM entry WHERE member_id = $1 ORDER BY created_at`, [memberId])
+    ).rows;
+  }
+
+  it('#11: a 4-week purchase enters the next four draws, then stops', async () => {
+    const memberId = await makeMemberWithStanding(5101, [2, 4, 6, 8]);
+    await pool.query(
+      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
+       VALUES ($1, 'agent_cash', CURRENT_DATE, 800, 'allocated', 'test-4-weeks')`,
+      [memberId],
+    );
+
+    const draws = [await openDraw(), await openDraw(), await openDraw(), await openDraw(), await openDraw()];
+    for (const drawId of draws) await generateDueEntries(pool, { drawId, actorLabel: 'test' });
+
+    const entries = await entriesFor(memberId);
+    expect(entries.map((e) => e.draw_id)).toEqual(draws.slice(0, 4));
+    expect(entries.every((e) => e.funding_source === 'prepaid')).toBe(true);
+  });
+
+  it('#11: does not enter a card buyer twice into the draw their checkout already entered them in', async () => {
+    const memberId = await makeMemberWithStanding(5102, [1, 3, 5, 7]);
+    await pool.query(
+      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
+       VALUES ($1, 'card', CURRENT_DATE, 800, 'allocated', 'test-card-4')`,
+      [memberId],
+    );
+    const [first, second, third, fourth, fifth] = [await openDraw(), await openDraw(), await openDraw(), await openDraw(), await openDraw()];
+    // What completeEntryPurchase does at checkout: the first draw is entered straight away.
+    await pool.query(
+      `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, funding_source, idempotency_key)
+       VALUES ($1, $2, 5102, '{1,3,5,7}', 'card', 'entry-purchase:test-session')`,
+      [first, memberId],
+    );
+
+    for (const drawId of [first, second, third, fourth, fifth]) await generateDueEntries(pool, { drawId, actorLabel: 'test' });
+
+    const entries = await entriesFor(memberId);
+    expect(entries.map((e) => e.draw_id)).toEqual([first, second, third, fourth]);
+    expect(entries.map((e) => e.funding_source)).toEqual(['card', 'prepaid', 'prepaid', 'prepaid']);
+  });
+
+  it('#9: an active Direct Debit enters every draw, without using prepaid weeks, until cancelled', async () => {
+    const memberId = await makeMemberWithStanding(5103, [9, 10, 11, 12]);
+    await pool.query(
+      `INSERT INTO payment_method (member_id, type, mandate_ref, mandate_status, active) VALUES ($1, 'direct_debit', 'MANDATE-5103', 'active', true)`,
+      [memberId],
+    );
+    // A prepaid week the DD must not consume — it's still there after cancelling.
+    await pool.query(
+      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
+       VALUES ($1, 'card', CURRENT_DATE, 200, 'allocated', 'test-dd-member-card')`,
+      [memberId],
+    );
+
+    const ddDraws = [await openDraw(), await openDraw(), await openDraw()];
+    for (const drawId of ddDraws) {
+      const result = await generateDueEntries(pool, { drawId, actorLabel: 'test' });
+      expect(result.directDebitGenerated).toBe(1);
+    }
+
+    await pool.query(`UPDATE payment_method SET active = false, mandate_status = 'cancelled' WHERE member_id = $1`, [memberId]);
+    const afterCancel = [await openDraw(), await openDraw()];
+    for (const drawId of afterCancel) await generateDueEntries(pool, { drawId, actorLabel: 'test' });
+
+    const entries = await entriesFor(memberId);
+    expect(entries.map((e) => e.draw_id)).toEqual([...ddDraws, afterCancel[0]]);
+    expect(entries.map((e) => e.funding_source)).toEqual(['direct_debit', 'direct_debit', 'direct_debit', 'prepaid']);
+  });
+
+  it('#4: money paid after a draw closed to entries waits for the next draw', async () => {
+    const memberId = await makeMemberWithStanding(5104, [13, 14, 15, 16]);
+    const closedAnHourAgo = await openDraw(new Date(Date.now() - 60 * 60 * 1000).toISOString());
+    const next = await openDraw(new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
+    await pool.query(
+      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
+       VALUES ($1, 'agent_cash', CURRENT_DATE, 200, 'allocated', 'test-late-ticket')`,
+      [memberId],
+    );
+
+    await generateDueEntries(pool, { drawId: closedAnHourAgo, actorLabel: 'test' });
+    await generateDueEntries(pool, { drawId: next, actorLabel: 'test' });
+
+    expect((await entriesFor(memberId)).map((e) => e.draw_id)).toEqual([next]);
+  });
 });

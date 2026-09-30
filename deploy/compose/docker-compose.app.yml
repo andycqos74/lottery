@@ -38,6 +38,14 @@ x-worker-env: &worker-env
   # `CsvBankFeed` (worker-recon) reads it back from — the shared volume below.
   BANK_FEED_CSV_DIR: /data/bank-statements
   NOTIFIER: ${NOTIFIER:-sandbox}
+  # GAP-30, resolved for email: SocketLabs. Every worker process builds the
+  # full provider registry regardless of which task queue it serves, so all
+  # of them need this once NOTIFIER=socketlabs, even though only worker-draw
+  # (DrawWorkflow's notifyWinners) sends anything today.
+  SOCKETLABS_SERVER_ID_FILE: /run/secrets/socketlabs_server_id
+  SOCKETLABS_API_KEY_FILE: /run/secrets/socketlabs_api_key
+  SOCKETLABS_FROM_EMAIL: ${SOCKETLABS_FROM_EMAIL:-}
+  SOCKETLABS_FROM_NAME: ${SOCKETLABS_FROM_NAME:-}
   RANDOMNESS_SOURCE: ${RANDOMNESS_SOURCE:-unset}
   SANDBOX_PROVIDERS_URL: ${SANDBOX_PROVIDERS_URL:-http://sandbox-providers:9090}
 
@@ -51,6 +59,8 @@ x-worker: &worker
     - source: codec_key
       target: codec
     - app_role_password
+    - socketlabs_server_id
+    - socketlabs_api_key
   networks: [app, core]
 
 services:
@@ -108,11 +118,20 @@ services:
       PORT: 8080
       SESSION_SECRET_FILE: /run/secrets/session_secret
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set in .env}
+      # GAP-30, resolved for email: SocketLabs. Only the api container sends
+      # notifications today (the member-facing welcome email) — workers stay
+      # on NOTIFIER=sandbox until draw/prize notifications are built.
+      SOCKETLABS_SERVER_ID_FILE: /run/secrets/socketlabs_server_id
+      SOCKETLABS_API_KEY_FILE: /run/secrets/socketlabs_api_key
+      SOCKETLABS_FROM_EMAIL: ${SOCKETLABS_FROM_EMAIL:-}
+      SOCKETLABS_FROM_NAME: ${SOCKETLABS_FROM_NAME:-}
     secrets:
       - source: codec_key
         target: codec
       - app_role_password
       - session_secret
+      - socketlabs_server_id
+      - socketlabs_api_key
     networks: [edge, app, core]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -203,3 +222,5 @@ secrets:
   app_role_password: { file: ../secrets/app_role_password }
   session_secret:   { file: ../secrets/session_secret }
   admin_mfa_key:    { file: ../secrets/admin_mfa_key }
+  socketlabs_server_id: { file: ../secrets/socketlabs_server_id }
+  socketlabs_api_key:   { file: ../secrets/socketlabs_api_key }
