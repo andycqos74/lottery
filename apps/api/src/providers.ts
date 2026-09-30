@@ -1,35 +1,39 @@
 /**
- * GAP-09 — payment service provider (real gambling-MCC acquirer) is still
- * unresolved. Unblocked for *build* purposes only: the portal's online
- * purchase flow (`entries.ts`) runs end to end against the sandbox PSP as a
- * dummy transaction simulator, so the flow is provable now and swaps to a
- * live acquirer the same way every other port does — a new adapter plus an
- * env var, no route code changes — once an acquirer is actually chosen.
+ * Card payments (GAP-09, GitHub #12). Which provider takes card payments is
+ * configuration: `PAYMENT_GATEWAY` picks one of the adapters below, each
+ * behind the same `PaymentGateway` port, so switching provider is an env var
+ * change and adding one is a new adapter plus one line here — no route code
+ * changes. The sandbox (a dummy transaction simulator) stays the default.
  */
 import { readFileSync } from 'node:fs';
 import { SandboxBacsBureau, SandboxNotifier, SandboxPaymentGateway } from '@qosfc/adapters-sandbox';
-import { SocketLabsNotifier } from '@qosfc/adapters-live';
+import { buildElavonPaymentGateway, SocketLabsNotifier, type ElavonEnv } from '@qosfc/adapters-live';
 import type { Pool } from '@qosfc/db';
 import type { BacsBureau, Notifier, PaymentGateway } from '@qosfc/ports';
 
-export interface PaymentProviderEnv {
+export interface PaymentProviderEnv extends ElavonEnv {
   readonly PAYMENT_GATEWAY?: string | undefined;
   readonly SANDBOX_PROVIDERS_URL?: string | undefined;
   readonly SANDBOX_WEBHOOK_SECRET_FILE?: string | undefined;
 }
 
-export function buildPaymentGateway(env: PaymentProviderEnv): PaymentGateway {
-  const chosen = env.PAYMENT_GATEWAY ?? 'sandbox';
-  if (chosen !== 'sandbox') {
-    throw new Error(
-      `GAP-09 is unresolved, so PAYMENT_GATEWAY="${chosen}" has no adapter. Only "sandbox" exists today. ` +
-        `Implement the live adapter in packages/adapters-live and make it pass the shared contract suite.`,
-    );
+const PAYMENT_GATEWAYS: Record<string, (pool: Pool, env: PaymentProviderEnv) => PaymentGateway> = {
+  sandbox: (_pool, env) =>
+    new SandboxPaymentGateway({
+      baseUrl: env.SANDBOX_PROVIDERS_URL ?? 'http://sandbox-providers:9090',
+      webhookSecret: readSecret(env.SANDBOX_WEBHOOK_SECRET_FILE) ?? 'sandbox-development-secret',
+    }),
+  // Elavon Payment Gateway, hosted payment page (client's choice, GitHub #12).
+  elavon: (pool, env) => buildElavonPaymentGateway(pool, env),
+};
+
+export function buildPaymentGateway(pool: Pool, env: PaymentProviderEnv): PaymentGateway {
+  const chosen = env.PAYMENT_GATEWAY || 'sandbox';
+  const build = PAYMENT_GATEWAYS[chosen];
+  if (!build) {
+    throw new Error(`PAYMENT_GATEWAY="${chosen}" has no adapter. Known values: ${Object.keys(PAYMENT_GATEWAYS).map((k) => `"${k}"`).join(', ')}.`);
   }
-  return new SandboxPaymentGateway({
-    baseUrl: env.SANDBOX_PROVIDERS_URL ?? 'http://sandbox-providers:9090',
-    webhookSecret: readSecret(env.SANDBOX_WEBHOOK_SECRET_FILE) ?? 'sandbox-development-secret',
-  });
+  return build(pool, env);
 }
 
 export interface BacsBureauEnv {

@@ -52,6 +52,14 @@ write_secret "${SECRETS_DIR}/sandbox_webhook_secret" "openssl rand -hex 32"     
 # Temporal codec key below (apps/admin/src/secret-box.ts explains why).
 write_secret "${SECRETS_DIR}/admin_mfa_key"          "openssl rand -base64 32"             "admin console MFA secret-at-rest key (AES-256-GCM)"
 
+# GAP-09 / GitHub #12: Elavon Payment Gateway credentials are issued by Elavon,
+# not generated — these start EMPTY so Compose can mount them. Paste the secret
+# API key (sk_...) into elavon_secret_key, and optionally webhook auth JSON
+# ({"username","password","signerId","sharedSecret"}) into elavon_webhook,
+# before setting PAYMENT_GATEWAY=elavon. Existing files are never overwritten.
+write_secret "${SECRETS_DIR}/elavon_secret_key"      "printf ''"                          "Elavon EPG secret API key — EMPTY, paste yours in"
+write_secret "${SECRETS_DIR}/elavon_webhook"         "printf ''"                          "Elavon EPG webhook auth JSON — optional, EMPTY"
+
 # The codec key. AES-256-GCM needs exactly 32 bytes; the id is a date so rotation
 # reads chronologically, and retired keys STAY here for decryption.
 KEY_ID="${TEMPORAL_CODEC_ACTIVE_KEY_ID:-key-$(date -u +%Y%m)}"

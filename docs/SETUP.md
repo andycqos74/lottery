@@ -238,6 +238,29 @@ Translating those legacy payment records into the new `payment_method`/
 `subscription` model, and provisioning legacy members with portal credentials,
 is **explicit future-phase work** — not attempted in this build.
 
+#### Taking real card payments: Elavon (GitHub #12)
+
+Card payments can run through the **Elavon Payment Gateway (EPG)** hosted
+payment page — the same integration the club's Wix site uses. Card details are
+only entered on Elavon's page, never on the portal (PCI SAQ A). To switch:
+
+1. Get the EPG **merchant alias** and **secret API key** (`sk_…`) from Elavon —
+   start with a sandbox account.
+2. Paste the secret key into `deploy/secrets/elavon_secret_key` (created empty
+   by `generate-secrets.sh`; re-run it on an existing host to create the file).
+3. In `deploy/.env`: `PAYMENT_GATEWAY=elavon`, `ELAVON_ENVIRONMENT=sandbox`
+   (or `production`), `ELAVON_MERCHANT_ALIAS=…`. Set `ELAVON_API_BASE_URL` only
+   if Elavon gave you a host other than the documented one.
+4. Restart `api` and the workers. The payment page stops showing card fields
+   and sends members to Elavon; on return the portal re-reads the payment from
+   EPG and checks order, amount and currency before entering the member.
+
+Sandbox test cards: Visa `4546341111111119` or Mastercard `5432673003275469`,
+any future expiry and CVV, whole amounts such as £2.00. Decline:
+`4380564306105898`. Switching back is `PAYMENT_GATEWAY=sandbox`. Webhooks and
+refunds are implemented in the adapter but not yet wired to a portal route or
+admin action.
+
 ### Running the tests
 
 ```bash
@@ -510,7 +533,7 @@ But several must be answered **before real money moves**.
 | **GAP-21** *(source resolved: RANDOM.ORG)* | Whether independent assurance is ALSO required | **Licensing authority** |
 | **GAP-36 / 31** ⛔ | Statutory limits and the good-cause floor, from the regulator not a spreadsheet | **Licensing authority** |
 | **GAP-42** ⛔ | Escalation policy and a named on-call | Client |
-| **GAP-09** ⛔ | PSP — working assumption is a third-party hosted card portal, still to be confirmed | Client + acquirer |
+| **GAP-09** | PSP — **Elavon Payment Gateway** (client, GitHub #12); adapter built, needs live gambling-MCC merchant credentials | Client + Elavon |
 | **GAP-10** ⛔ | Bacs route — working assumption is the society's own SUN, still to be confirmed | Client + acquirer |
 | **GAP-19** ⛔ | Entry model for the 782 agent-collected members — 49% of the register. Working assumption: manual entry, scoped for a future phase | Client |
 | **GAP-13** ⛔ | Random allocation of numbers for non-responders | Client |

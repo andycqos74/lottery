@@ -46,6 +46,13 @@ x-worker-env: &worker-env
   SOCKETLABS_API_KEY_FILE: /run/secrets/socketlabs_api_key
   SOCKETLABS_FROM_EMAIL: ${SOCKETLABS_FROM_EMAIL:-}
   SOCKETLABS_FROM_NAME: ${SOCKETLABS_FROM_NAME:-}
+  # GAP-09 / GitHub #12: Elavon Payment Gateway, used when PAYMENT_GATEWAY=elavon.
+  # The secret key and optional webhook auth are files; the alias is not secret.
+  ELAVON_ENVIRONMENT: ${ELAVON_ENVIRONMENT:-sandbox}
+  ELAVON_API_BASE_URL: ${ELAVON_API_BASE_URL:-}
+  ELAVON_MERCHANT_ALIAS: ${ELAVON_MERCHANT_ALIAS:-}
+  ELAVON_SECRET_KEY_FILE: /run/secrets/elavon_secret_key
+  ELAVON_WEBHOOK_FILE: /run/secrets/elavon_webhook
   RANDOMNESS_SOURCE: ${RANDOMNESS_SOURCE:-unset}
   SANDBOX_PROVIDERS_URL: ${SANDBOX_PROVIDERS_URL:-http://sandbox-providers:9090}
 
@@ -61,6 +68,8 @@ x-worker: &worker
     - app_role_password
     - socketlabs_server_id
     - socketlabs_api_key
+    - elavon_secret_key
+    - elavon_webhook
   networks: [app, core]
 
 services:
@@ -132,6 +141,8 @@ services:
       - session_secret
       - socketlabs_server_id
       - socketlabs_api_key
+      - elavon_secret_key
+      - elavon_webhook
     networks: [edge, app, core]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -224,3 +235,6 @@ secrets:
   admin_mfa_key:    { file: ../secrets/admin_mfa_key }
   socketlabs_server_id: { file: ../secrets/socketlabs_server_id }
   socketlabs_api_key:   { file: ../secrets/socketlabs_api_key }
+  # Created empty by generate-secrets.sh; fill in to use PAYMENT_GATEWAY=elavon.
+  elavon_secret_key:    { file: ../secrets/elavon_secret_key }
+  elavon_webhook:       { file: ../secrets/elavon_webhook }

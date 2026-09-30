@@ -507,6 +507,8 @@ export function paymentPage(opts: {
   blocks: number;
   method?: PaymentMethodChoice;
   hasDirectDebit?: boolean;
+  /** True for a real card provider: card details are entered on its hosted page, never on this one. */
+  hostedCardPage?: boolean;
   error?: string;
 }): string {
   const { selection, blocks, openDraw } = opts;
@@ -556,15 +558,20 @@ export function paymentPage(opts: {
                 <legend>How many draws?</legend>
                 ${PURCHASE_BLOCK_SIZES.map((size) => blockOption(size, size === 1 ? '1 draw' : `${size} draws`)).join('')}
               </fieldset>
-              <div class="field"><label for="pc-name">Name on card</label><input id="pc-name" name="pc-name" type="text" placeholder="Full name" autocomplete="off" data-required /></div>
+              ${
+                opts.hostedCardPage
+                  ? `<div class="banner"><span>🔒</span><span>You'll enter your card details on <b>Elavon's secure payment page</b> next. They never pass through this site.</span></div>`
+                  : // Sandbox only: practice fields with no name attribute, so nothing typed here is ever posted.
+                    `<div class="field"><label for="pc-name">Name on card</label><input id="pc-name" type="text" placeholder="Full name" autocomplete="off" data-required /></div>
               <div class="row2">
-                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" name="pc-num" type="text" placeholder="4242 4242 4242 4242" autocomplete="off" data-required /></div>
+                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" type="text" placeholder="4242 4242 4242 4242" autocomplete="off" data-required /></div>
                 <div class="row2" style="grid-template-columns:1fr 1fr">
-                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" name="pc-exp" type="text" placeholder="MM/YY" autocomplete="off" data-required /></div>
-                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" name="pc-cvc" type="text" placeholder="123" autocomplete="off" data-required /></div>
+                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" type="text" placeholder="MM/YY" autocomplete="off" data-required /></div>
+                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" type="text" placeholder="123" autocomplete="off" data-required /></div>
                 </div>
               </div>
-              <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; any name, card number, expiry and CVC are accepted; this is a test transaction and no funds move.</span></div>
+              <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; any name, card number, expiry and CVC are accepted; this is a test transaction and no funds move.</span></div>`
+              }
             </div>
 
             <div id="pay-dd" class="stack" ${method === 'dd' ? '' : 'hidden'}>
@@ -606,7 +613,7 @@ export function paymentPage(opts: {
         var submit = document.getElementById('pay-submit');
         var hint = document.getElementById('pay-hint');
         var HINTS = {
-          card: "Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.",
+          card: ${JSON.stringify(opts.hostedCardPage ? "Card payments are processed securely by Elavon." : "Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.")},
           dd: "Direct Debit setup runs through QOSFC's sandbox Bacs bureau while a real route is being set up. No payment is taken today."
         };
         function show(id, on){ document.getElementById(id).hidden = !on; }
