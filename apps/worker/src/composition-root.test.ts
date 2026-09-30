@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { buildProviderRegistry } from './composition-root.js';
 import { describeRegistry } from '@qosfc/ports';
 import type { Pool } from '@qosfc/db';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const base = { RANDOMNESS_SOURCE: 'csprng', SANDBOX_PROVIDERS_URL: 'http://localhost:9090' };
 // None of these tests select NOTIFIER=socketlabs (the only branch that touches
@@ -33,6 +36,21 @@ describe('provider selection', () => {
     await expect(registry.paymentGateway.getPaymentStatus('s1')).rejects.toThrow(/GAP-09/);
     expect(registry.bacsBureau.providerName).toBe('live:bacs-own-sun');
     await expect(registry.bacsBureau.getMandate('m1')).rejects.toThrow(/GAP-10/);
+  });
+
+  it('GAP-09 / #12: elavon refuses to start without its credentials', () => {
+    expect(() => buildProviderRegistry({ ...base, PAYMENT_GATEWAY: 'elavon' }, pool)).toThrow(/ELAVON_MERCHANT_ALIAS/);
+  });
+
+  it('GAP-09 / #12: elavon is a live adapter once configured — no network call at startup', () => {
+    const keyFile = join(mkdtempSync(join(tmpdir(), 'elavon-')), 'key');
+    writeFileSync(keyFile, 'sk_test_example');
+    const registry = buildProviderRegistry(
+      { ...base, PAYMENT_GATEWAY: 'elavon', ELAVON_MERCHANT_ALIAS: 'alias', ELAVON_SECRET_KEY_FILE: keyFile },
+      pool,
+    );
+    expect(registry.paymentGateway.providerName).toBe('live:elavon-epg');
+    expect(describeRegistry(registry).find((d) => d.port === 'paymentGateway')?.isSandbox).toBe(false);
   });
 
   it('GAP-33, resolved: csv is a real, working adapter', () => {

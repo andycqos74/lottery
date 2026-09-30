@@ -16,7 +16,15 @@ import {
   SandboxPaymentGateway,
   SandboxPrintHandoff,
 } from '@qosfc/adapters-sandbox';
-import { CsvBankFeed, OwnSunBacsBureau, RandomOrgRandomnessSource, SocketLabsNotifier, ThirdPartyCardPortalGateway } from '@qosfc/adapters-live';
+import {
+  buildElavonPaymentGateway,
+  CsvBankFeed,
+  OwnSunBacsBureau,
+  RandomOrgRandomnessSource,
+  SocketLabsNotifier,
+  ThirdPartyCardPortalGateway,
+  type ElavonEnv,
+} from '@qosfc/adapters-live';
 import type { Pool } from '@qosfc/db';
 import {
   assertNoSandboxInProduction,
@@ -28,7 +36,7 @@ import {
   type RandomnessSource,
 } from '@qosfc/ports';
 
-export interface ProviderEnv {
+export interface ProviderEnv extends ElavonEnv {
   readonly PAYMENT_GATEWAY?: string | undefined;
   readonly BACS_BUREAU?: string | undefined;
   readonly BANK_FEED?: string | undefined;
@@ -51,11 +59,11 @@ export function buildProviderRegistry(env: ProviderEnv, pool: Pool): ProviderReg
   };
 
   const registry: ProviderRegistry = {
-    // GAP-09 remains unconfirmed (still to be confirmed, per the client) — the
-    // shape of a hosted card portal is visible in card_portal, but every method
-    // refuses until a provider is actually chosen. See the class doc comment.
+    // GAP-09: Elavon Payment Gateway (GitHub #12) is the live card provider.
+    // card_portal remains the refusing placeholder shape for any other one.
     paymentGateway: select<PaymentGateway>(env.PAYMENT_GATEWAY, 'PAYMENT_GATEWAY', 'GAP-09', {
       sandbox: () => new SandboxPaymentGateway(sandbox),
+      elavon: () => buildElavonPaymentGateway(pool, env),
       card_portal: () => new ThirdPartyCardPortalGateway(),
     }),
     // GAP-10 remains unconfirmed — own_sun is the client's working assumption

@@ -15,7 +15,7 @@ import cookie from '@fastify/cookie';
 import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import { formatPence, pence } from '@qosfc/domain';
-import { idempotencyKey } from '@qosfc/ports';
+import { idempotencyKey, isSandbox } from '@qosfc/ports';
 import {
   consumePasswordReset,
   createPasswordReset,
@@ -61,11 +61,19 @@ const pool = createPool({
   applicationName: 'qosfc-api',
   max: 10,
 });
-const paymentGateway = buildPaymentGateway({
+const paymentGateway = buildPaymentGateway(pool, {
   PAYMENT_GATEWAY: process.env['PAYMENT_GATEWAY'],
+  ELAVON_ENVIRONMENT: process.env['ELAVON_ENVIRONMENT'],
+  ELAVON_API_BASE_URL: process.env['ELAVON_API_BASE_URL'],
+  ELAVON_MERCHANT_ALIAS: process.env['ELAVON_MERCHANT_ALIAS'],
+  ELAVON_SECRET_KEY_FILE: process.env['ELAVON_SECRET_KEY_FILE'],
+  ELAVON_WEBHOOK_FILE: process.env['ELAVON_WEBHOOK_FILE'],
   SANDBOX_PROVIDERS_URL: process.env['SANDBOX_PROVIDERS_URL'],
   SANDBOX_WEBHOOK_SECRET_FILE: process.env['SANDBOX_WEBHOOK_SECRET_FILE'],
 });
+// A real card provider takes card details on its own hosted page; only the
+// sandbox shows practice card fields on ours.
+const hostedCardPage = !isSandbox(paymentGateway.providerName);
 const bacsBureau = buildBacsBureau({
   BACS_BUREAU: process.env['BACS_BUREAU'],
   SANDBOX_PROVIDERS_URL: process.env['SANDBOX_PROVIDERS_URL'],
@@ -420,7 +428,7 @@ app.get('/draw/pay', async (request, reply) => {
     ? Number(query.blocks)
     : 4;
   const hasDirectDebit = (await getActiveDirectDebit(pool, found.auth.member.id)) !== undefined;
-  reply.type('text/html').send(paymentPage({ member: found.view, openDraw, selection, blocks, hasDirectDebit }));
+  reply.type('text/html').send(paymentPage({ member: found.view, openDraw, selection, blocks, hasDirectDebit, hostedCardPage }));
 });
 
 app.post('/draw/enter', async (request, reply) => {
@@ -445,6 +453,7 @@ app.post('/draw/enter', async (request, reply) => {
   if (outcome.kind === 'rejected') {
     return reply.type('text/html').send(
       paymentPage({
+        hostedCardPage,
         member: found.view,
         openDraw,
         selection,
@@ -520,6 +529,7 @@ app.post('/direct-debit/setup', async (request, reply) => {
   if (outcome.kind === 'rejected') {
     return reply.type('text/html').send(
       paymentPage({
+        hostedCardPage,
         member: found.view,
         openDraw,
         selection,
