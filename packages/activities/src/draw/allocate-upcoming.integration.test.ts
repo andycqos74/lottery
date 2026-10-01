@@ -236,6 +236,32 @@ describeDb('allocateUpcomingEntries — a 4-week purchase shows in each of the n
     ]);
   });
 
+  it('a new Direct Debit takes over draws already holding prepaid weeks, and gives those weeks back', async () => {
+    const [a, b, c] = [await draw(2), await draw(9), await draw(16)];
+    const m = await member();
+    await standing(m, [1, 6, 11, 16]);
+    await pay(m, 'card', 400);
+    await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect((await liveEntries(m)).map((e) => e.funding_source)).toEqual(['prepaid', 'prepaid']);
+
+    await mandate(m);
+    await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect((await liveEntries(m)).map((e) => [e.draw_id, e.funding_source])).toEqual([
+      [a, 'direct_debit'],
+      [b, 'direct_debit'],
+      [c, 'direct_debit'],
+    ]);
+
+    // Cancel: the two weeks come back and fill the first two draws again.
+    await pool.query(`UPDATE payment_method SET active = false, mandate_status = 'cancelled' WHERE member_id = $1`, [m]);
+    await voidDirectDebitEntries(pool, { memberId: m, reason: 'test cancel', actorLabel: 'test' });
+    await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect((await liveEntries(m)).map((e) => [e.draw_id, e.funding_source])).toEqual([
+      [a, 'prepaid'],
+      [b, 'prepaid'],
+    ]);
+  });
+
   it('setting a Direct Debit up again revives the voided entries, with the new numbers', async () => {
     const [a, b] = [await draw(2), await draw(9)];
     const dd = await member();

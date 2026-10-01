@@ -115,6 +115,16 @@ export async function allocateUpcomingEntries(pool: Pool, request: AllocateUpcom
         [memberId],
       );
       if (mandate.length > 0) {
+        // Weeks already placed in draws still on sale were spent ahead of the
+        // mandate: the Direct Debit covers those draws now, and the weeks go
+        // back to the member (they return if the Direct Debit is cancelled).
+        // A card checkout's own entry stays as it was paid.
+        const { rowCount: converted } = await client.query(
+          `UPDATE entry SET funding_source = 'direct_debit'
+            WHERE member_id = $1 AND funding_source = 'prepaid' AND voided_at IS NULL AND draw_id = ANY($2::uuid[])`,
+          [memberId, drawIds],
+        );
+        directDebitEntriesPlaced += converted ?? 0;
         for (const drawId of drawIds) {
           for (const number of numbers) {
             if (await hasLiveEntry(drawId, number.prize_draw_no)) continue;
