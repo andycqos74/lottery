@@ -6,7 +6,6 @@
  * canonical form, never positional — a member who picked {3,9,14,20} and a draw
  * that produced [14,3,20,9] is a win.
  */
-import { unresolvedGap } from './gaps.js';
 
 export const NUMBERS_POOL_N = 20;
 export const NUMBERS_PICK_K = 4;
@@ -124,17 +123,21 @@ export function randomSelection(random: () => number): Selection {
 }
 
 /**
- * GAP-15: must a member holding multiple tickets carry DISTINCT selections?
- * Member_Conversion shows up to 5 tickets/week (prize draw no 22). Unresolved,
- * and it interacts with GAP-22 on how a shared jackpot is counted, so it cannot
- * be answered independently.
+ * GAP-15, resolved (client decision, 2026-10-01): a member holding several
+ * entries in one draw must use DISTINCT selections — a member never has two
+ * entries in one draw with the same numbers. Buying again with numbers they
+ * already hold adds weeks to those numbers instead (see
+ * `allocateUpcomingEntries`). Agents are exempt: their physical tickets
+ * belong to different players, who may pick the same numbers. Jackpot sharing
+ * is per winning entry (GAP-22), so distinctness never changes a share.
  */
 export function assertMultiTicketSelectionsPermitted(selections: readonly Selection[]): void {
-  if (selections.length <= 1) return;
-  unresolvedGap(
-    'GAP-15',
-    'whether a member holding multiple tickets in one draw must use distinct selections ' +
-      '(interacts with GAP-22: shares per winner vs per winning entry)',
-    'the client',
-  );
+  const seen = new Set<string>();
+  for (const selection of selections) {
+    const key = selection.join('-');
+    if (seen.has(key)) {
+      throw new RangeError(`GAP-15: a member cannot hold two entries in one draw with the same numbers (${selection.join(', ')}).`);
+    }
+    seen.add(key);
+  }
 }

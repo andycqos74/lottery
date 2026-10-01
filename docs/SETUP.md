@@ -138,14 +138,32 @@ Tasks with `requires_second_approver` (GAP-44) need two *different* accounts
 to approve before they resolve — the console enforces this the same way the
 database does (`human_task`'s `approvers_must_be_different` constraint).
 
-The console now also covers draw administration (`/draws` list, detail, and
-running a draw) and basic member management, alongside the task inbox — `/tasks`
-covers open, resolved, and all tasks (`?status=`), and resolving a task
-delivers the Temporal signal it names to the blocked workflow
-(gap-register.md B-7/B-8/B-9). It also uploads bank statement CSVs (§2.2) and
-reviews the reconciliation tasks they raise. GAP-17/21/24/33 are resolved (see
-`docs/gap-register.md`); **not yet built:** payments and anything else gated
-on GAP-09/10/19, none of which are resolved yet (§9).
+The console also covers draw administration and basic member management,
+alongside the task inbox — `/tasks` covers open, resolved, and all tasks
+(`?status=`), and resolving a task delivers the Temporal signal it names to
+the blocked workflow (gap-register.md B-7/B-8/B-9). It also uploads bank
+statement CSVs (§2.2) and reviews the reconciliation tasks they raise.
+
+**Draws** (gap-register.md B-14/B-15/B-16):
+
+- **New draw** (`/draws/new`) is either *one-off* — a draw date and time plus
+  the date and time entries close — or *recurring* — first and last dates,
+  weekly / fortnightly / monthly, a draw time and "entries close N hours
+  before each draw" (defaults from GAP-16: Friday 12:00, 12 hours). A series
+  creates every draw in it at once, numbered consecutively. All times are UK
+  time. Any draw can be given a name, and renamed later from its page.
+- No entry is accepted after a draw's cutoff. Creating draws immediately
+  enters every Direct Debit member and every member with paid weeks left
+  (§2.2.1).
+- The **Draws** page shows each draw's entries (live while open) and jackpot
+  — settled figures, or an estimate marked *(est.)* — with totals for open
+  draws, entries in them, the rollover waiting and the total jackpot.
+- **Running** a draw re-checks entries first and refuses to run if that
+  fails (e.g. GAP-17 not activated), so nobody who has paid is left out. An
+  unwon jackpot rolls into the next draw run; run draws in date order.
+- **Physical tickets** take a number of weeks; the amount (weeks × £2) fills
+  in automatically, and the admin must tick to confirm the money has been
+  paid. Each ticket's weeks go into that ticket's numbers only.
 
 ### 2.2 Bank reconciliation (GAP-33)
 
@@ -193,22 +211,55 @@ they share. Re-introducing statement-level continuity checking for this feed
 is explicit future-phase work, contingent on the bank ever offering an export
 that carries a balance.
 
-### 2.2.1 Standing orders into entries (GAP-17)
+### 2.2.1 How members are entered into draws (GAP-17, B-17, B-18)
 
-Reconciling a payment (2.2) does not by itself put a member into a draw —
-GAP-17's resolved strategy (prepaid blocks: each payment buys whole tickets
-up front, each draw consumes one) has to actually run. On a draw's detail
-page while it's still `open`, "Generate standing-order entries" calls
-`generateDueEntries()` (`packages/activities/src/draw/generate-entries.ts`)
-for every member with an active persistent selection
-(`selection_standing`, GAP-14) and a linked `member_number`: it derives their
-remaining prepaid blocks (allocated standing-order/Giro/branch payments,
-divided into ticket-price blocks, minus entries already drawn against them
-with `funding_source = 'prepaid'`) and writes one entry per member who still
-has a block left. Idempotent on `<drawId>:<prizeDrawNo>:1`, same as the
-manual entry path (T-8.2), so re-running it is harmless.
+Entries are made **as soon as draws exist**, not when a draw is run, so
+members can see they are entered and each draw's jackpot counts its entries.
+`allocateUpcomingEntries()` (`packages/activities/src/draw/allocate-upcoming.ts`)
+does it, and runs whenever something changes: draws created, a card purchase,
+a physical ticket, a Direct Debit set up or cancelled, a bank statement
+imported or a match accepted. Running a draw calls it once more
+(`generateDueEntries()`) as a backstop.
 
-This only takes effect once GAP-17's strategy is actually active —
+**Lines.** Each set of numbers a member holds is a *line* — a
+`selection_standing` slot on their prize draw number. A line is funded by:
+
+- **Paid weeks** — card blocks, physical tickets, and standing-order / Giro /
+  branch money matched from bank statements (§2.2), recorded against the line
+  they were bought for (`payment.line_prize_draw_no/line_slot`). Each draw
+  uses one week (GAP-17, prepaid blocks).
+- **A Direct Debit** (`payment_method.line_*`), which enters the line into
+  every draw until cancelled.
+
+**The rules** (client decisions, 2026-10-01):
+
+1. Paid weeks are used first, in the soonest draws still taking entries. A
+   Direct Debit on the same line pauses for those draws and resumes after.
+2. A purchase or Direct Debit setup with numbers the member already has adds
+   to that line; different numbers start a new line — an extra entry
+   alongside the existing ones.
+3. A member never has two entries in one draw with the same numbers (GAP-15;
+   agents exempt, their tickets are different players'). A duplicate in a
+   draw still taking entries is withdrawn and its week returned.
+4. Weeks beyond the draws created so far wait, and are entered when more
+   draws are created.
+5. Draws whose entries have closed are never changed — entries there stand,
+   and only money or a mandate from before the cutoff can add one when the
+   draw is run.
+
+**Withdrawing entries.** Entries are never deleted (0007). A cancelled Direct
+Debit's entries in draws still taking entries — and duplicates, or weeks
+moved to an earlier draw — are *voided* (`entry.voided_at`, 0017). Every
+entry count, winner scan and member view ignores voided entries.
+
+**Standing orders not yet paid** are not entries — the money hasn't arrived.
+They are *estimated* into each open draw's jackpot
+(`estimateStandingOrderEntries()`: annual amount ÷ £2 ÷ 52 per active
+standing order in `subscription`, skipping members already entered), and
+shown on the Draws page as "+ N standing orders (est.)". Until the legacy
+register is imported into `subscription` (GAP-04) the estimate is zero.
+
+None of this enters anyone until GAP-17's strategy is active —
 `entriesDue()` halts with an `UnresolvedGapError` otherwise, surfaced in the
 admin console as a plain error rather than a 500. Activate it once with:
 
@@ -217,20 +268,31 @@ ENTRY_STRATEGY=prepaid_blocks ENTRY_STRATEGY_CONFIRMED_BY="Andy Cowan, 2026-08-3
 NOTE="GAP-17 activated for testing" pnpm activate-config
 ```
 
-Do this **before** closing entries for a draw — once closed, the entry set is
-frozen (FR-5.3.3) and a member who hasn't been swept in yet gets nothing that
-week.
-
 ### 2.3 Member portal (GAP-04, GAP-09)
 
 `apps/api` now also serves member self-service: register/login (password only —
 T-9.3's mandatory MFA applies to admin accounts, not members) and an online
-entry-purchase flow. Since GAP-09 (the real card acquirer) is still open, the
-purchase flow runs against the same sandbox `PaymentGateway` the worker uses —
-a dummy endpoint that simulates a transaction end to end (hosted session,
-async webhook, success/decline) — so the flow is provable now and swaps to a
-live acquirer the same way every other port does (§5 "Adding a live
-provider"), with no portal code changes.
+entry-purchase flow. Card payments go through whichever `PaymentGateway`
+`PAYMENT_GATEWAY` selects: the sandbox (default — a dummy endpoint that
+simulates a transaction end to end) or Elavon (below). Direct Debit runs
+against the sandbox Bacs bureau until GAP-10's route is confirmed.
+
+**Paying.** After picking numbers, the payment page asks *card* or *Direct
+Debit* first (GitHub #8). Card shows how many draws (1, 4 or 12) and the card
+details; Direct Debit shows only the bank details — it has no number of
+draws. Whatever the member buys is applied by the rules in §2.2.1: the same
+numbers as an existing entry add draws to it (and pause any Direct Debit on
+it while they are used); different numbers add an extra entry. The
+confirmation page and email tell the member exactly what was done — e.g.
+*"You already had the numbers 1, 6, 11, 16, so the 4 draws you paid £8.00 for
+have been added to them … Your Direct Debit for these numbers is paused while
+your paid draws are used, and starts again from Draw 105."*
+
+**My numbers** lists every set of numbers the member holds, their entries
+(upcoming ones show as *Open*), and each Direct Debit with its own *Cancel*
+button. Cancelling withdraws that Direct Debit's entries from draws still
+taking entries; draws already paid for stand. The bureau has no cancel call
+yet (GAP-10), so a real bureau will also need the mandate cancelled there.
 
 Per GAP-04 (confirmed by Andy Cowan): legacy members will get logins too, and
 their existing standing orders keep running unchanged in the meantime.
