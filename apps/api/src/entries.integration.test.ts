@@ -207,4 +207,50 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
     const { rows: secondEntryRows } = await pool.query(`SELECT prize_draw_no FROM entry WHERE id = $1`, [secondCompleted.entryId]);
     expect(secondEntryRows[0]).toMatchObject({ prize_draw_no: prizeDrawNo });
   });
+
+  it('a 4-draw card purchase shows one entry in each of the next four draws straight away', async () => {
+    await pool.query(`UPDATE config_version SET is_active = false WHERE is_active`);
+    const cfgId = (
+      await pool.query(
+        `INSERT INTO config_version (entry_strategy, entry_strategy_confirmed_by, note, is_active)
+         VALUES ('prepaid_blocks', 'test fixture', 'prepaid fixture', true) RETURNING id`,
+      )
+    ).rows[0].id;
+    // The draw already open (today) plus a weekly series after it; the fifth must stay empty.
+    const upcoming: string[] = [];
+    for (let week = 1; week <= 4; week++) {
+      upcoming.push(
+        (
+          await pool.query(
+            `INSERT INTO draw (draw_number, draw_date, draw_at, entries_close_at, config_version_id, status)
+             VALUES ($1, CURRENT_DATE + $2 * 7, now() + make_interval(days => $2 * 7), now() + make_interval(days => $2 * 7) - interval '12 hours', $3, 'open')
+             RETURNING id`,
+            [100 + week, week, cfgId],
+          )
+        ).rows[0].id,
+      );
+    }
+
+    const outcome = await registerMember(pool, { forename: 'Four', surname: 'Weeks', email: 'four.weeks@example.test', passwordHash: 'x' });
+    if (outcome.kind !== 'registered') throw new Error('fixture setup failed');
+    const gateway = new FakeGateway();
+    gateway.outcome = { status: 'succeeded', providerRef: 'ref4', amountPence: '800' };
+    const started = await startEntryPurchase(pool, gateway, {
+      memberId: outcome.memberId,
+      selection: [3, 6, 9, 12],
+      blocks: 4,
+      returnUrl: 'https://portal.test/return',
+      cancelUrl: 'https://portal.test/cancel',
+    });
+    if (started.kind !== 'started') throw new Error(`expected started, got ${JSON.stringify(started)}`);
+    await completeEntryPurchase(pool, gateway, started.sessionId);
+
+    const { rows } = await pool.query(
+      `SELECT e.draw_id, e.funding_source::text FROM entry e JOIN draw d ON d.id = e.draw_id
+        WHERE e.member_id = $1 ORDER BY COALESCE(d.draw_at, d.draw_date::timestamptz)`,
+      [outcome.memberId],
+    );
+    expect(rows.map((r) => r.draw_id)).toEqual([drawId, ...upcoming.slice(0, 3)]);
+    expect(rows.map((r) => r.funding_source)).toEqual(['card', 'prepaid', 'prepaid', 'prepaid']);
+  });
 });

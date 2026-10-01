@@ -64,6 +64,7 @@ export {
   type AcceptMatchOutcome,
 } from './reconcile/match-transactions.js';
 export { generateDueEntries, type GenerateDueEntriesRequest, type GenerateDueEntriesResult } from './draw/generate-entries.js';
+export { allocatePrepaidEntries, type AllocatePrepaidEntriesRequest, type AllocatePrepaidEntriesResult } from './draw/allocate-prepaid.js';
 export {
   recordManualTicket,
   type RecordManualTicketRequest,

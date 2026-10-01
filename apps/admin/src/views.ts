@@ -400,7 +400,7 @@ export function drawDetailPage(opts: {
            </form>
            <p class="muted" style="margin:0.4rem 0 0">
              Each week bought is one prepaid entry (GAP-17): ${pastCutoff ? 'entries for this draw have closed, so the first is used by the next open draw' : 'the first goes into this draw now'},
-             and each later draw uses one more automatically when it is run, exactly like a standing order.
+             and the rest go into the following draws straight away, one each — any beyond the draws created so far are entered as new draws are added.
            </p>
            <script>
            (function(){

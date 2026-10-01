@@ -15,6 +15,7 @@
 import { withTransaction, type Pool } from '@qosfc/db';
 import { idempotencyKey, type PaymentGateway } from '@qosfc/ports';
 import { TICKET_PRICE_PENCE } from '@qosfc/domain';
+import { allocatePrepaidEntries } from '@qosfc/activities';
 import { getOpenDraw } from './db.js';
 
 export type StartPurchaseOutcome =
@@ -115,7 +116,7 @@ export async function completeEntryPurchase(
     return { kind: 'payment_failed', reason: outcome.reason };
   }
 
-  return withTransaction(pool, async (client) => {
+  const result = await withTransaction(pool, async (client): Promise<CompletePurchaseOutcome> => {
     // Re-check under the transaction: the webhook and the return request can race.
     const { rows: recheck } = await client.query<{ status: string; entry_id: string | null }>(
       `SELECT status, entry_id FROM pending_entry_purchase WHERE session_id = $1 FOR UPDATE`,
@@ -199,5 +200,14 @@ export async function completeEntryPurchase(
       blocks: pending.blocks,
     };
   });
+
+  // The rest of the weeks just bought go into the next draws on sale now, so
+  // the member (and the admin Draws page) sees all of them straight away. The
+  // payment is already committed: if this can't run, each draw still picks
+  // its week up when it is run (generateDueEntries), so it must not fail the purchase.
+  if (result.kind === 'entry_created' && result.blocks > 1) {
+    await allocatePrepaidEntries(pool, { memberId: result.memberId, actorLabel: 'portal:card-purchase' }).catch(() => undefined);
+  }
+  return result;
 }
 
