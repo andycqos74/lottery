@@ -65,9 +65,17 @@ export {
 } from './reconcile/match-transactions.js';
 export { generateDueEntries, type GenerateDueEntriesRequest, type GenerateDueEntriesResult } from './draw/generate-entries.js';
 export {
+  allocateUpcomingEntries,
+  type AllocateUpcomingEntriesRequest,
+  type AllocateUpcomingEntriesResult,
+} from './draw/allocate-upcoming.js';
+export {
   recordManualTicket,
   type RecordManualTicketRequest,
   type RecordManualTicketOutcome,
   type ManualTicketSelectionInput,
 } from './entries/record-manual-ticket.js';
 export { writeAudit, type AuditRecord } from './audit.js';
+export { estimateStandingOrderEntries } from './draw/standing-order-estimate.js';
+export { resolveLine, describeLineOutcome, type ResolvedLine } from './entries/lines.js';
+export { ON_SALE_DRAWS_SQL } from './draw/place-entry.js';

@@ -7,14 +7,13 @@
  * real bank. Swapping in a live acquirer later is a `PAYMENT_GATEWAY` env var
  * change (`providers.ts`), not a change to this file.
  *
- * Mirrors `apps/admin/src/db.ts`'s `addEntry`: a fresh `prize_draw_no` is
- * minted for the entry (the legacy number concept does not apply to a member
- * who joined through the portal), and the same GAP-17 bypass applies — this
- * is a direct, one-off paid entry, not a subscription-funded one.
+ * Each purchase buys whole weeks (GAP-17 prepaid blocks) on one of the
+ * member's lines — see `completeEntryPurchase`.
  */
 import { withTransaction, type Pool } from '@qosfc/db';
 import { idempotencyKey, type PaymentGateway } from '@qosfc/ports';
 import { TICKET_PRICE_PENCE } from '@qosfc/domain';
+import { allocateUpcomingEntries, describeLineOutcome, resolveLine } from '@qosfc/activities';
 import { getOpenDraw } from './db.js';
 
 export type StartPurchaseOutcome =
@@ -67,15 +66,15 @@ export async function startEntryPurchase(
 
 export type CompletePurchaseOutcome =
   | {
-      readonly kind: 'entry_created';
-      readonly entryId: string;
+      readonly kind: 'purchased';
       readonly memberId: string;
-      readonly drawNumber: number;
       readonly selection: readonly number[];
       readonly amountPence: string;
       readonly blocks: number;
+      /** What was done with the purchase, in plain words, for the member. */
+      readonly message: string;
     }
-  | { readonly kind: 'already_completed'; readonly entryId: string }
+  | { readonly kind: 'already_completed'; readonly message: string }
   | { readonly kind: 'payment_failed'; readonly reason: string }
   | { readonly kind: 'pending' }
   | { readonly kind: 'not_found' };
@@ -85,6 +84,12 @@ export type CompletePurchaseOutcome =
  * from the sandbox's webhook (once wired) — a browser that never comes back
  * must not lose a payment. Idempotent: a session already resolved returns
  * what actually happened rather than acting twice.
+ *
+ * The payment buys weeks on a line (db/migrations/0018): the member's
+ * existing line if these are numbers they already have — more weeks — or a
+ * new line if not — an extra entry alongside. Paid weeks are always used
+ * before any Direct Debit on the same line, which pauses meanwhile.
+ * `allocateUpcomingEntries` then places the entries in the draws on sale.
  */
 export async function completeEntryPurchase(
   pool: Pool,
@@ -93,19 +98,18 @@ export async function completeEntryPurchase(
 ): Promise<CompletePurchaseOutcome> {
   const { rows } = await pool.query<{
     member_id: string;
-    draw_id: string;
     selection: number[];
     amount_pence: string;
     blocks: number;
     status: string;
-    entry_id: string | null;
+    outcome_message: string | null;
   }>(
-    `SELECT member_id, draw_id, selection, amount_pence, blocks, status, entry_id FROM pending_entry_purchase WHERE session_id = $1`,
+    `SELECT member_id, selection, amount_pence, blocks, status, outcome_message FROM pending_entry_purchase WHERE session_id = $1`,
     [sessionId],
   );
   const pending = rows[0];
   if (!pending) return { kind: 'not_found' };
-  if (pending.status === 'completed') return { kind: 'already_completed', entryId: pending.entry_id! };
+  if (pending.status === 'completed') return { kind: 'already_completed', message: pending.outcome_message ?? 'Payment received.' };
   if (pending.status === 'failed') return { kind: 'payment_failed', reason: 'Payment was not successful.' };
 
   const outcome = await gateway.getPaymentStatus(sessionId);
@@ -115,89 +119,43 @@ export async function completeEntryPurchase(
     return { kind: 'payment_failed', reason: outcome.reason };
   }
 
-  return withTransaction(pool, async (client) => {
+  const recorded = await withTransaction(pool, async (client) => {
     // Re-check under the transaction: the webhook and the return request can race.
-    const { rows: recheck } = await client.query<{ status: string; entry_id: string | null }>(
-      `SELECT status, entry_id FROM pending_entry_purchase WHERE session_id = $1 FOR UPDATE`,
+    const { rows: recheck } = await client.query<{ status: string; outcome_message: string | null }>(
+      `SELECT status, outcome_message FROM pending_entry_purchase WHERE session_id = $1 FOR UPDATE`,
       [sessionId],
     );
-    const current = recheck[0]!;
-    if (current.status === 'completed') return { kind: 'already_completed', entryId: current.entry_id! };
+    if (recheck[0]!.status === 'completed') return { done: true as const, message: recheck[0]!.outcome_message ?? 'Payment received.' };
 
-    const { rows: drawRows } = await client.query<{ status: string; draw_number: number }>(
-      `SELECT status, draw_number FROM draw WHERE id = $1`,
-      [pending.draw_id],
-    );
-    if (drawRows[0]?.status !== 'open') {
-      await client.query(`UPDATE pending_entry_purchase SET status = 'failed' WHERE session_id = $1`, [sessionId]);
-      return { kind: 'payment_failed', reason: 'The draw closed before this payment completed. Contact QOSFC for a refund.' };
-    }
-    const drawNumber = drawRows[0].draw_number;
-
-    // A member who has already bought entries keeps the same legacy-shaped
-    // identifier (FR-1.3's immutability applies to a portal-minted number too
-    // — it goes on the ticket stub the member is shown) rather than minting a
-    // fresh one every purchase.
-    const { rows: existingNoRows } = await client.query<{ prize_draw_no: number }>(
-      `SELECT prize_draw_no FROM member_number WHERE member_id = $1 LIMIT 1`,
-      [pending.member_id],
-    );
-    let prizeDrawNo = existingNoRows[0]?.prize_draw_no;
-    if (prizeDrawNo === undefined) {
-      const { rows: nextNoRows } = await client.query<{ next: number }>(
-        `SELECT COALESCE(MAX(prize_draw_no), 99999) + 1 AS next FROM member_number`,
-      );
-      prizeDrawNo = nextNoRows[0]!.next;
-      await client.query(`INSERT INTO member_number (prize_draw_no, member_id, row_type) VALUES ($1, $2, 'member')`, [
-        prizeDrawNo,
-        pending.member_id,
-      ]);
-    }
-
-    // Numbers stay entered into every future open draw until changed (GAP-14):
-    // close whatever standing selection was there before and open this one.
+    const line = await resolveLine(client, pending.member_id, pending.selection);
     await client.query(
-      `UPDATE selection_standing SET effective_to = CURRENT_DATE WHERE prize_draw_no = $1 AND slot = 1 AND effective_to IS NULL`,
-      [prizeDrawNo],
-    );
-    await client.query(
-      `INSERT INTO selection_standing (prize_draw_no, slot, selection, source) VALUES ($1, 1, $2, 'member_chosen')`,
-      [prizeDrawNo, pending.selection],
-    );
-
-    const { rows: entryRows } = await client.query<{ id: string }>(
-      `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, stake_pence, funding_source, idempotency_key)
-       VALUES ($1,$2,$3,$4,$5,'card',$6)
-       RETURNING id`,
-      [pending.draw_id, pending.member_id, prizeDrawNo, pending.selection, TICKET_PRICE_PENCE.toString(), `entry-purchase:${sessionId}`],
-    );
-    const entryId = entryRows[0]!.id;
-
-    // The full block payment (may be more than this one entry's stake — the
-    // remaining prepaid blocks are drawn down automatically by
-    // generateDueEntries() as future draws open, the same path a standing
-    // order or an agent-collected physical ticket already uses).
-    await client.query(
-      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
-       VALUES ($1,'card',CURRENT_DATE,$2,'allocated',$3)
+      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key, line_prize_draw_no, line_slot)
+       VALUES ($1,'card',CURRENT_DATE,$2,'allocated',$3,$4,$5)
        ON CONFLICT (idempotency_key) DO NOTHING`,
-      [pending.member_id, pending.amount_pence, `entry-purchase:${sessionId}`],
+      [pending.member_id, pending.amount_pence, `entry-purchase:${sessionId}`, line.prizeDrawNo, line.slot],
     );
-
-    await client.query(`UPDATE pending_entry_purchase SET status = 'completed', entry_id = $2 WHERE session_id = $1`, [
-      sessionId,
-      entryId,
-    ]);
-
-    return {
-      kind: 'entry_created',
-      entryId,
-      memberId: pending.member_id,
-      drawNumber,
-      selection: pending.selection,
-      amountPence: pending.amount_pence,
-      blocks: pending.blocks,
-    };
+    await client.query(`UPDATE pending_entry_purchase SET status = 'completed' WHERE session_id = $1`, [sessionId]);
+    return { done: false as const, line };
   });
-}
+  if (recorded.done) return { kind: 'already_completed', message: recorded.message };
 
+  // The payment is committed. If placing entries can't run now, each draw
+  // still picks its week up when it is run, so this must not fail the purchase.
+  await allocateUpcomingEntries(pool, { memberId: pending.member_id, actorLabel: 'portal:card-purchase' }).catch(() => undefined);
+  const message = await describeLineOutcome(pool, {
+    memberId: pending.member_id,
+    line: recorded.line,
+    selection: pending.selection,
+    event: { kind: 'card', weeks: pending.blocks },
+  });
+  await pool.query(`UPDATE pending_entry_purchase SET outcome_message = $2 WHERE session_id = $1`, [sessionId, message]);
+
+  return {
+    kind: 'purchased',
+    memberId: pending.member_id,
+    selection: pending.selection,
+    amountPence: pending.amount_pence,
+    blocks: pending.blocks,
+    message,
+  };
+}

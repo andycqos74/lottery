@@ -12,13 +12,16 @@ import { dirname, resolve } from 'node:path';
 import { hash as argon2Hash } from '@node-rs/argon2';
 import { createPool, migrate, type Pool } from '@qosfc/db';
 import type {
+  BacsBureau,
   CreateSessionRequest,
+  Mandate,
   HostedPaymentSession,
   PaymentGateway,
   PaymentOutcome,
 } from '@qosfc/ports';
 import { findMemberByEmail, registerMember } from './db.js';
 import { completeEntryPurchase, startEntryPurchase } from './entries.js';
+import { cancelDirectDebit, completeDirectDebitSetup, listActiveDirectDebits, startDirectDebitSetup } from './direct-debit.js';
 
 const url = process.env['TEST_APP_DB_URL'];
 const describeDb = url ? describe : describe.skip;
@@ -46,10 +49,68 @@ class FakeGateway implements PaymentGateway {
   }
 }
 
-describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
+class FakeBureau {
+  readonly providerName = 'fake:bacs';
+  readonly settlementDays = 3;
+  private n = 0;
+  async createMandate(request: { returnUrl: string }): Promise<Mandate> {
+    const mandateRef = `MANDATE${++this.n}${Date.now()}`;
+    return { mandateRef, status: 'pending', setupRedirectUrl: `${request.returnUrl}?mandate=${mandateRef}` };
+  }
+  async getMandate(mandateRef: string): Promise<Mandate> {
+    return { mandateRef, status: 'active' };
+  }
+}
+
+describeDb('online entry purchase and Direct Debit — lines, card first (GAP-09 / GAP-04 / client rules 2026-10-01)', () => {
   let pool: Pool;
   let memberId: string;
-  let drawId: string;
+  /** Six weekly draws on sale, soonest first. */
+  const draws: string[] = [];
+  const bureau = new FakeBureau() as unknown as BacsBureau;
+
+  async function newMember(email: string): Promise<string> {
+    const outcome = await registerMember(pool, { forename: 'Portal', surname: 'Member', email, passwordHash: 'x' });
+    if (outcome.kind !== 'registered') throw new Error('fixture setup failed');
+    return outcome.memberId;
+  }
+
+  async function buy(member: string, selection: number[], blocks: number) {
+    const gateway = new FakeGateway();
+    gateway.outcome = { status: 'succeeded', providerRef: 'ref', amountPence: String(200 * blocks) };
+    const started = await startEntryPurchase(pool, gateway, {
+      memberId: member,
+      selection,
+      blocks,
+      returnUrl: 'https://portal.test/return',
+      cancelUrl: 'https://portal.test/cancel',
+    });
+    if (started.kind !== 'started') throw new Error(`expected started, got ${JSON.stringify(started)}`);
+    const completed = await completeEntryPurchase(pool, gateway, started.sessionId);
+    if (completed.kind !== 'purchased') throw new Error(`expected purchased, got ${JSON.stringify(completed)}`);
+    return { ...completed, sessionId: started.sessionId, gateway };
+  }
+
+  async function setUpDirectDebit(member: string, selection: number[]) {
+    const started = await startDirectDebitSetup(pool, bureau, { memberId: member, selection, returnUrl: 'https://portal.test/dd' });
+    if (started.kind !== 'started') throw new Error('expected started');
+    const completed = await completeDirectDebitSetup(pool, bureau, started.mandateRef);
+    if (completed.kind !== 'active') throw new Error(`expected active, got ${JSON.stringify(completed)}`);
+    return completed;
+  }
+
+  /** Per draw (in order): the member's live entries as "numbers:funding". */
+  async function entriesByDraw(member: string): Promise<string[][]> {
+    const result: string[][] = [];
+    for (const drawId of draws) {
+      const { rows } = await pool.query<{ selection: number[]; funding_source: string }>(
+        `SELECT selection, funding_source::text FROM entry WHERE draw_id = $1 AND member_id = $2 AND voided_at IS NULL ORDER BY selection`,
+        [drawId, member],
+      );
+      result.push(rows.map((r) => `${r.selection.join('-')}:${r.funding_source}`));
+    }
+    return result;
+  }
 
   beforeAll(async () => {
     pool = createPool({ connectionString: url!, applicationName: 'qosfc-api-test', max: 4 });
@@ -57,21 +118,28 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     await migrate(pool, resolve(here, '../../../db/migrations'), () => {});
 
-    const cfgId = (await pool.query(`INSERT INTO config_version (note) VALUES ('test fixture') RETURNING id`)).rows[0].id;
-    drawId = (
+    const cfgId = (
       await pool.query(
-        `INSERT INTO draw (draw_number, draw_date, config_version_id, status) VALUES (1, CURRENT_DATE, $1, 'open') RETURNING id`,
-        [cfgId],
+        `INSERT INTO config_version (entry_strategy, entry_strategy_confirmed_by, note, is_active)
+         VALUES ('prepaid_blocks', 'test fixture', 'portal fixture', true) RETURNING id`,
       )
     ).rows[0].id;
+    for (let week = 0; week < 6; week++) {
+      draws.push(
+        (
+          await pool.query(
+            `INSERT INTO draw (draw_number, draw_date, draw_at, entries_close_at, config_version_id, status)
+             VALUES ($1, CURRENT_DATE + $2 * 7, now() + make_interval(days => $2 * 7, hours => 2),
+                     now() + make_interval(days => $2 * 7, hours => 1), $3, 'open')
+             RETURNING id`,
+            [101 + week, week, cfgId],
+          )
+        ).rows[0].id,
+      );
+    }
 
     const passwordHash = await argon2Hash('a-strong-enough-password');
-    const outcome = await registerMember(pool, {
-      forename: 'Portal',
-      surname: 'Member',
-      email: 'portal.member@example.test',
-      passwordHash,
-    });
+    const outcome = await registerMember(pool, { forename: 'Portal', surname: 'Member', email: 'portal.member@example.test', passwordHash });
     if (outcome.kind !== 'registered') throw new Error('fixture setup failed');
     memberId = outcome.memberId;
   });
@@ -88,37 +156,20 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
   });
 
   it('refuses to register the same email twice', async () => {
-    const outcome = await registerMember(pool, {
-      forename: 'Dup',
-      surname: 'Licate',
-      email: 'portal.member@example.test',
-      passwordHash: 'x',
-    });
+    const outcome = await registerMember(pool, { forename: 'Dup', surname: 'Licate', email: 'portal.member@example.test', passwordHash: 'x' });
     expect(outcome.kind).toBe('email_taken');
   });
 
-  it('creates an entry once the dummy PSP reports success', async () => {
-    const gateway = new FakeGateway();
-    const started = await startEntryPurchase(pool, gateway, {
-      memberId,
-      selection: [4, 2, 14, 9],
-      blocks: 1,
-      returnUrl: 'https://portal.test/return',
-      cancelUrl: 'https://portal.test/cancel',
-    });
-    if (started.kind !== 'started') throw new Error(`expected started, got ${JSON.stringify(started)}`);
+  it('a 1-draw purchase enters the next draw, says so, and is idempotent', async () => {
+    const bought = await buy(memberId, [4, 2, 14, 9], 1);
+    expect(await entriesByDraw(memberId)).toEqual([['2-4-9-14:prepaid'], [], [], [], [], []]);
+    expect(bought.message).toContain('Draw 101');
 
-    const completed = await completeEntryPurchase(pool, gateway, started.sessionId);
-    if (completed.kind !== 'entry_created') throw new Error(`expected entry_created, got ${JSON.stringify(completed)}`);
-
-    const { rows } = await pool.query(`SELECT draw_id, selection, funding_source, stake_pence FROM entry WHERE id = $1`, [
-      completed.entryId,
-    ]);
-    expect(rows[0]).toMatchObject({ draw_id: drawId, selection: [2, 4, 9, 14], funding_source: 'card', stake_pence: 200n });
-
-    // Idempotent: completing the same session again returns the same entry rather than creating a second one.
-    const again = await completeEntryPurchase(pool, gateway, started.sessionId);
-    expect(again).toEqual({ kind: 'already_completed', entryId: completed.entryId });
+    // Completing the same session again: same message, nothing bought twice.
+    const again = await completeEntryPurchase(pool, bought.gateway, bought.sessionId);
+    expect(again).toEqual({ kind: 'already_completed', message: bought.message });
+    const { rows } = await pool.query(`SELECT count(*)::int AS n FROM payment WHERE member_id = $1`, [memberId]);
+    expect(rows[0].n).toBe(1);
   });
 
   it('marks the purchase failed when the dummy PSP declines, and creates no entry', async () => {
@@ -132,14 +183,11 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
       cancelUrl: 'https://portal.test/cancel',
     });
     if (started.kind !== 'started') throw new Error('expected started');
-
-    const completed = await completeEntryPurchase(pool, gateway, started.sessionId);
-    expect(completed.kind).toBe('payment_failed');
+    expect((await completeEntryPurchase(pool, gateway, started.sessionId)).kind).toBe('payment_failed');
   });
 
   it('rejects a selection that is not four distinct numbers 1-20', async () => {
-    const gateway = new FakeGateway();
-    const outcome = await startEntryPurchase(pool, gateway, {
+    const outcome = await startEntryPurchase(pool, new FakeGateway(), {
       memberId,
       selection: [1, 2, 3],
       blocks: 1,
@@ -150,8 +198,7 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
   });
 
   it('rejects a block size other than 1, 4, or 12', async () => {
-    const gateway = new FakeGateway();
-    const outcome = await startEntryPurchase(pool, gateway, {
+    const outcome = await startEntryPurchase(pool, new FakeGateway(), {
       memberId,
       selection: [1, 2, 3, 4],
       blocks: 2,
@@ -161,50 +208,109 @@ describeDb('online entry purchase (GAP-09 / GAP-04)', () => {
     expect(outcome).toEqual({ kind: 'rejected', reason: 'Choose 1, 4, or 12 draws.' });
   });
 
-  it('buying a block of draws charges the full block, credits one entry now, saves a standing selection, and keeps the same prize draw number on a repeat purchase', async () => {
-    const gateway = new FakeGateway();
-    const started = await startEntryPurchase(pool, gateway, {
-      memberId,
-      selection: [1, 6, 11, 16],
-      blocks: 4,
-      returnUrl: 'https://portal.test/return',
-      cancelUrl: 'https://portal.test/cancel',
-    });
-    if (started.kind !== 'started') throw new Error('expected started');
-
-    const completed = await completeEntryPurchase(pool, gateway, started.sessionId);
-    if (completed.kind !== 'entry_created') throw new Error(`expected entry_created, got ${JSON.stringify(completed)}`);
-
-    const { rows: entryRows } = await pool.query(`SELECT stake_pence, prize_draw_no FROM entry WHERE id = $1`, [completed.entryId]);
-    expect(entryRows[0]).toMatchObject({ stake_pence: 200n });
-    const prizeDrawNo = entryRows[0].prize_draw_no;
-
-    const { rows: paymentRows } = await pool.query(
-      `SELECT amount_pence FROM payment WHERE member_id = $1 ORDER BY created_at DESC LIMIT 1`,
-      [memberId],
+  it('same numbers again: the purchase adds weeks to them — never a second entry in a draw', async () => {
+    const m = await newMember('same.numbers@example.test');
+    await buy(m, [1, 6, 11, 16], 4);
+    const second = await buy(m, [16, 11, 6, 1], 1);
+    expect(await entriesByDraw(m)).toEqual([
+      ['1-6-11-16:prepaid'],
+      ['1-6-11-16:prepaid'],
+      ['1-6-11-16:prepaid'],
+      ['1-6-11-16:prepaid'],
+      ['1-6-11-16:prepaid'],
+      [],
+    ]);
+    expect(second.message).toContain('You already had the numbers 1, 6, 11, 16');
+    // One prize draw number, one line.
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM selection_standing ss JOIN member_number mn USING (prize_draw_no) WHERE mn.member_id = $1`,
+      [m],
     );
-    expect(paymentRows[0]).toMatchObject({ amount_pence: 800n });
+    expect(rows[0].n).toBe(1);
+  });
 
-    const { rows: standingRows } = await pool.query(
-      `SELECT selection FROM selection_standing WHERE prize_draw_no = $1 AND effective_to IS NULL`,
-      [prizeDrawNo],
-    );
-    expect(standingRows[0]).toMatchObject({ selection: [1, 6, 11, 16] });
+  it('different numbers: an extra entry in the selected draws, alongside the existing ones', async () => {
+    const m = await newMember('new.numbers@example.test');
+    await buy(m, [1, 2, 3, 4], 4);
+    const second = await buy(m, [5, 6, 7, 8], 4);
+    expect(await entriesByDraw(m)).toEqual([
+      ['1-2-3-4:prepaid', '5-6-7-8:prepaid'],
+      ['1-2-3-4:prepaid', '5-6-7-8:prepaid'],
+      ['1-2-3-4:prepaid', '5-6-7-8:prepaid'],
+      ['1-2-3-4:prepaid', '5-6-7-8:prepaid'],
+      [],
+      [],
+    ]);
+    expect(second.message).toContain('These are new numbers');
+    expect(second.message).toContain('1, 2, 3, 4');
+  });
 
-    // A second purchase by the same member reuses the same prize draw number
-    // rather than minting a new one (FR-1.3's immutability applies here too).
-    const secondGateway = new FakeGateway();
-    const secondStarted = await startEntryPurchase(pool, secondGateway, {
-      memberId,
-      selection: [2, 7, 12, 17],
-      blocks: 1,
-      returnUrl: 'https://portal.test/return',
-      cancelUrl: 'https://portal.test/cancel',
-    });
-    if (secondStarted.kind !== 'started') throw new Error('expected started');
-    const secondCompleted = await completeEntryPurchase(pool, secondGateway, secondStarted.sessionId);
-    if (secondCompleted.kind !== 'entry_created') throw new Error(`expected entry_created, got ${JSON.stringify(secondCompleted)}`);
-    const { rows: secondEntryRows } = await pool.query(`SELECT prize_draw_no FROM entry WHERE id = $1`, [secondCompleted.entryId]);
-    expect(secondEntryRows[0]).toMatchObject({ prize_draw_no: prizeDrawNo });
+  it('Direct Debit set up after a card payment: the paid draws are used first, then the Direct Debit starts', async () => {
+    const m = await newMember('card.then.dd@example.test');
+    await buy(m, [3, 7, 12, 18], 4);
+    const dd = await setUpDirectDebit(m, [3, 7, 12, 18]);
+    expect(await entriesByDraw(m)).toEqual([
+      ['3-7-12-18:prepaid'],
+      ['3-7-12-18:prepaid'],
+      ['3-7-12-18:prepaid'],
+      ['3-7-12-18:prepaid'],
+      ['3-7-12-18:direct_debit'],
+      ['3-7-12-18:direct_debit'],
+    ]);
+    expect(dd.message).toContain('so those are used first');
+    expect(dd.message).toContain('Direct Debit starts from Draw 105');
+  });
+
+  it('card payment while a Direct Debit is in place: the Direct Debit pauses for the paid draws and resumes after', async () => {
+    const m = await newMember('dd.then.card@example.test');
+    await setUpDirectDebit(m, [2, 9, 13, 20]);
+    expect((await entriesByDraw(m)).flat()).toEqual(Array(6).fill('2-9-13-20:direct_debit'));
+
+    const bought = await buy(m, [2, 9, 13, 20], 4);
+    expect(await entriesByDraw(m)).toEqual([
+      ['2-9-13-20:prepaid'],
+      ['2-9-13-20:prepaid'],
+      ['2-9-13-20:prepaid'],
+      ['2-9-13-20:prepaid'],
+      ['2-9-13-20:direct_debit'],
+      ['2-9-13-20:direct_debit'],
+    ]);
+    expect(bought.message).toContain('Your Direct Debit for these numbers is paused while your paid draws are used, and starts again from Draw 105');
+  });
+
+  it('a Direct Debit with different numbers adds an extra entry in every draw; cancelling it leaves the other numbers alone', async () => {
+    const m = await newMember('dd.new.numbers@example.test');
+    await buy(m, [1, 3, 5, 7], 4);
+    const dd = await setUpDirectDebit(m, [2, 4, 6, 8]);
+    expect(dd.message).toContain('These are new numbers, so your Direct Debit adds an extra entry in every draw');
+    expect((await entriesByDraw(m)).map((d) => d.join(' '))).toEqual([
+      '1-3-5-7:prepaid 2-4-6-8:direct_debit',
+      '1-3-5-7:prepaid 2-4-6-8:direct_debit',
+      '1-3-5-7:prepaid 2-4-6-8:direct_debit',
+      '1-3-5-7:prepaid 2-4-6-8:direct_debit',
+      '2-4-6-8:direct_debit',
+      '2-4-6-8:direct_debit',
+    ]);
+
+    const [mandate] = await listActiveDirectDebits(pool, m);
+    expect(mandate?.selection).toEqual([2, 4, 6, 8]);
+    expect(await cancelDirectDebit(pool, m, mandate!.id)).toEqual({ cancelled: 1 });
+    expect((await entriesByDraw(m)).map((d) => d.join(' '))).toEqual([
+      '1-3-5-7:prepaid',
+      '1-3-5-7:prepaid',
+      '1-3-5-7:prepaid',
+      '1-3-5-7:prepaid',
+      '',
+      '',
+    ]);
+  });
+
+  it('cancelling a Direct Debit behind paid draws keeps the paid draws', async () => {
+    const m = await newMember('cancel.keeps.paid@example.test');
+    await setUpDirectDebit(m, [10, 11, 12, 13]);
+    await buy(m, [10, 11, 12, 13], 1);
+    const [mandate] = await listActiveDirectDebits(pool, m);
+    await cancelDirectDebit(pool, m, mandate!.id);
+    expect(await entriesByDraw(m)).toEqual([['10-11-12-13:prepaid'], [], [], [], [], []]);
   });
 });

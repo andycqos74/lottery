@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { withTransaction, type Pool } from '@qosfc/db';
+import { estimateStandingOrderEntries } from '@qosfc/activities';
 import { DEFAULT_JACKPOT_FLOOR_PENCE, jackpotPosition, pence, revenueFor, TICKET_PRICE_PENCE, type BasisPoints } from '@qosfc/domain';
 
 export interface Member {
@@ -183,31 +184,35 @@ export interface DrawStats {
 }
 
 export async function getDrawStats(pool: Pool, drawId: string): Promise<DrawStats> {
-  const [{ rows: entryRows }, { rows: splitRows }, { rows: lastRows }] = await Promise.all([
-    pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM entry WHERE draw_id = $1`, [drawId]),
+  const [{ rows: entryRows }, { rows: splitRows }, { rows: lastRows }, standingOrders] = await Promise.all([
+    pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM entry WHERE draw_id = $1 AND voided_at IS NULL`, [drawId]),
     pool.query<{ split_prize_bp: number }>(`SELECT split_prize_bp FROM config_version WHERE is_active = true`),
     pool.query<{ rollover_out_pence: string | null }>(
       `SELECT rollover_out_pence::text AS rollover_out_pence FROM draw WHERE status = 'settled' ORDER BY draw_number DESC LIMIT 1`,
     ),
+    estimateStandingOrderEntries(pool, [drawId]),
   ]);
   const entriesCount = Number(entryRows[0]!.n);
   const prizeBp = (splitRows[0]?.split_prize_bp ?? 5000) as BasisPoints;
   const rolloverIn = pence(BigInt(lastRows[0]?.rollover_out_pence ?? '0'));
-  const contribution = pence((revenueFor(entriesCount, TICKET_PRICE_PENCE) * BigInt(prizeBp)) / 10_000n);
+  // Standing orders expected to have paid by the draw count toward the estimate, not toward "entries this week".
+  const expected = entriesCount + (standingOrders.get(drawId) ?? 0);
+  const contribution = pence((revenueFor(expected, TICKET_PRICE_PENCE) * BigInt(prizeBp)) / 10_000n);
   const position = jackpotPosition(contribution, rolloverIn, DEFAULT_JACKPOT_FLOOR_PENCE);
   return { entriesCount, jackpotEstimatePence: position.jackpotPreDrawPence };
 }
 
-export async function getStandingSelection(pool: Pool, memberId: string): Promise<number[] | undefined> {
+/** Every set of numbers the member currently holds — one per line (db/migrations/0018). */
+export async function listStandingSelections(pool: Pool, memberId: string): Promise<number[][]> {
   const { rows } = await pool.query<{ selection: number[] }>(
     `SELECT ss.selection
        FROM selection_standing ss
        JOIN member_number mn ON mn.prize_draw_no = ss.prize_draw_no
-      WHERE mn.member_id = $1 AND ss.slot = 1 AND ss.effective_to IS NULL
-      LIMIT 1`,
+      WHERE mn.member_id = $1 AND ss.effective_to IS NULL
+      ORDER BY ss.prize_draw_no, ss.slot`,
     [memberId],
   );
-  return rows[0]?.selection;
+  return rows.map((r) => r.selection);
 }
 
 export interface MemberDetails {
@@ -300,7 +305,7 @@ export async function listMyEntries(pool: Pool, memberId: string): Promise<MyEnt
     `SELECT e.id, d.draw_number, d.draw_date::text AS draw_date, d.status::text AS draw_status,
             e.selection, d.winning_numbers, e.created_at::text AS created_at
        FROM entry e JOIN draw d ON d.id = e.draw_id
-      WHERE e.member_id = $1
+      WHERE e.member_id = $1 AND e.voided_at IS NULL
       ORDER BY d.draw_number DESC
       LIMIT 50`,
     [memberId],

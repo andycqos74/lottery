@@ -106,7 +106,7 @@ export async function matchBankTransaction(client: PoolClient, bankTransactionId
       [bankTransactionId, soleAutoAcceptable.prize_draw_no],
     );
     await client.query(`UPDATE bank_transaction SET match_status = 'matched' WHERE id = $1`, [bankTransactionId]);
-    await createAllocatedPayment(client, bankTransactionId, soleAutoAcceptable.member_id!, txn.amount_pence, {
+    await createAllocatedPayment(client, bankTransactionId, soleAutoAcceptable.member_id!, soleAutoAcceptable.prize_draw_no, txn.amount_pence, {
       method: 'csv_reference_auto_accept',
       confidence: 1.0,
     });
@@ -130,6 +130,8 @@ async function createAllocatedPayment(
   client: PoolClient,
   bankTransactionId: string,
   memberId: string,
+  /** The prize draw number the money was quoted against — its weeks fund that number's entries. */
+  prizeDrawNo: number,
   amountPence: string,
   allocation: { readonly method: string; readonly confidence: number },
 ): Promise<string> {
@@ -139,11 +141,11 @@ async function createAllocatedPayment(
   );
   const txn = rows[0]!;
   const inserted = await client.query<{ id: string }>(
-    `INSERT INTO payment (member_id, channel, received_date, amount_pence, bank_transaction_id, allocation_confidence, allocation_method, status, idempotency_key)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'allocated',$8)
+    `INSERT INTO payment (member_id, channel, received_date, amount_pence, bank_transaction_id, allocation_confidence, allocation_method, status, idempotency_key, line_prize_draw_no, line_slot)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'allocated',$8,$9,1)
      ON CONFLICT (idempotency_key) DO NOTHING
      RETURNING id`,
-    [memberId, txn.channel, txn.value_date, amountPence, bankTransactionId, allocation.confidence, allocation.method, `bank_txn:${bankTransactionId}`],
+    [memberId, txn.channel, txn.value_date, amountPence, bankTransactionId, allocation.confidence, allocation.method, `bank_txn:${bankTransactionId}`, prizeDrawNo],
   );
   if (inserted.rows[0]) return inserted.rows[0].id;
   const existing = await client.query<{ id: string }>(`SELECT id FROM payment WHERE idempotency_key = $1`, [`bank_txn:${bankTransactionId}`]);
@@ -200,7 +202,7 @@ export async function acceptBankTransactionMatch(
   );
   await client.query(`UPDATE bank_transaction SET match_status = 'matched' WHERE id = $1`, [bankTransactionId]);
 
-  const paymentId = await createAllocatedPayment(client, bankTransactionId, candidate.member_id, txn.amount_pence, {
+  const paymentId = await createAllocatedPayment(client, bankTransactionId, candidate.member_id, prizeDrawNo, txn.amount_pence, {
     method: 'manual_review_accept',
     confidence: Number(candidate.confidence),
   });

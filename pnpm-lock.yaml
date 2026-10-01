@@ -80,6 +80,9 @@ importers:
       '@node-rs/argon2':
         specifier: ^2.0.2
         version: 2.2.0
+      '@qosfc/activities':
+        specifier: workspace:*
+        version: link:../../packages/activities
       '@qosfc/adapters-live':
         specifier: workspace:*
         version: link:../../packages/adapters-live

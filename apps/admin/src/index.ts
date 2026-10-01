@@ -20,6 +20,7 @@ import { verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import {
   acceptBankTransactionMatchTx,
+  allocateUpcomingEntries,
   generateDueEntries,
   ingestNewStatements,
   recordManualTicket,
@@ -383,6 +384,11 @@ app.post('/draws', async (request, reply) => {
       after: { ...plan.draws[i], name: values.name || null, mode: values.mode },
     });
   }
+  // Prepaid weeks waiting for draws to exist go into the new ones now. Not
+  // fatal: running each draw still enters anyone with weeks left.
+  await allocateUpcomingEntries(pool, { actorId: request.authUser!.id, actorLabel: request.authUser!.email }).catch((error: unknown) =>
+    request.log.warn({ err: error }, 'could not place prepaid weeks into newly created draws'),
+  );
   reply.redirect(outcome.ids.length === 1 ? `/draws/${outcome.ids[0]}` : '/draws');
 });
 
@@ -532,20 +538,22 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
   if (outcome.kind === 'rejected') return respond(outcome.reason);
   if (outcome.kind === 'already_recorded') return respond(`Ticket ${physicalTicketNumber} was already recorded.`);
 
-  // Enter it into this draw right away — later draws use up the remaining
-  // weeks when each is run (generateDueEntries). A ticket recorded after this
-  // draw's cutoff is not counted for it (generateDueEntries ignores payments
-  // made after entries closed), so its first week goes to the next draw.
+  // Every week bought goes into the next draws on sale right away — this one
+  // first if entries are still open, then each following draw (one entry per
+  // draw), so they all show on the Draws page now. Weeks beyond the draws that
+  // exist are placed when more draws are created, or when a draw is run.
   // GAP-17 may still be unactivated in a given environment — the ticket is
   // already recorded at this point, so that failure must not look like the
   // whole action failed; report it as a flash, not a 500.
   let entryFlash = '';
   try {
-    const generated = await generateDueEntries(pool, { drawId: id, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
-    entryFlash = `${generated.generated} entry generated into this draw.`;
+    const placed = await allocateUpcomingEntries(pool, { memberId: agentMemberId, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
+    entryFlash =
+      `Entered into ${placed.entriesPlaced} upcoming draw${placed.entriesPlaced === 1 ? '' : 's'}.` +
+      (placed.weeksWaitingForDraws > 0 ? ` ${placed.weeksWaitingForDraws} week(s) will be entered as more draws are created.` : '');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    entryFlash = `Recorded, but could not enter it into this draw yet: ${message}`;
+    entryFlash = `Recorded, but could not enter it into draws yet: ${message}`;
   }
 
   await insertAuditLog(pool, {
@@ -788,6 +796,10 @@ app.post('/tasks/:id/resolve', async (request, reply) => {
       after: { bankTransactionId: task.entityId, prizeDrawNo },
     });
     paymentFlash = ` Payment ${matchOutcome.paymentId} allocated to prize draw no. ${prizeDrawNo}.`;
+    // The matched money enters the member's upcoming draws now.
+    await allocateUpcomingEntries(pool, { actorId: request.authUser!.id, actorLabel: request.authUser!.email }).catch((error: unknown) =>
+      request.log.warn({ err: error }, 'could not place matched payment into upcoming draws'),
+    );
   }
 
   const outcome = await resolveTaskStep(pool, id, request.authUser!.id, note);

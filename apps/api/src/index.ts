@@ -23,14 +23,14 @@ import {
   getDrawStats,
   getMemberDetails,
   getOpenDraw,
-  getStandingSelection,
+  listStandingSelections,
   listMyEntries,
   listSettledDraws,
   registerMember,
   touchMemberLastLogin,
   updateMemberDetails,
 } from './db.js';
-import { cancelDirectDebit, completeDirectDebitSetup, getActiveDirectDebit, startDirectDebitSetup } from './direct-debit.js';
+import { cancelDirectDebit, completeDirectDebitSetup, listActiveDirectDebits, startDirectDebitSetup } from './direct-debit.js';
 import { completeEntryPurchase, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
 import { buildBacsBureau, buildNotifier, buildPaymentGateway } from './providers.js';
 import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
@@ -381,9 +381,9 @@ app.get('/entries/purchase/return', async (request, reply) => {
 
   const outcome = await completeEntryPurchase(pool, paymentGateway, session);
   switch (outcome.kind) {
-    case 'entry_created':
+    case 'purchased':
     case 'already_completed':
-      return { status: 'paid', entryId: outcome.entryId };
+      return { status: 'paid', message: outcome.message };
     case 'pending':
       return reply.code(202).send({ status: 'pending' });
     case 'payment_failed':
@@ -427,7 +427,7 @@ app.get('/draw/pay', async (request, reply) => {
   const blocks = PURCHASE_BLOCK_SIZES.includes(Number(query.blocks) as (typeof PURCHASE_BLOCK_SIZES)[number])
     ? Number(query.blocks)
     : 4;
-  const hasDirectDebit = (await getActiveDirectDebit(pool, found.auth.member.id)) !== undefined;
+  const hasDirectDebit = (await listActiveDirectDebits(pool, found.auth.member.id)).length > 0;
   reply.type('text/html').send(paymentPage({ member: found.view, openDraw, selection, blocks, hasDirectDebit, hostedCardPage }));
 });
 
@@ -474,27 +474,27 @@ app.get('/draw/return', async (request, reply) => {
   if (!session) return reply.code(400).type('text/html').send(purchaseReturnPage({ member: found.view, status: 'not_found' }));
 
   const outcome = await completeEntryPurchase(pool, paymentGateway, session);
-  if (outcome.kind === 'entry_created') {
+  if (outcome.kind === 'purchased') {
     // Only on the transition into 'completed' — a reload of this page (which
     // re-runs completeEntryPurchase and gets 'already_completed' back) must
     // not resend the email.
     notifier
       .send({
-        idempotencyKey: idempotencyKey(`entry_confirmation:${outcome.entryId}`),
+        idempotencyKey: idempotencyKey(`entry_confirmation:${session}`),
         memberRef: outcome.memberId,
         channel: 'email',
         templateId: 'entry_confirmation',
         mergeData: {
-          drawNumber: String(outcome.drawNumber),
           numbers: outcome.selection.join(', '),
           amount: formatPence(pence(BigInt(outcome.amountPence))),
           blocks: String(outcome.blocks),
+          summary: outcome.message,
         },
       })
-      .catch((error: unknown) => app.log.error({ err: error, entryId: outcome.entryId }, 'entry_confirmation notification failed'));
+      .catch((error: unknown) => app.log.error({ err: error, session }, 'entry_confirmation notification failed'));
   }
   const status =
-    outcome.kind === 'entry_created' || outcome.kind === 'already_completed'
+    outcome.kind === 'purchased' || outcome.kind === 'already_completed'
       ? 'paid'
       : outcome.kind === 'not_found'
         ? 'not_found'
@@ -506,6 +506,7 @@ app.get('/draw/return', async (request, reply) => {
       member: found.view,
       status,
       ...(outcome.kind === 'payment_failed' ? { reason: outcome.reason } : {}),
+      ...(outcome.kind === 'purchased' || outcome.kind === 'already_completed' ? { message: outcome.message } : {}),
     }),
   );
 });
@@ -556,6 +557,7 @@ app.get('/direct-debit/return', async (request, reply) => {
       member: found.view,
       status,
       ...(outcome.kind === 'failed' ? { reason: outcome.reason } : {}),
+      ...(outcome.kind === 'active' ? { message: outcome.message } : {}),
     }),
   );
 });
@@ -565,31 +567,32 @@ app.post('/direct-debit/cancel', async (request, reply) => {
   if (!found) return reply.redirect('/login');
   if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
 
-  const { cancelled } = await cancelDirectDebit(pool, found.auth.member.id);
+  const { paymentMethodId } = request.body as { paymentMethodId?: string };
+  const { cancelled } = paymentMethodId ? await cancelDirectDebit(pool, found.auth.member.id, paymentMethodId) : { cancelled: 0 };
   if (cancelled > 0) app.log.info({ memberId: found.auth.member.id }, 'direct debit cancelled by member');
   return sendAccountPage(
     found,
     reply,
     cancelled > 0
-      ? 'Your Direct Debit is cancelled. You will not be entered into any more draws by Direct Debit.'
-      : 'You do not have an active Direct Debit.',
+      ? 'That Direct Debit is cancelled: its numbers are no longer entered by Direct Debit in draws still taking entries. Any draws you have already paid for still stand.'
+      : 'That Direct Debit is not active.',
   );
 });
 
 async function sendAccountPage(found: NonNullable<Awaited<ReturnType<typeof viewMember>>>, reply: FastifyReply, flash?: string) {
-  const [openDraw, standingSelection, entries, directDebit] = await Promise.all([
+  const [openDraw, standingSelections, entries, directDebits] = await Promise.all([
     getOpenDraw(pool),
-    getStandingSelection(pool, found.auth.member.id),
+    listStandingSelections(pool, found.auth.member.id),
     listMyEntries(pool, found.auth.member.id),
-    getActiveDirectDebit(pool, found.auth.member.id),
+    listActiveDirectDebits(pool, found.auth.member.id),
   ]);
   return reply.type('text/html').send(
     accountPage({
       member: found.view,
       ...(openDraw ? { openDraw } : {}),
-      ...(standingSelection ? { standingSelection } : {}),
+      standingSelections,
       entries,
-      ...(directDebit ? { directDebit } : {}),
+      directDebits,
       ...(flash ? { flash } : {}),
     }),
   );
