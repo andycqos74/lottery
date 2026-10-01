@@ -28,6 +28,7 @@
 import { withTransaction, type Pool } from '@qosfc/db';
 import { entriesDue, TICKET_PRICE_PENCE, ZERO, type EntryGenerationConfig, type MemberEntryState } from '@qosfc/domain';
 import { writeAudit } from '../audit.js';
+import { placeEntry } from './place-entry.js';
 
 export interface GenerateDueEntriesRequest {
   readonly drawId: string;
@@ -94,13 +95,11 @@ export async function generateDueEntries(pool: Pool, request: GenerateDueEntries
       // checkout, which enters the member's first draw immediately under its
       // own idempotency key. Generating again would enter them twice and burn
       // one of the weeks they paid for on a duplicate.
-      const { rows: existingRows } = await client.query(`SELECT 1 FROM entry WHERE draw_id = $1 AND prize_draw_no = $2 LIMIT 1`, [
+      const { rows: existingRows } = await client.query(`SELECT 1 FROM entry WHERE draw_id = $1 AND prize_draw_no = $2 AND voided_at IS NULL LIMIT 1`, [
         request.drawId,
         candidate.prize_draw_no,
       ]);
       if (existingRows.length > 0) continue;
-
-      const idempotencyKey = `${request.drawId}:${candidate.prize_draw_no}:1`;
 
       // #9: an active Direct Debit enters the member into every draw until it
       // is cancelled. It is a recurring subscription, not a prepaid block, so
@@ -115,14 +114,15 @@ export async function generateDueEntries(pool: Pool, request: GenerateDueEntries
         [candidate.member_id, cutoff],
       );
       if (ddRows.length > 0) {
-        const { rows: insertedRows } = await client.query<{ id: string }>(
-          `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, stake_pence, funding_source, idempotency_key)
-           VALUES ($1,$2,$3,$4,$5,'direct_debit',$6)
-           ON CONFLICT (idempotency_key) DO NOTHING
-           RETURNING id`,
-          [request.drawId, candidate.member_id, candidate.prize_draw_no, candidate.selection, cfg.ticketPricePence, idempotencyKey],
-        );
-        if (insertedRows[0]) {
+        const inserted = await placeEntry(client, {
+          drawId: request.drawId,
+          memberId: candidate.member_id,
+          prizeDrawNo: candidate.prize_draw_no,
+          selection: candidate.selection,
+          stakePence: cfg.ticketPricePence,
+          funding: 'direct_debit',
+        });
+        if (inserted) {
           generated++;
           directDebitGenerated++;
         }
@@ -142,7 +142,7 @@ export async function generateDueEntries(pool: Pool, request: GenerateDueEntries
       // 'prepaid' one does, so it must count here too or the balance below
       // would over-credit by one entry's worth.
       const { rows: consumedRows } = await client.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM entry WHERE member_id = $1 AND funding_source IN ('prepaid', 'card')`,
+        `SELECT count(*)::text AS n FROM entry WHERE member_id = $1 AND funding_source IN ('prepaid', 'card') AND voided_at IS NULL`,
         [candidate.member_id],
       );
       const totalBlocks = Number(BigInt(purchasedRows[0]!.total) / cfg.ticketPricePence);
@@ -161,14 +161,15 @@ export async function generateDueEntries(pool: Pool, request: GenerateDueEntries
       const due = entriesDue(state, cfg);
       if (due.count === 0) continue;
 
-      const { rows: insertedRows } = await client.query<{ id: string }>(
-        `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, stake_pence, funding_source, idempotency_key)
-         VALUES ($1,$2,$3,$4,$5,'prepaid',$6)
-         ON CONFLICT (idempotency_key) DO NOTHING
-         RETURNING id`,
-        [request.drawId, candidate.member_id, candidate.prize_draw_no, candidate.selection, cfg.ticketPricePence, idempotencyKey],
-      );
-      if (insertedRows[0]) generated++;
+      const inserted = await placeEntry(client, {
+        drawId: request.drawId,
+        memberId: candidate.member_id,
+        prizeDrawNo: candidate.prize_draw_no,
+        selection: candidate.selection,
+        stakePence: cfg.ticketPricePence,
+        funding: 'prepaid',
+      });
+      if (inserted) generated++;
     }
 
     await writeAudit(client, {

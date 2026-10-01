@@ -20,7 +20,7 @@ import { verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import {
   acceptBankTransactionMatchTx,
-  allocatePrepaidEntries,
+  allocateUpcomingEntries,
   generateDueEntries,
   ingestNewStatements,
   recordManualTicket,
@@ -386,7 +386,7 @@ app.post('/draws', async (request, reply) => {
   }
   // Prepaid weeks waiting for draws to exist go into the new ones now. Not
   // fatal: running each draw still enters anyone with weeks left.
-  await allocatePrepaidEntries(pool, { actorId: request.authUser!.id, actorLabel: request.authUser!.email }).catch((error: unknown) =>
+  await allocateUpcomingEntries(pool, { actorId: request.authUser!.id, actorLabel: request.authUser!.email }).catch((error: unknown) =>
     request.log.warn({ err: error }, 'could not place prepaid weeks into newly created draws'),
   );
   reply.redirect(outcome.ids.length === 1 ? `/draws/${outcome.ids[0]}` : '/draws');
@@ -547,7 +547,7 @@ app.post('/draws/:id/manual-tickets', async (request, reply) => {
   // whole action failed; report it as a flash, not a 500.
   let entryFlash = '';
   try {
-    const placed = await allocatePrepaidEntries(pool, { memberId: agentMemberId, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
+    const placed = await allocateUpcomingEntries(pool, { memberId: agentMemberId, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
     entryFlash =
       `Entered into ${placed.entriesPlaced} upcoming draw${placed.entriesPlaced === 1 ? '' : 's'}.` +
       (placed.weeksWaitingForDraws > 0 ? ` ${placed.weeksWaitingForDraws} week(s) will be entered as more draws are created.` : '');
@@ -796,6 +796,10 @@ app.post('/tasks/:id/resolve', async (request, reply) => {
       after: { bankTransactionId: task.entityId, prizeDrawNo },
     });
     paymentFlash = ` Payment ${matchOutcome.paymentId} allocated to prize draw no. ${prizeDrawNo}.`;
+    // The matched money enters the member's upcoming draws now.
+    await allocateUpcomingEntries(pool, { actorId: request.authUser!.id, actorLabel: request.authUser!.email }).catch((error: unknown) =>
+      request.log.warn({ err: error }, 'could not place matched payment into upcoming draws'),
+    );
   }
 
   const outcome = await resolveTaskStep(pool, id, request.authUser!.id, note);

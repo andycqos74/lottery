@@ -1,4 +1,5 @@
 import { withTransaction, type Pool } from '@qosfc/db';
+import { estimateStandingOrderEntries } from '@qosfc/activities';
 
 export interface AppUser {
   readonly id: string;
@@ -293,6 +294,8 @@ export interface DrawSummary {
   readonly entriesCount: number | null;
   /** #7: counted from `entry` directly, so it is meaningful while the draw is open too. */
   readonly liveEntriesCount: number;
+  /** Entries expected from active standing orders whose money hasn't arrived yet — for the jackpot estimate only, never real entries. */
+  readonly expectedStandingOrderEntries: number;
   readonly jackpotPreDrawPence: bigint | null;
   readonly rolloverInPence: bigint | null;
   readonly winningNumbers: number[] | null;
@@ -336,6 +339,7 @@ function mapDrawRow(row: DrawRow): DrawSummary {
     status: row.status,
     entriesCount: row.entries_count,
     liveEntriesCount: Number(row.live_entries_count),
+    expectedStandingOrderEntries: 0,
     jackpotPreDrawPence: row.jackpot_pre_draw_pence,
     rolloverInPence: row.rollover_in_pence,
     winningNumbers: row.winning_numbers,
@@ -349,19 +353,25 @@ function mapDrawRow(row: DrawRow): DrawSummary {
 }
 
 const DRAW_COLUMNS = `d.id, d.draw_number, d.name, d.draw_date, d.draw_at, d.entries_close_at, d.status, d.entries_count,
-       (SELECT count(*) FROM entry e WHERE e.draw_id = d.id) AS live_entries_count,
+       (SELECT count(*) FROM entry e WHERE e.draw_id = d.id AND e.voided_at IS NULL) AS live_entries_count,
        d.jackpot_pre_draw_pence, d.rollover_in_pence, d.winning_numbers, d.winners_count, d.jackpot_paid_pence,
        d.rollover_out_pence, d.drawn_at, d.settled_at, d.workflow_id`;
 
 export async function listDraws(pool: Pool, limit = 200): Promise<DrawSummary[]> {
   const { rows } = await pool.query<DrawRow>(`SELECT ${DRAW_COLUMNS} FROM draw d ORDER BY d.draw_number DESC LIMIT $1`, [limit]);
-  return rows.map(mapDrawRow);
+  return withStandingOrderEstimates(pool, rows.map(mapDrawRow));
 }
 
 export async function getDraw(pool: Pool, id: string): Promise<DrawSummary | undefined> {
   const { rows } = await pool.query<DrawRow>(`SELECT ${DRAW_COLUMNS} FROM draw d WHERE d.id = $1`, [id]);
   const row = rows[0];
-  return row ? mapDrawRow(row) : undefined;
+  return row ? (await withStandingOrderEstimates(pool, [mapDrawRow(row)]))[0] : undefined;
+}
+
+async function withStandingOrderEstimates(pool: Pool, draws: DrawSummary[]): Promise<DrawSummary[]> {
+  const open = draws.filter((d) => d.status === 'open').map((d) => d.id);
+  const estimates = await estimateStandingOrderEntries(pool, open);
+  return draws.map((d) => ({ ...d, expectedStandingOrderEntries: estimates.get(d.id) ?? 0 }));
 }
 
 export interface JackpotInputs {
@@ -389,7 +399,7 @@ export async function getJackpotInputs(pool: Pool): Promise<JackpotInputs> {
 }
 
 export async function countEntries(pool: Pool, drawId: string): Promise<number> {
-  const { rows } = await pool.query<{ n: string }>(`SELECT count(*) AS n FROM entry WHERE draw_id = $1`, [drawId]);
+  const { rows } = await pool.query<{ n: string }>(`SELECT count(*) AS n FROM entry WHERE draw_id = $1 AND voided_at IS NULL`, [drawId]);
   return Number(rows[0]!.n);
 }
 
@@ -540,7 +550,7 @@ export async function listMembers(pool: Pool, limit = 200): Promise<MemberSummar
     entry_count: string;
   }>(
     `SELECT m.id, m.forename, m.surname, m.status, m.member_type, count(e.id) AS entry_count
-       FROM member m LEFT JOIN entry e ON e.member_id = m.id
+       FROM member m LEFT JOIN entry e ON e.member_id = m.id AND e.voided_at IS NULL
       GROUP BY m.id
       ORDER BY m.created_at DESC
       LIMIT $1`,

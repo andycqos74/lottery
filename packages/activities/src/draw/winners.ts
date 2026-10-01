@@ -33,7 +33,7 @@ export async function identifyWinners(pool: Pool, request: IdentifyWinnersReques
   }
 
   const { rows } = await pool.query<{ entry_id: string; member_id: string }>(
-    `SELECT id AS entry_id, member_id FROM entry WHERE draw_id = $1 AND selection = $2::int[]`,
+    `SELECT id AS entry_id, member_id FROM entry WHERE draw_id = $1 AND selection = $2::int[] AND voided_at IS NULL`,
     [request.drawId, draw.winning_numbers],
   );
 

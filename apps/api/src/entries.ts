@@ -15,7 +15,7 @@
 import { withTransaction, type Pool } from '@qosfc/db';
 import { idempotencyKey, type PaymentGateway } from '@qosfc/ports';
 import { TICKET_PRICE_PENCE } from '@qosfc/domain';
-import { allocatePrepaidEntries } from '@qosfc/activities';
+import { allocateUpcomingEntries } from '@qosfc/activities';
 import { getOpenDraw } from './db.js';
 
 export type StartPurchaseOutcome =
@@ -206,7 +206,7 @@ export async function completeEntryPurchase(
   // payment is already committed: if this can't run, each draw still picks
   // its week up when it is run (generateDueEntries), so it must not fail the purchase.
   if (result.kind === 'entry_created' && result.blocks > 1) {
-    await allocatePrepaidEntries(pool, { memberId: result.memberId, actorLabel: 'portal:card-purchase' }).catch(() => undefined);
+    await allocateUpcomingEntries(pool, { memberId: result.memberId, actorLabel: 'portal:card-purchase' }).catch(() => undefined);
   }
   return result;
 }

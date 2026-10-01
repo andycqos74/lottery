@@ -17,12 +17,14 @@
  * No money has moved yet; that only happens on an actual collection cycle,
  * which this system does not yet run (BacsBureau.submitCollections has no
  * caller). Entries don't wait for it: an active mandate enters the member
- * into every draw until it is cancelled (GitHub #9, `generateDueEntries`,
- * funding source 'direct_debit') — the collection pipeline, once built, is
+ * into every draw until it is cancelled — entered into each upcoming draw as
+ * soon as the draw exists (`allocateUpcomingEntries`, funding source
+ * 'direct_debit') — the collection pipeline, once built, is
  * what reconciles the money against those entries.
  */
 import { withTransaction, type Pool } from '@qosfc/db';
 import { idempotencyKey, type BacsBureau } from '@qosfc/ports';
+import { allocateUpcomingEntries, voidDirectDebitEntries } from '@qosfc/activities';
 
 export type StartDdSetupOutcome =
   | { readonly kind: 'started'; readonly redirectUrl: string; readonly mandateRef: string }
@@ -79,7 +81,7 @@ export async function completeDirectDebitSetup(pool: Pool, bacsBureau: BacsBurea
 
   // 'pending' or 'active' both finalize here — a stub with no decline path
   // (GAP-10) has nothing meaningful left to wait for.
-  return withTransaction(pool, async (client) => {
+  const result = await withTransaction(pool, async (client): Promise<CompleteDdSetupOutcome> => {
     const { rows: recheck } = await client.query<{ status: string }>(
       `SELECT status FROM pending_dd_setup WHERE mandate_ref = $1 FOR UPDATE`,
       [mandateRef],
@@ -130,6 +132,14 @@ export async function completeDirectDebitSetup(pool: Pool, bacsBureau: BacsBurea
 
     return { kind: 'active', memberId: pending.member_id };
   });
+
+  // Entered into every draw already on sale, so the member sees it straight
+  // away. The mandate is committed either way: if this fails, each draw still
+  // enters them when it is run.
+  if (result.kind === 'active') {
+    await allocateUpcomingEntries(pool, { memberId: result.memberId, actorLabel: 'portal:direct-debit-setup' }).catch(() => undefined);
+  }
+  return result;
 }
 
 export interface DirectDebitStatus {
@@ -152,8 +162,8 @@ export async function getActiveDirectDebit(pool: Pool, memberId: string): Promis
 
 /**
  * Stops the member being entered into further draws by Direct Debit
- * (GitHub #9 — "until cancelled"). Entries already made stand: a draw whose
- * entries were generated before this still includes them.
+ * (GitHub #9 — "until cancelled"). Its entries in draws still taking
+ * entries are voided; draws whose entries have already closed keep them.
  *
  * GAP-10: the `BacsBureau` port has no cancellation call yet, so this is
  * recorded here only. Once a real bureau is chosen the mandate must also be
@@ -165,5 +175,12 @@ export async function cancelDirectDebit(pool: Pool, memberId: string): Promise<{
       WHERE member_id = $1 AND type = 'direct_debit' AND active`,
     [memberId],
   );
-  return { cancelled: rowCount ?? 0 };
+  const cancelled = rowCount ?? 0;
+  if (cancelled > 0) {
+    // Out of every draw still taking entries; any prepaid weeks the member
+    // also holds then take those places.
+    await voidDirectDebitEntries(pool, { memberId, reason: 'Direct Debit cancelled by member', actorLabel: 'portal:direct-debit-cancel' });
+    await allocateUpcomingEntries(pool, { memberId, actorLabel: 'portal:direct-debit-cancel' }).catch(() => undefined);
+  }
+  return { cancelled };
 }

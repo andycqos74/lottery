@@ -64,7 +64,12 @@ export {
   type AcceptMatchOutcome,
 } from './reconcile/match-transactions.js';
 export { generateDueEntries, type GenerateDueEntriesRequest, type GenerateDueEntriesResult } from './draw/generate-entries.js';
-export { allocatePrepaidEntries, type AllocatePrepaidEntriesRequest, type AllocatePrepaidEntriesResult } from './draw/allocate-prepaid.js';
+export {
+  allocateUpcomingEntries,
+  voidDirectDebitEntries,
+  type AllocateUpcomingEntriesRequest,
+  type AllocateUpcomingEntriesResult,
+} from './draw/allocate-upcoming.js';
 export {
   recordManualTicket,
   type RecordManualTicketRequest,
@@ -72,3 +77,4 @@ export {
   type ManualTicketSelectionInput,
 } from './entries/record-manual-ticket.js';
 export { writeAudit, type AuditRecord } from './audit.js';
+export { estimateStandingOrderEntries } from './draw/standing-order-estimate.js';

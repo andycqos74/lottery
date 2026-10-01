@@ -244,7 +244,8 @@ function drawTitle(draw: DrawSummary): string {
  */
 function drawJackpot(draw: DrawSummary, inputs: JackpotInputs): { readonly pence: bigint; readonly estimate: boolean } {
   if (draw.jackpotPreDrawPence !== null) return { pence: draw.jackpotPreDrawPence, estimate: false };
-  const entries = draw.entriesCount ?? draw.liveEntriesCount;
+  // Real entries so far plus the standing orders expected to have paid by then.
+  const entries = (draw.entriesCount ?? draw.liveEntriesCount) + draw.expectedStandingOrderEntries;
   const contribution = (revenueFor(entries, TICKET_PRICE_PENCE) * BigInt(inputs.prizeBp)) / 10_000n;
   const position = jackpotPosition(pence(contribution), pence(inputs.pendingRolloverPence), pence(inputs.floorPence));
   return { pence: position.jackpotPreDrawPence, estimate: true };
@@ -254,14 +255,21 @@ function formatJackpot(j: { pence: bigint; estimate: boolean }): string {
   return `${formatPence(pence(j.pence))}${j.estimate ? ' <span class="muted">(est.)</span>' : ''}`;
 }
 
-function drawRow(draw: DrawSummary, inputs: JackpotInputs): string {
+/** Real entries, plus any standing-order entries expected but not yet paid for (open draws only). */
+function entriesLabel(draw: DrawSummary): string {
   const entries = draw.entriesCount ?? draw.liveEntriesCount;
+  return draw.expectedStandingOrderEntries > 0
+    ? `${entries} <span class="muted">+ ${draw.expectedStandingOrderEntries} standing orders (est.)</span>`
+    : String(entries);
+}
+
+function drawRow(draw: DrawSummary, inputs: JackpotInputs): string {
   return `<tr>
     <td><a class="row-link" href="/draws/${draw.id}">${escapeHtml(drawTitle(draw))}</a></td>
     <td><span class="badge">${escapeHtml(draw.status)}</span></td>
     <td>${draw.drawAt ? escapeHtml(formatLondon(draw.drawAt)) : draw.drawDate.toISOString().slice(0, 10)}</td>
     <td>${escapeHtml(formatLondon(draw.entriesCloseAt))}</td>
-    <td>${entries}</td>
+    <td>${entriesLabel(draw)}</td>
     <td>${formatJackpot(drawJackpot(draw, inputs))}</td>
     <td>${draw.winningNumbers ? draw.winningNumbers.join(' · ') : '—'}</td>
     <td>${draw.jackpotPaidPence !== null ? formatPence(pence(draw.jackpotPaidPence)) : '—'}</td>
@@ -296,7 +304,8 @@ export function drawsPage(opts: { user: { displayName: string; csrf: string }; d
                  <tbody>${rows}</tbody>
                </table>
                <p class="muted" style="margin-top:0.75rem">
-                 Jackpots marked (est.) are not settled yet: this draw's 50% prize share of its entries so far, plus the
+                 Jackpots marked (est.) are not settled yet: this draw's 50% prize share of its entries so far (Direct Debit and
+                 prepaid entries are made as soon as a draw is created) and of standing orders expected but not yet paid, plus the
                  rollover waiting from the last settled draw, never below the floor. Every open draw shows that same
                  rollover — only the next one to be run actually receives it.
                </p>`
@@ -323,7 +332,9 @@ export function drawDetailPage(opts: {
   const { draw } = opts;
   const open = draw.status === 'open';
   const pastCutoff = draw.entriesCloseAt !== null && draw.entriesCloseAt.getTime() <= Date.now();
-  const entriesDisplay = open ? `${draw.liveEntriesCount} (open)` : String(draw.entriesCount ?? draw.liveEntriesCount);
+  const entriesDisplay = open
+    ? `${draw.liveEntriesCount} (open)${draw.expectedStandingOrderEntries > 0 ? ` + ${draw.expectedStandingOrderEntries} expected from standing orders not yet paid` : ''}`
+    : String(draw.entriesCount ?? draw.liveEntriesCount);
   const jackpot = drawJackpot(draw, opts.jackpotInputs);
   const meta = [
     ['Name', draw.name ?? '—'],
@@ -428,9 +439,9 @@ export function drawDetailPage(opts: {
           <button type="submit">Generate standing-order &amp; Direct Debit entries now</button>
         </form>
         <p class="muted" style="margin:0.4rem 0 0">
-          Enters every member with an active Direct Debit, and uses one prepaid week for each member with
-          weeks left (card blocks, standing orders, physical tickets). Running the draw does this automatically
-          first, so this is only needed to see the entries before then.
+          Direct Debit members and prepaid weeks (card blocks, physical tickets, standing-order money matched from
+          bank statements) are entered as soon as a draw is created, and again after each purchase or statement
+          import. Running the draw re-checks automatically, so this button is only a manual top-up.
         </p>
         <form method="post" action="/draws/${draw.id}/run" style="margin-top:1.25rem">
           ${csrfField(opts.user.csrf)}

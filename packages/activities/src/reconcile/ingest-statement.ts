@@ -22,6 +22,7 @@ import type { PoolClient } from 'pg';
 import type { BankCredit, BankFeed } from '@qosfc/ports';
 import { writeAudit } from '../audit.js';
 import { matchBankTransaction } from './match-transactions.js';
+import { allocateUpcomingEntries } from '../draw/allocate-upcoming.js';
 
 export interface IngestNewStatementsRequest {
   readonly since?: number;
@@ -151,6 +152,14 @@ export async function ingestNewStatements(
       };
     });
     results.push(outcome);
+  }
+  // Standing-order money matched from these statements enters the upcoming
+  // draws now, so it shows on them (and counts toward their jackpots) before
+  // the draw is run. Not fatal — the payments are committed either way, and
+  // running each draw still enters anyone with weeks left (e.g. if GAP-17's
+  // entry strategy isn't activated in this environment).
+  if (results.some((r) => !r.alreadyIngested)) {
+    await allocateUpcomingEntries(pool, { actorLabel: 'bank-statement-import' }).catch(() => undefined);
   }
   return results;
 }
