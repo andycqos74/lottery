@@ -86,23 +86,25 @@ const TEMPLATES: Readonly<Record<string, (mergeData: Readonly<Record<string, str
   },
   entry_confirmation: (m) => {
     const forename = m['forename']?.trim() || 'there';
-    const drawNumber = m['drawNumber'] ?? '';
     const numbers = m['numbers'] ?? '';
     const amount = m['amount'] ?? '';
-    const blocks = m['blocks'] ?? '1';
-    const blocksLine =
-      blocks === '1'
-        ? `Draw ${drawNumber}`
-        : `Draw ${drawNumber} and the ${Number(blocks) - 1} draw(s) after it — your numbers carry forward automatically`;
+    // What was done with the purchase (more weeks on existing numbers, or an
+    // extra entry, and any Direct Debit pause) — the same words the member saw.
+    const summary = m['summary'] ?? '';
     return {
-      subject: `You're in — Draw ${drawNumber}`,
-      text:
-        `Hi ${forename},\n\n` +
-        `Thanks for your entry. You paid ${amount} for ${blocksLine}, playing: ${numbers}.\n\n` +
-        `Good luck!\nQOSFC`,
+      subject: `Payment received — your numbers ${numbers}`,
+      text: `Hi ${forename},
+
+Thanks — we've received your payment of ${amount} for the numbers ${numbers}.
+
+${summary}
+
+Good luck!
+QOSFC`,
       html:
         `<p>Hi ${escapeHtml(forename)},</p>` +
-        `<p>Thanks for your entry. You paid <b>${escapeHtml(amount)}</b> for ${escapeHtml(blocksLine)}, playing: <b>${escapeHtml(numbers)}</b>.</p>` +
+        `<p>Thanks — we've received your payment of <b>${escapeHtml(amount)}</b> for the numbers <b>${escapeHtml(numbers)}</b>.</p>` +
+        `<p>${escapeHtml(summary)}</p>` +
         `<p>Good luck!<br>QOSFC</p>`,
     };
   },

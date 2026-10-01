@@ -99,10 +99,11 @@ export async function recordManualTicket(pool: Pool, request: RecordManualTicket
     ]);
 
     const { rows: paymentRows } = await client.query<{ id: string }>(
-      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, physical_ticket_number, idempotency_key)
-       VALUES ($1, 'agent_cash', $2, $3, 'allocated', $4, $5)
+      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, physical_ticket_number, idempotency_key, line_prize_draw_no, line_slot)
+       VALUES ($1, 'agent_cash', $2, $3, 'allocated', $4, $5, $6, 1)
        RETURNING id`,
-      [request.memberId, request.purchaseDate, request.amountPence, physicalTicketNumber, idempotencyKey],
+      // The ticket's weeks fund this ticket's own numbers, not the agent's other tickets.
+      [request.memberId, request.purchaseDate, request.amountPence, physicalTicketNumber, idempotencyKey, prizeDrawNo],
     );
     const paymentId = paymentRows[0]!.id;
 

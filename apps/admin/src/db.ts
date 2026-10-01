@@ -620,6 +620,16 @@ export async function addEntry(
     // #4: the cutoff is the point after which entries are not allowed.
     if (draw.past_cutoff) return { kind: 'rejected', reason: 'Entries for this draw have closed.' };
 
+    // A member never has two entries in one draw with the same numbers.
+    // Agents are exempt: their tickets belong to different players.
+    const { rows: dupRows } = await client.query(
+      `SELECT 1 FROM entry e JOIN member m ON m.id = e.member_id
+        WHERE e.draw_id = $1 AND e.member_id = $2 AND e.selection = $3::int[] AND e.voided_at IS NULL AND m.member_type <> 'agent'
+        LIMIT 1`,
+      [input.drawId, input.memberId, selection],
+    );
+    if (dupRows.length > 0) return { kind: 'rejected', reason: 'This member is already entered in this draw with those numbers.' };
+
     const { rows: nextNoRows } = await client.query<{ next: number }>(
       `SELECT COALESCE(MAX(prize_draw_no), 99999) + 1 AS next FROM member_number`,
     );

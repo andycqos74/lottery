@@ -9,7 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { createPool, migrate, type Pool } from '@qosfc/db';
-import { allocateUpcomingEntries, voidDirectDebitEntries } from './allocate-upcoming.js';
+import { allocateUpcomingEntries } from './allocate-upcoming.js';
 import { estimateStandingOrderEntries } from './standing-order-estimate.js';
 import { identifyWinners } from './winners.js';
 import { generateDueEntries } from './generate-entries.js';
@@ -46,11 +46,12 @@ describeDb('allocateUpcomingEntries — a 4-week purchase shows in each of the n
     return no;
   }
 
-  async function pay(memberId: string, channel: string, pence: number): Promise<void> {
+  /** A payment; with `line`, attributed to that number's weeks, otherwise counted on the member's first line. */
+  async function pay(memberId: string, channel: string, pence: number, line?: number): Promise<void> {
     await pool.query(
-      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
-       VALUES ($1, $2, CURRENT_DATE, $3, 'allocated', gen_random_uuid()::text)`,
-      [memberId, channel, pence],
+      `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key, line_prize_draw_no, line_slot)
+       VALUES ($1, $2, CURRENT_DATE, $3, 'allocated', gen_random_uuid()::text, $4, CASE WHEN $4::int IS NULL THEN NULL ELSE 1 END)`,
+      [memberId, channel, pence, line ?? null],
     );
   }
 
@@ -130,13 +131,11 @@ describeDb('allocateUpcomingEntries — a 4-week purchase shows in each of the n
     expect(closed).toBeDefined();
   });
 
-  it("enters each of an agent's tickets into the same draws, from one pool of weeks", async () => {
+  it("enters each of an agent's tickets into the draws its own money paid for", async () => {
     const draws = [await draw(2), await draw(9), await draw(16)];
     const agent = await member('agent');
-    await standing(agent, [1, 3, 5, 7]);
-    await pay(agent, 'agent_cash', 400);
-    await standing(agent, [2, 4, 6, 8]);
-    await pay(agent, 'agent_cash', 400);
+    await pay(agent, 'agent_cash', 400, await standing(agent, [1, 3, 5, 7]));
+    await pay(agent, 'agent_cash', 400, await standing(agent, [2, 4, 6, 8]));
 
     await allocateUpcomingEntries(pool, { memberId: agent, actorLabel: 'test' });
     // Two tickets × two weeks: both tickets in each of the first two draws.
@@ -191,94 +190,111 @@ describeDb('allocateUpcomingEntries — a 4-week purchase shows in each of the n
     );
   }
 
-  it('enters a Direct Debit member into every draw on sale, without spending prepaid weeks', async () => {
+  async function cancelMandate(memberId: string): Promise<void> {
+    await pool.query(`UPDATE payment_method SET active = false, mandate_status = 'cancelled' WHERE member_id = $1`, [memberId]);
+  }
+
+  it('a Direct Debit member is entered into every draw on sale, and into draws created later', async () => {
     const draws = [await draw(2), await draw(9), await draw(16)];
     const dd = await member();
     await standing(dd, [1, 5, 10, 15]);
     await mandate(dd);
-    await pay(dd, 'card', 200); // a prepaid week kept for if the DD stops
 
-    const result = await allocateUpcomingEntries(pool, { actorLabel: 'test' });
-    expect(result.directDebitEntriesPlaced).toBeGreaterThanOrEqual(3);
+    await allocateUpcomingEntries(pool, { actorLabel: 'test' });
     expect((await liveEntries(dd)).map((e) => [e.draw_id, e.funding_source])).toEqual(draws.map((d) => [d, 'direct_debit']));
 
-    // A draw created later picks the member up too.
     const later = await draw(23);
     await allocateUpcomingEntries(pool, { actorLabel: 'test' });
     expect((await liveEntries(dd)).map((e) => e.draw_id)).toEqual([...draws, later]);
   });
 
-  it('cancelling voids entries in draws still taking entries, keeps closed ones, and prepaid weeks take over', async () => {
-    const closed = (
+  it('paid weeks are used first: the Direct Debit pauses for them and resumes after', async () => {
+    const draws = [await draw(2), await draw(9), await draw(16), await draw(23)];
+    const m = await member();
+    await standing(m, [2, 6, 11, 16]);
+    await mandate(m);
+    await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect((await liveEntries(m)).map((e) => e.funding_source)).toEqual(Array(4).fill('direct_debit'));
+
+    await pay(m, 'card', 400);
+    const result = await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect(result.fundingSwitched).toBe(2);
+    expect((await liveEntries(m)).map((e) => [e.draw_id, e.funding_source])).toEqual([
+      [draws[0], 'prepaid'],
+      [draws[1], 'prepaid'],
+      [draws[2], 'direct_debit'],
+      [draws[3], 'direct_debit'],
+    ]);
+  });
+
+  it('cancelling withdraws Direct Debit entries from draws still taking entries, keeps closed ones and paid ones', async () => {
+    const closing = (
       await pool.query(
         `INSERT INTO draw (draw_number, draw_date, draw_at, entries_close_at, config_version_id, status)
          VALUES ($1, CURRENT_DATE, now() + interval '2 hours', now() + interval '1 minute', $2, 'open') RETURNING id`,
         [drawNumber++, cfgId],
       )
     ).rows[0].id;
-    const [a, b] = [await draw(9), await draw(16)];
-    const dd = await member();
-    await standing(dd, [2, 6, 11, 16]);
-    await mandate(dd);
-    await pay(dd, 'card', 200);
-    await allocateUpcomingEntries(pool, { memberId: dd, actorLabel: 'test' });
-    expect((await liveEntries(dd)).map((e) => e.draw_id)).toEqual([closed, a, b]);
+    const [a, b, c] = [await draw(9), await draw(16), await draw(23)];
+    const m = await member();
+    await standing(m, [3, 7, 12, 17]);
+    await mandate(m);
+    await pay(m, 'card', 200);
+    await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect((await liveEntries(m)).map((e) => [e.draw_id, e.funding_source])).toEqual([
+      [closing, 'prepaid'],
+      [a, 'direct_debit'],
+      [b, 'direct_debit'],
+      [c, 'direct_debit'],
+    ]);
 
-    // Entries for the first draw close before the member cancels.
-    await pool.query(`UPDATE draw SET entries_close_at = now() - interval '1 second' WHERE id = $1`, [closed]);
-    await pool.query(`UPDATE payment_method SET active = false, mandate_status = 'cancelled' WHERE member_id = $1`, [dd]);
-    expect(await voidDirectDebitEntries(pool, { memberId: dd, reason: 'test cancel', actorLabel: 'test' })).toEqual({ voided: 2 });
-    await allocateUpcomingEntries(pool, { memberId: dd, actorLabel: 'test' });
-
-    expect((await liveEntries(dd)).map((e) => [e.draw_id, e.funding_source])).toEqual([
-      [closed, 'direct_debit'],
-      [a, 'prepaid'],
+    // Entries for the first draw close; then the member cancels.
+    await pool.query(`UPDATE draw SET entries_close_at = now() - interval '1 second' WHERE id = $1`, [closing]);
+    await pool.query(`UPDATE draw SET entries_close_at = now() - interval '1 second' WHERE id = $1`, [a]);
+    await cancelMandate(m);
+    const result = await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect(result.voided).toBe(2);
+    expect((await liveEntries(m)).map((e) => [e.draw_id, e.funding_source])).toEqual([
+      [closing, 'prepaid'],
+      [a, 'direct_debit'],
     ]);
   });
 
-  it('a new Direct Debit takes over draws already holding prepaid weeks, and gives those weeks back', async () => {
-    const [a, b, c] = [await draw(2), await draw(9), await draw(16)];
+  it('setting a Direct Debit up again for the same numbers revives the withdrawn entries', async () => {
+    const [a, b] = [await draw(2), await draw(9)];
     const m = await member();
-    await standing(m, [1, 6, 11, 16]);
-    await pay(m, 'card', 400);
+    await standing(m, [4, 8, 13, 18]);
+    await mandate(m);
     await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
-    expect((await liveEntries(m)).map((e) => e.funding_source)).toEqual(['prepaid', 'prepaid']);
+    await cancelMandate(m);
+    await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect(await liveEntries(m)).toEqual([]);
 
     await mandate(m);
     await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
     expect((await liveEntries(m)).map((e) => [e.draw_id, e.funding_source])).toEqual([
       [a, 'direct_debit'],
       [b, 'direct_debit'],
-      [c, 'direct_debit'],
-    ]);
-
-    // Cancel: the two weeks come back and fill the first two draws again.
-    await pool.query(`UPDATE payment_method SET active = false, mandate_status = 'cancelled' WHERE member_id = $1`, [m]);
-    await voidDirectDebitEntries(pool, { memberId: m, reason: 'test cancel', actorLabel: 'test' });
-    await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
-    expect((await liveEntries(m)).map((e) => [e.draw_id, e.funding_source])).toEqual([
-      [a, 'prepaid'],
-      [b, 'prepaid'],
     ]);
   });
 
-  it('setting a Direct Debit up again revives the voided entries, with the new numbers', async () => {
+  it('never leaves a player with two entries in one draw with the same numbers', async () => {
     const [a, b] = [await draw(2), await draw(9)];
-    const dd = await member();
-    const no = await standing(dd, [3, 7, 12, 17]);
-    await mandate(dd);
-    await allocateUpcomingEntries(pool, { memberId: dd, actorLabel: 'test' });
-    await pool.query(`UPDATE payment_method SET active = false, mandate_status = 'cancelled' WHERE member_id = $1`, [dd]);
-    await voidDirectDebitEntries(pool, { memberId: dd, reason: 'test cancel', actorLabel: 'test' });
-    expect(await liveEntries(dd)).toEqual([]);
-
-    await pool.query(`UPDATE selection_standing SET selection = '{4,8,13,18}' WHERE prize_draw_no = $1`, [no]);
-    await mandate(dd);
-    await allocateUpcomingEntries(pool, { memberId: dd, actorLabel: 'test' });
-    expect(await liveEntries(dd)).toEqual([
-      { draw_id: a, funding_source: 'direct_debit', selection: [4, 8, 13, 18] },
-      { draw_id: b, funding_source: 'direct_debit', selection: [4, 8, 13, 18] },
-    ]);
+    const m = await member();
+    const no = await standing(m, [1, 9, 14, 19]);
+    await pay(m, 'card', 400);
+    // Two checkout entries for the same numbers in one draw (the old flow could do this).
+    for (const key of ['entry-purchase:one', 'entry-purchase:two']) {
+      await pool.query(
+        `INSERT INTO entry (draw_id, member_id, prize_draw_no, selection, funding_source, idempotency_key)
+         VALUES ($1, $2, $3, '{1,9,14,19}', 'card', $4)`,
+        [a, m, no, key],
+      );
+    }
+    const result = await allocateUpcomingEntries(pool, { memberId: m, actorLabel: 'test' });
+    expect(result.voided).toBe(1);
+    // The withdrawn duplicate's week went to the next draw instead.
+    expect((await liveEntries(m)).map((e) => e.draw_id)).toEqual([a, b]);
   });
 
   it('changed numbers carry to entries already placed in draws still on sale', async () => {
@@ -303,8 +319,8 @@ describeDb('allocateUpcomingEntries — a 4-week purchase shows in each of the n
     await standing(dd, [1, 2, 3, 4]);
     await mandate(dd);
     await allocateUpcomingEntries(pool, { memberId: dd, actorLabel: 'test' });
-    await pool.query(`UPDATE payment_method SET active = false WHERE member_id = $1`, [dd]);
-    await voidDirectDebitEntries(pool, { memberId: dd, reason: 'test cancel', actorLabel: 'test' });
+    await cancelMandate(dd);
+    await allocateUpcomingEntries(pool, { memberId: dd, actorLabel: 'test' });
     await pool.query(
       `UPDATE draw SET status = 'drawn', winning_numbers = '{1,2,3,4}', rng_source = 'test', drawn_at = now() WHERE id = $1`,
       [d],

@@ -549,7 +549,7 @@ export function paymentPage(opts: {
             </fieldset>
             ${
               opts.hasDirectDebit
-                ? `<div class="banner"><span>ℹ️</span><span>You already pay by Direct Debit. Setting it up again replaces your current mandate and numbers; paying by card buys extra draws on top.</span></div>`
+                ? `<div class="banner"><span>ℹ️</span><span>You already pay by Direct Debit. Paying with the same numbers adds paid draws, which are used first while your Direct Debit pauses; different numbers add an extra entry alongside your existing ones.</span></div>`
                 : ''
             }
 
@@ -655,10 +655,12 @@ export function purchaseReturnPage(opts: {
   openDraw?: OpenDraw | undefined;
   status: 'paid' | 'pending' | 'failed' | 'not_found';
   reason?: string;
+  /** What was done with the payment (more weeks, or an extra entry; any Direct Debit pause). */
+  message?: string;
 }): string {
   const body =
     opts.status === 'paid'
-      ? `<div class="page-head"><h1>You're in!</h1></div><div class="flash">Payment received &mdash; your entry is confirmed for this draw.</div>
+      ? `<div class="page-head"><h1>You're in!</h1></div><div class="flash">${escapeHtml(opts.message ?? 'Payment received — your entry is confirmed.')}</div>
          <p style="margin-top:1rem"><a class="btn btn-primary" href="/account">View my numbers</a></p>`
       : opts.status === 'pending'
         ? `<div class="page-head"><h1>Payment processing</h1></div><p class="muted">This can take a moment. Refresh this page shortly, or check "My numbers" later.</p>`
@@ -674,10 +676,12 @@ export function directDebitReturnPage(opts: {
   openDraw?: OpenDraw | undefined;
   status: 'active' | 'failed' | 'not_found';
   reason?: string;
+  /** What the Direct Debit does (new numbers alongside, or after paid draws run out). */
+  message?: string;
 }): string {
   const body =
     opts.status === 'active'
-      ? `<div class="page-head"><h1>Direct Debit set up</h1></div><div class="flash">Your mandate is in place &mdash; your numbers are entered into every draw, starting with the current one, until you cancel it.</div>
+      ? `<div class="page-head"><h1>Direct Debit set up</h1></div><div class="flash">${escapeHtml(opts.message ?? 'Your Direct Debit is set up.')}</div>
          <p style="margin-top:1rem"><a class="btn btn-primary" href="/account">View my numbers</a></p>`
       : opts.status === 'failed'
         ? `<div class="page-head"><h1>Direct Debit setup did not complete</h1></div><div class="error">${escapeHtml(opts.reason ?? 'The mandate setup was not successful.')}</div>
@@ -704,25 +708,37 @@ function entryHistoryRow(e: MyEntry): string {
 export function accountPage(opts: {
   member: ViewMember;
   openDraw?: OpenDraw | undefined;
-  standingSelection?: number[] | undefined;
+  /** Every set of numbers the member holds — each is entered separately. */
+  standingSelections: readonly (readonly number[])[];
   entries: MyEntry[];
-  directDebit?: DirectDebitStatus | undefined;
+  directDebits: readonly DirectDebitStatus[];
   flash?: string;
 }): string {
-  const { entries, standingSelection, directDebit } = opts;
-  const ddCard = directDebit
-    ? `<div class="card stack">
+  const { entries, standingSelections, directDebits } = opts;
+  const balls = (s: readonly number[]) => `<div class="ball-row">${s.map((n) => `<span class="ball picked">${n}</span>`).join('')}</div>`;
+  const ddCard =
+    directDebits.length > 0
+      ? `<div class="card stack">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
           <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Direct Debit</h3>
           <span class="pill pill-open">Active</span>
         </div>
-        <p class="hint">Set up ${escapeHtml(formatLondon(directDebit.since))}. Your numbers are entered into every draw, ${formatPence(pence(200n))} a draw, until you cancel.</p>
-        <form method="post" action="/direct-debit/cancel" onsubmit="return confirm('Cancel your Direct Debit? You will not be entered into any more draws by Direct Debit.');">
-          ${csrfField(opts.member.csrf)}
-          <button class="btn btn-ghost" type="submit">Cancel Direct Debit</button>
-        </form>
+        <p class="hint">${formatPence(pence(200n))} a draw for each set of numbers below. Draws you have paid for by card are used first; the Direct Debit pauses for those and resumes after.</p>
+        ${directDebits
+          .map(
+            (dd) => `<div class="stack" style="gap:.4rem">
+          ${dd.selection ? balls(dd.selection) : ''}
+          <p class="hint">Set up ${escapeHtml(formatLondon(dd.since))}.</p>
+          <form method="post" action="/direct-debit/cancel" onsubmit="return confirm('Cancel this Direct Debit? These numbers will no longer be entered by Direct Debit.');">
+            ${csrfField(opts.member.csrf)}
+            <input type="hidden" name="paymentMethodId" value="${escapeHtml(dd.id)}" />
+            <button class="btn btn-ghost" type="submit">Cancel this Direct Debit</button>
+          </form>
+        </div>`,
+          )
+          .join('<hr class="divider">')}
       </div>`
-    : '';
+      : '';
   const rows = entries.map(entryHistoryRow).join('\n');
   return layout({
     title: 'My numbers',
@@ -730,20 +746,16 @@ export function accountPage(opts: {
     active: 'account',
     ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
     body: `
-      <div class="page-head"><h1>My numbers</h1><p>Your standing selection and how it's fared over recent draws.</p></div>
+      <div class="page-head"><h1>My numbers</h1><p>Your numbers, upcoming entries and how they've fared.</p></div>
       ${opts.flash ? `<div class="flash" style="margin-bottom:1rem">${escapeHtml(opts.flash)}</div>` : ''}
       <div class="grid2">
         <div class="card stack">
           <div style="display:flex;justify-content:space-between;align-items:baseline">
             <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Currently entered</h3>
-            ${standingSelection ? `<span class="pill pill-open">Entered ✓</span>` : ''}
+            ${standingSelections.length > 0 ? `<span class="pill pill-open">Entered ✓</span>` : ''}
           </div>
-          ${
-            standingSelection
-              ? `<div class="ball-row">${standingSelection.map((n) => `<span class="ball picked">${n}</span>`).join('')}</div>`
-              : `<p class="muted">No standing numbers yet.</p>`
-          }
-          <a class="btn btn-ghost" href="/draw">Change my numbers</a>
+          ${standingSelections.length > 0 ? standingSelections.map(balls).join('') : `<p class="muted">No standing numbers yet.</p>`}
+          <a class="btn btn-ghost" href="/draw">Add draws or numbers</a>
         </div>
         ${ddCard}
         <div class="card stack">

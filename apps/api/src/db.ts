@@ -202,16 +202,17 @@ export async function getDrawStats(pool: Pool, drawId: string): Promise<DrawStat
   return { entriesCount, jackpotEstimatePence: position.jackpotPreDrawPence };
 }
 
-export async function getStandingSelection(pool: Pool, memberId: string): Promise<number[] | undefined> {
+/** Every set of numbers the member currently holds — one per line (db/migrations/0018). */
+export async function listStandingSelections(pool: Pool, memberId: string): Promise<number[][]> {
   const { rows } = await pool.query<{ selection: number[] }>(
     `SELECT ss.selection
        FROM selection_standing ss
        JOIN member_number mn ON mn.prize_draw_no = ss.prize_draw_no
-      WHERE mn.member_id = $1 AND ss.slot = 1 AND ss.effective_to IS NULL
-      LIMIT 1`,
+      WHERE mn.member_id = $1 AND ss.effective_to IS NULL
+      ORDER BY ss.prize_draw_no, ss.slot`,
     [memberId],
   );
-  return rows[0]?.selection;
+  return rows.map((r) => r.selection);
 }
 
 export interface MemberDetails {

@@ -131,6 +131,8 @@ describeDb('generateDueEntries (GAP-17: prepaid blocks)', () => {
   }
 
   it('#11: a 4-week purchase enters the next four draws, then stops', async () => {
+    // Earlier tests' draws are still open; entries always fill the soonest draws on sale.
+    await pool.query(`UPDATE draw SET status = 'void' WHERE status = 'open'`);
     const memberId = await makeMemberWithStanding(5101, [2, 4, 6, 8]);
     await pool.query(
       `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
@@ -147,6 +149,8 @@ describeDb('generateDueEntries (GAP-17: prepaid blocks)', () => {
   });
 
   it('#11: does not enter a card buyer twice into the draw their checkout already entered them in', async () => {
+    // Earlier tests' draws are still open; entries always fill the soonest draws on sale.
+    await pool.query(`UPDATE draw SET status = 'void' WHERE status = 'open'`);
     const memberId = await makeMemberWithStanding(5102, [1, 3, 5, 7]);
     await pool.query(
       `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
@@ -168,35 +172,45 @@ describeDb('generateDueEntries (GAP-17: prepaid blocks)', () => {
     expect(entries.map((e) => e.funding_source)).toEqual(['card', 'prepaid', 'prepaid', 'prepaid']);
   });
 
-  it('#9: an active Direct Debit enters every draw, without using prepaid weeks, until cancelled', async () => {
+  it('#9: card weeks are used first, then the Direct Debit enters every draw run until cancelled', async () => {
+    // Earlier tests' draws are still open; entries always fill the soonest draws on sale.
+    await pool.query(`UPDATE draw SET status = 'void' WHERE status = 'open'`);
     const memberId = await makeMemberWithStanding(5103, [9, 10, 11, 12]);
     await pool.query(
       `INSERT INTO payment_method (member_id, type, mandate_ref, mandate_status, active) VALUES ($1, 'direct_debit', 'MANDATE-5103', 'active', true)`,
       [memberId],
     );
-    // A prepaid week the DD must not consume — it's still there after cancelling.
+    // One paid week: used before the Direct Debit (client rule, 2026-10-01).
     await pool.query(
       `INSERT INTO payment (member_id, channel, received_date, amount_pence, status, idempotency_key)
        VALUES ($1, 'card', CURRENT_DATE, 200, 'allocated', 'test-dd-member-card')`,
       [memberId],
     );
 
-    const ddDraws = [await openDraw(), await openDraw(), await openDraw()];
-    for (const drawId of ddDraws) {
-      const result = await generateDueEntries(pool, { drawId, actorLabel: 'test' });
-      expect(result.directDebitGenerated).toBe(1);
-    }
+    // Draws are run one at a time, each frozen once drawn.
+    const run = async () => {
+      const drawId = await openDraw();
+      await generateDueEntries(pool, { drawId, actorLabel: 'test' });
+      await pool.query(
+        `UPDATE draw SET status = 'drawn', winning_numbers = '{1,2,3,4}', rng_source = 'test', drawn_at = now() WHERE id = $1`,
+        [drawId],
+      );
+      return drawId;
+    };
+    const ran = [await run(), await run(), await run()];
 
     await pool.query(`UPDATE payment_method SET active = false, mandate_status = 'cancelled' WHERE member_id = $1`, [memberId]);
-    const afterCancel = [await openDraw(), await openDraw()];
-    for (const drawId of afterCancel) await generateDueEntries(pool, { drawId, actorLabel: 'test' });
+    const afterCancel = await run();
 
     const entries = await entriesFor(memberId);
-    expect(entries.map((e) => e.draw_id)).toEqual([...ddDraws, afterCancel[0]]);
-    expect(entries.map((e) => e.funding_source)).toEqual(['direct_debit', 'direct_debit', 'direct_debit', 'prepaid']);
+    expect(entries.map((e) => e.draw_id)).toEqual(ran);
+    expect(entries.map((e) => e.funding_source)).toEqual(['prepaid', 'direct_debit', 'direct_debit']);
+    expect(afterCancel).toBeDefined();
   });
 
   it('#4: money paid after a draw closed to entries waits for the next draw', async () => {
+    // Earlier tests' draws are still open; entries always fill the soonest draws on sale.
+    await pool.query(`UPDATE draw SET status = 'void' WHERE status = 'open'`);
     const memberId = await makeMemberWithStanding(5104, [13, 14, 15, 16]);
     const closedAnHourAgo = await openDraw(new Date(Date.now() - 60 * 60 * 1000).toISOString());
     const next = await openDraw(new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
