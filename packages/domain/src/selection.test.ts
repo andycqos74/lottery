@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
-import { COMBINATIONS, isWinningSelection, parseSelection, randomSelection, toSelection, InvalidSelectionError } from './selection.js';
+import { assertMultiTicketSelectionsPermitted, COMBINATIONS, isWinningSelection, parseSelection, randomSelection, toSelection, InvalidSelectionError } from './selection.js';
 
 describe('D3 / FR-3.1 — pick 4 distinct from 1..20', () => {
   it('C(20,4) is 4845', () => {
@@ -86,5 +86,15 @@ describe('T-5.1 — matching uses the sorted canonical form, never positional', 
         },
       ),
     );
+  });
+});
+
+describe('GAP-15, resolved — a member cannot hold the same numbers twice in one draw', () => {
+  it('allows several distinct selections', () => {
+    expect(() => assertMultiTicketSelectionsPermitted([toSelection([1, 2, 3, 4]), toSelection([5, 6, 7, 8])])).not.toThrow();
+  });
+
+  it('refuses the same numbers twice, whatever order they were picked in', () => {
+    expect(() => assertMultiTicketSelectionsPermitted([toSelection([1, 2, 3, 4]), toSelection([4, 3, 2, 1])])).toThrow(/GAP-15/);
   });
 });
