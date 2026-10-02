@@ -1,0 +1,35 @@
+# Keeps dependencies moving so CI's `pnpm audit --audit-level high` gate is
+# met by routine update PRs, rather than failing every time a new advisory is
+# published against a version we happen to have locked.
+#
+# Patch and minor updates arrive grouped into one weekly PR per ecosystem;
+# majors arrive individually, because they can need code changes. Every PR
+# runs the full CI (typecheck, lint, tests, audit, Trivy) before merging.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/London
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

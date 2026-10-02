@@ -2,3 +2,11 @@ packages:
   - "packages/*"
   - "apps/*"
   - "services/*"
+
+# Security floors for transitive dependencies a direct dependency pins below
+# a patched release. Each line names the advisory it closes; remove it once
+# the parent package ships the fix itself.
+overrides:
+  # Temporal SDK 1.23 resolves 1.14.4; HIGH: getAuthContext can return
+  # unverified peer identity (fixed in 1.14.5). Patch release, same API.
+  "@grpc/grpc-js": "^1.14.5"
