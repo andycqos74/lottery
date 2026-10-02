@@ -129,7 +129,8 @@ export async function describeLineOutcome(
     memberId: string;
     line: ResolvedLine;
     selection: readonly number[];
-    event: { kind: 'card'; weeks: number } | { kind: 'direct_debit' };
+    /** `ofSeveral`: one of several lines bought in the same payment (GitHub #19) — the caller says what the payment was. */
+    event: { kind: 'card'; weeks: number; ofSeveral?: boolean } | { kind: 'direct_debit' };
   },
 ): Promise<string> {
   const { line, event } = input;
@@ -141,7 +142,13 @@ export async function describeLineOutcome(
 
   if (event.kind === 'card') {
     const amount = formatPence(pence(TICKET_PRICE_PENCE * BigInt(event.weeks)));
-    if (!line.isNew) {
+    if (event.ofSeveral) {
+      parts.push(
+        line.isNew
+          ? `New numbers ${numbers(input.selection)}.`
+          : `You already had the numbers ${numbers(input.selection)}, so ${event.weeks === 1 ? 'this draw has' : `these ${event.weeks} draws have`} been added to them.`,
+      );
+    } else if (!line.isNew) {
       parts.push(
         event.weeks === 1
           ? `You already had the numbers ${numbers(input.selection)}, so the draw you paid ${amount} for has been added to them.`
