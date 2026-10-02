@@ -42,9 +42,11 @@ import {
   getDraw,
   getDrawFormDefaults,
   getJackpotInputs,
+  getMemberPage,
   getTask,
   insertAuditLog,
   listBankStatements,
+  listDrawEntrants,
   listDraws,
   listAgentMembers,
   listMembers,
@@ -60,8 +62,10 @@ import {
   bankStatementsPage,
   dashboardPage,
   drawDetailPage,
+  drawEntrantsPage,
   drawsPage,
   loginPage,
+  memberDetailPage,
   membersPage,
   mfaPage,
   newDrawPage,
@@ -424,6 +428,14 @@ app.get('/draws/:id', async (request, reply) => {
   return sendDrawPage(request, reply, id);
 });
 
+app.get('/draws/:id/entrants', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const draw = await getDraw(pool, id);
+  if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
+  const entrants = await listDrawEntrants(pool, id);
+  return reply.type('text/html').send(drawEntrantsPage({ user: viewUser(request), draw, entrants }));
+});
+
 app.post('/draws/:id/name', async (request, reply) => {
   if (!requireCsrf(request, reply, request.authCsrf!)) return;
 
@@ -678,6 +690,13 @@ app.post('/members', async (request, reply) => {
 
   const members = await listMembers(pool);
   reply.type('text/html').send(membersPage({ user: viewUser(request), members, flash: 'Member added.' }));
+});
+
+app.get('/members/:id', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const member = await getMemberPage(pool, id);
+  if (!member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
+  return reply.type('text/html').send(memberDetailPage({ user: viewUser(request), member }));
 });
 
 app.get('/bank-statements', async (request, reply) => {
