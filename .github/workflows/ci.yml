@@ -4,6 +4,11 @@ on:
   push:
     branches: [main, 'claude/**']
   pull_request:
+  # Weekly, so a newly published advisory against main shows up on Monday
+  # morning rather than on whoever opens the next unrelated PR.
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
 
 # Least privilege: the workflow reads code and nothing else.
 permissions:
@@ -79,7 +84,9 @@ jobs:
         run: pnpm audit --audit-level high
 
       - name: Filesystem vulnerability and secret scan
-        uses: aquasecurity/trivy-action@master
+        # A release tag, not @master: a moving branch of a security tool is
+        # itself a supply-chain risk, and Dependabot can only update tags.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
