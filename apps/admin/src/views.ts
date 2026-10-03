@@ -5,10 +5,15 @@ import type {
   BankTransactionForReview,
   BankTransactionRow,
   DashboardCounts,
+  DrawEntrant,
   DrawSummary,
+  EntryFundingDetail,
   HumanTask,
   JackpotInputs,
+  MemberPage,
+  MemberPayment,
   MemberSummary,
+  MemberUpcomingEntry,
 } from './db.js';
 
 export function escapeHtml(value: string): string {
@@ -273,6 +278,7 @@ function drawRow(draw: DrawSummary, inputs: JackpotInputs): string {
     <td>${formatJackpot(drawJackpot(draw, inputs))}</td>
     <td>${draw.winningNumbers ? draw.winningNumbers.join(' · ') : '—'}</td>
     <td>${draw.jackpotPaidPence !== null ? formatPence(pence(draw.jackpotPaidPence)) : '—'}</td>
+    <td><a href="/draws/${draw.id}/entrants">Entrants</a></td>
   </tr>`;
 }
 
@@ -300,7 +306,7 @@ export function drawsPage(opts: { user: { displayName: string; csrf: string }; d
           opts.draws.length === 0
             ? '<p class="muted">No draws yet.</p>'
             : `<table>
-                 <thead><tr><th>Draw</th><th>Status</th><th>Draw time</th><th>Entries close</th><th>Entries</th><th>Jackpot</th><th>Winning numbers</th><th>Paid</th></tr></thead>
+                 <thead><tr><th>Draw</th><th>Status</th><th>Draw time</th><th>Entries close</th><th>Entries</th><th>Jackpot</th><th>Winning numbers</th><th>Paid</th><th></th></tr></thead>
                  <tbody>${rows}</tbody>
                </table>
                <p class="muted" style="margin-top:0.75rem">
@@ -464,6 +470,7 @@ export function drawDetailPage(opts: {
       <h1>${escapeHtml(drawTitle(draw))}</h1>
       <div class="card">
         <dl class="kv">${meta}</dl>
+        <p style="margin:0.75rem 0 0"><a href="/draws/${draw.id}/entrants">View entrants →</a></p>
         ${renameForm}
       </div>
       ${openSection}
@@ -562,10 +569,13 @@ export function newDrawPage(opts: { user: { displayName: string; csrf: string };
   });
 }
 
+function memberName(m: { forename: string | null; surname: string | null }): string {
+  return `${m.forename ?? ''} ${m.surname ?? ''}`.trim() || '—';
+}
+
 function memberRow(m: MemberSummary): string {
-  const label = `${m.forename ?? ''} ${m.surname ?? ''}`.trim() || '—';
   return `<tr>
-    <td>${escapeHtml(label)}</td>
+    <td><a class="row-link" href="/members/${m.id}">${escapeHtml(memberName(m))}</a></td>
     <td><span class="badge">${escapeHtml(m.status)}</span></td>
     <td>${escapeHtml(m.memberType)}</td>
     <td>${m.entryCount}</td>
@@ -613,6 +623,142 @@ export function membersPage(opts: {
             : `<table>
                  <thead><tr><th>Name</th><th>Status</th><th>Type</th><th>Entries</th></tr></thead>
                  <tbody>${rows}</tbody>
+               </table>`
+        }
+      </div>
+    `,
+  });
+}
+
+const FUNDING_LABELS: Record<string, string> = {
+  direct_debit: 'DD',
+  balance: 'Added by admin',
+  agent: 'Agent',
+};
+
+/** How an entry is paid for (#16): "x of n" for paid weeks, "DD" for Direct Debit. */
+function fundingLabel(e: EntryFundingDetail): string {
+  if (e.paidIndex !== null && e.paidWeeks !== null) return `${e.paidIndex} of ${e.paidWeeks}`;
+  return FUNDING_LABELS[e.funding] ?? e.funding;
+}
+
+function numbersLabel(selection: readonly number[]): string {
+  return selection.join(' · ');
+}
+
+function entrantRow(e: DrawEntrant): string {
+  const entries = e.entries
+    .map((entry) => `<div>${numbersLabel(entry.selection)} <span class="badge">${escapeHtml(fundingLabel(entry))}</span></div>`)
+    .join('');
+  return `<tr>
+    <td><a class="row-link" href="/members/${e.memberId}">${escapeHtml(memberName(e))}</a>${e.memberType === 'agent' ? ' <span class="badge">agent</span>' : ''}</td>
+    <td>${e.email ? escapeHtml(e.email) : '<span class="muted">—</span>'}</td>
+    <td>${e.entries.length}</td>
+    <td>${entries}</td>
+  </tr>`;
+}
+
+/** GitHub #16: who is entered in a draw. */
+export function drawEntrantsPage(opts: { user: { displayName: string; csrf: string }; draw: DrawSummary; entrants: readonly DrawEntrant[] }): string {
+  const { draw, entrants } = opts;
+  const entries = entrants.reduce((sum, e) => sum + e.entries.length, 0);
+  return layout({
+    title: `${drawTitle(draw)} — entrants`,
+    user: opts.user,
+    body: `
+      <p><a class="muted" href="/draws">← Back to draws</a> · <a class="muted" href="/draws/${draw.id}">${escapeHtml(drawTitle(draw))}</a></p>
+      <h1>${escapeHtml(drawTitle(draw))} — entrants</h1>
+      <p class="muted">${draw.drawAt ? escapeHtml(formatLondon(draw.drawAt)) : draw.drawDate.toISOString().slice(0, 10)} · <span class="badge">${escapeHtml(draw.status)}</span>
+        · ${entrants.length} ${entrants.length === 1 ? 'member' : 'members'}, ${entries} ${entries === 1 ? 'entry' : 'entries'}</p>
+      <div class="card">
+        ${
+          entrants.length === 0
+            ? '<p class="muted">Nobody is entered in this draw yet.</p>'
+            : `<table>
+                 <thead><tr><th>Member</th><th>Email</th><th>Entries</th><th>Numbers &amp; paid draws</th></tr></thead>
+                 <tbody>${entrants.map(entrantRow).join('\n')}</tbody>
+               </table>
+               <p class="muted" style="margin-top:0.75rem">
+                 "x of n": this draw is the xth of the n draws paid for on those numbers (card, physical ticket or
+                 standing order). DD: entered by Direct Debit.
+               </p>`
+        }
+      </div>
+    `,
+  });
+}
+
+const CHANNEL_LABELS: Record<string, string> = {
+  so_fps: 'Standing order',
+  giro: 'Giro',
+  branch_cash: 'Branch cash',
+  card: 'Card',
+  direct_debit: 'Direct Debit',
+  agent_cash: 'Agent / physical ticket',
+};
+
+function paymentRow(p: MemberPayment): string {
+  return `<tr>
+    <td>${p.receivedDate.toISOString().slice(0, 10)}</td>
+    <td>${escapeHtml(CHANNEL_LABELS[p.channel] ?? p.channel)}</td>
+    <td>${formatPence(pence(p.amountPence))}</td>
+    <td>${p.lineSelection ? numbersLabel(p.lineSelection) : '<span class="muted">—</span>'}</td>
+    <td><span class="badge">${escapeHtml(p.status)}</span></td>
+    <td>${p.reference ? escapeHtml(p.reference) : '<span class="muted">—</span>'}</td>
+  </tr>`;
+}
+
+function upcomingRow(e: MemberUpcomingEntry): string {
+  const title = e.drawName ? `Draw ${e.drawNumber} — ${e.drawName}` : `Draw ${e.drawNumber}`;
+  return `<tr>
+    <td><a class="row-link" href="/draws/${e.drawId}/entrants">${escapeHtml(title)}</a></td>
+    <td>${e.drawAt ? escapeHtml(formatLondon(e.drawAt)) : e.drawDate.toISOString().slice(0, 10)}</td>
+    <td><span class="badge">${escapeHtml(e.drawStatus)}</span></td>
+    <td>${numbersLabel(e.selection)}</td>
+    <td>${escapeHtml(fundingLabel(e))}</td>
+  </tr>`;
+}
+
+/** GitHub #17: one member — details, payments, and the draws not yet run that they are entered in. */
+export function memberDetailPage(opts: { user: { displayName: string; csrf: string }; member: MemberPage }): string {
+  const { profile, payments, upcoming } = opts.member;
+  const details = [
+    ['Name', memberName(profile)],
+    ['Email', profile.email ?? '—'],
+    ['Telephone', profile.telephone ?? '—'],
+    ['Status', profile.status],
+    ['Type', profile.memberType],
+    ['Prize draw no.', profile.prizeDrawNumbers.length > 0 ? profile.prizeDrawNumbers.join(', ') : '—'],
+    ['Added', formatLondon(profile.createdAt)],
+  ]
+    .map(([k, v]) => `<dt>${escapeHtml(k!)}</dt><dd>${escapeHtml(v!)}</dd>`)
+    .join('');
+  return layout({
+    title: memberName(profile),
+    user: opts.user,
+    body: `
+      <p><a class="muted" href="/members">← Back to members</a></p>
+      <h1>${escapeHtml(memberName(profile))}</h1>
+      <div class="card"><dl class="kv">${details}</dl></div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Payments</h2>
+        ${
+          payments.length === 0
+            ? '<p class="muted">No payments recorded.</p>'
+            : `<table>
+                 <thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>For numbers</th><th>Status</th><th>Reference</th></tr></thead>
+                 <tbody>${payments.map(paymentRow).join('\n')}</tbody>
+               </table>`
+        }
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Upcoming draws entered</h2>
+        ${
+          upcoming.length === 0
+            ? '<p class="muted">Not entered in any draw that has yet to be run.</p>'
+            : `<table>
+                 <thead><tr><th>Draw</th><th>Draw time</th><th>Status</th><th>Numbers</th><th>Paid by</th></tr></thead>
+                 <tbody>${upcoming.map(upcomingRow).join('\n')}</tbody>
                </table>`
         }
       </div>

@@ -66,6 +66,7 @@ export {
 export { generateDueEntries, type GenerateDueEntriesRequest, type GenerateDueEntriesResult } from './draw/generate-entries.js';
 export {
   allocateUpcomingEntries,
+  WEEK_CHANNELS,
   type AllocateUpcomingEntriesRequest,
   type AllocateUpcomingEntriesResult,
 } from './draw/allocate-upcoming.js';

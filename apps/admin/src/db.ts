@@ -1,5 +1,9 @@
 import { withTransaction, type Pool } from '@qosfc/db';
-import { estimateStandingOrderEntries } from '@qosfc/activities';
+import { estimateStandingOrderEntries, WEEK_CHANNELS } from '@qosfc/activities';
+import { TICKET_PRICE_PENCE } from '@qosfc/domain';
+
+/** Route ids are checked before they reach Postgres, so a bad link is a 404 rather than a uuid cast error. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface AppUser {
   readonly id: string;
@@ -363,6 +367,7 @@ export async function listDraws(pool: Pool, limit = 200): Promise<DrawSummary[]>
 }
 
 export async function getDraw(pool: Pool, id: string): Promise<DrawSummary | undefined> {
+  if (!UUID.test(id)) return undefined;
   const { rows } = await pool.query<DrawRow>(`SELECT ${DRAW_COLUMNS} FROM draw d WHERE d.id = $1`, [id]);
   const row = rows[0];
   return row ? (await withStandingOrderEstimates(pool, [mapDrawRow(row)]))[0] : undefined;
@@ -586,6 +591,252 @@ export async function createMember(
     [input.forename, input.surname, input.memberType ?? 'player'],
   );
   return { id: rows[0]!.id };
+}
+
+/**
+ * One live entry, with how it is paid for (GitHub #16, #17). An entry paid
+ * from a line's weeks (card blocks, physical tickets, matched standing
+ * orders) is the xth of the n weeks that line has paid for — weeks are used
+ * by draws soonest first (allocate-upcoming.ts), so x is this draw's place
+ * among the line's paid entries. A Direct Debit entry has no x of n.
+ */
+export interface EntryFundingDetail {
+  readonly entryId: string;
+  readonly memberId: string;
+  readonly selection: number[];
+  /** entry_funding: 'prepaid' | 'card' | 'direct_debit' | 'balance' | 'agent'. */
+  readonly funding: string;
+  /** Paid weeks only: this entry is week `paidIndex` of `paidWeeks`. */
+  readonly paidIndex: number | null;
+  readonly paidWeeks: number | null;
+}
+
+interface EntryFundingRow {
+  entry_id: string;
+  member_id: string;
+  selection: number[];
+  funding: string;
+  paid_index: string | null;
+  paid_pence: string | null;
+  paid_entries: string | null;
+}
+
+/**
+ * Live entries matching `where` (over `e` entry and `d` draw), with their
+ * x of n. Payments and entries are counted per line exactly as
+ * allocate-upcoming.ts does: a line's own rows, plus rows with no line
+ * recorded when it is the member's first line.
+ */
+async function entryFunding(pool: Pool, where: string, params: unknown[]): Promise<Map<string, EntryFundingDetail>> {
+  const { rows } = await pool.query<EntryFundingRow>(
+    `WITH first_line AS (
+       SELECT DISTINCT ON (mn.member_id) mn.member_id, ss.prize_draw_no, ss.slot
+         FROM selection_standing ss JOIN member_number mn ON mn.prize_draw_no = ss.prize_draw_no AND mn.row_type = 'member'
+        WHERE ss.effective_to IS NULL
+        ORDER BY mn.member_id, ss.prize_draw_no, ss.slot
+     ),
+     chosen AS (
+       SELECT e.id, e.member_id, e.prize_draw_no, e.selection_slot, e.selection, e.funding_source::text AS funding,
+              COALESCE(d.draw_at, d.draw_date::timestamptz) AS draw_time, d.draw_number,
+              (fl.prize_draw_no = e.prize_draw_no AND fl.slot = e.selection_slot) IS TRUE AS is_first_line
+         FROM entry e JOIN draw d ON d.id = e.draw_id
+         LEFT JOIN first_line fl ON fl.member_id = e.member_id
+        WHERE e.voided_at IS NULL AND (${where})
+     )
+     SELECT c.id AS entry_id, c.member_id, c.selection, c.funding,
+            CASE WHEN c.funding IN ('prepaid', 'card') THEN (
+              SELECT count(*) FROM entry e2 JOIN draw d2 ON d2.id = e2.draw_id
+               WHERE e2.member_id = c.member_id AND e2.prize_draw_no = c.prize_draw_no AND e2.selection_slot = c.selection_slot
+                 AND e2.funding_source IN ('prepaid', 'card') AND e2.voided_at IS NULL
+                 AND (COALESCE(d2.draw_at, d2.draw_date::timestamptz), d2.draw_number) <= (c.draw_time, c.draw_number)
+            ) END AS paid_index,
+            CASE WHEN c.funding IN ('prepaid', 'card') THEN (
+              SELECT COALESCE(SUM(p.amount_pence), 0) FROM payment p
+               WHERE p.member_id = c.member_id AND p.status = 'allocated' AND p.channel = ANY($${params.length + 1}::payment_channel[])
+                 AND ((p.line_prize_draw_no = c.prize_draw_no AND p.line_slot = c.selection_slot)
+                      OR (p.line_prize_draw_no IS NULL AND c.is_first_line))
+            ) END AS paid_pence,
+            CASE WHEN c.funding IN ('prepaid', 'card') THEN (
+              SELECT count(*) FROM entry e3
+               WHERE e3.member_id = c.member_id AND e3.prize_draw_no = c.prize_draw_no AND e3.selection_slot = c.selection_slot
+                 AND e3.funding_source IN ('prepaid', 'card') AND e3.voided_at IS NULL
+            ) END AS paid_entries
+       FROM chosen c`,
+    [...params, WEEK_CHANNELS],
+  );
+  return new Map(
+    rows.map((r) => [
+      r.entry_id,
+      {
+        entryId: r.entry_id,
+        memberId: r.member_id,
+        selection: r.selection,
+        funding: r.funding,
+        paidIndex: r.paid_index === null ? null : Number(r.paid_index),
+        // Never fewer weeks than entries already paid from them (e.g. a payment later reversed).
+        paidWeeks: r.paid_pence === null ? null : Math.max(Number(BigInt(r.paid_pence) / TICKET_PRICE_PENCE), Number(r.paid_entries ?? 0)),
+      },
+    ]),
+  );
+}
+
+export interface DrawEntrant {
+  readonly memberId: string;
+  readonly forename: string | null;
+  readonly surname: string | null;
+  readonly email: string | null;
+  readonly memberType: string;
+  readonly entries: readonly EntryFundingDetail[];
+}
+
+/** GitHub #16: everyone entered in a draw, one row per member, with each entry's x of n (or DD). */
+export async function listDrawEntrants(pool: Pool, drawId: string): Promise<DrawEntrant[]> {
+  const [funding, { rows }] = await Promise.all([
+    entryFunding(pool, 'e.draw_id = $1', [drawId]),
+    pool.query<{ entry_id: string; member_id: string; forename: string | null; surname: string | null; email: string | null; member_type: string }>(
+      `SELECT e.id AS entry_id, m.id AS member_id, m.forename, m.surname, m.email, m.member_type
+         FROM entry e JOIN member m ON m.id = e.member_id
+        WHERE e.draw_id = $1 AND e.voided_at IS NULL
+        ORDER BY lower(m.surname), lower(m.forename), m.id, e.selection_slot, e.selection`,
+      [drawId],
+    ),
+  ]);
+  const byMember = new Map<string, DrawEntrant & { entries: EntryFundingDetail[] }>();
+  for (const r of rows) {
+    const entrant = byMember.get(r.member_id) ?? {
+      memberId: r.member_id,
+      forename: r.forename,
+      surname: r.surname,
+      email: r.email,
+      memberType: r.member_type,
+      entries: [],
+    };
+    const detail = funding.get(r.entry_id);
+    if (detail) entrant.entries.push(detail);
+    byMember.set(r.member_id, entrant);
+  }
+  return [...byMember.values()];
+}
+
+export interface MemberProfile {
+  readonly id: string;
+  readonly forename: string | null;
+  readonly surname: string | null;
+  readonly email: string | null;
+  readonly telephone: string | null;
+  readonly status: string;
+  readonly memberType: string;
+  readonly prizeDrawNumbers: readonly number[];
+  readonly createdAt: Date;
+}
+
+export interface MemberPayment {
+  readonly id: string;
+  readonly receivedDate: Date;
+  readonly channel: string;
+  readonly amountPence: bigint;
+  readonly status: string;
+  readonly reference: string | null;
+  /** The numbers of the line it paid for, when one is recorded. */
+  readonly lineSelection: number[] | null;
+}
+
+export interface MemberUpcomingEntry extends EntryFundingDetail {
+  readonly drawId: string;
+  readonly drawNumber: number;
+  readonly drawName: string | null;
+  readonly drawStatus: string;
+  readonly drawAt: Date | null;
+  readonly drawDate: Date;
+}
+
+export interface MemberPage {
+  readonly profile: MemberProfile;
+  readonly payments: readonly MemberPayment[];
+  readonly upcoming: readonly MemberUpcomingEntry[];
+}
+
+/** GitHub #17: a member's details, every payment, and the draws not yet run that they are entered in. */
+export async function getMemberPage(pool: Pool, memberId: string): Promise<MemberPage | undefined> {
+  if (!UUID.test(memberId)) return undefined;
+  const { rows: memberRows } = await pool.query<{
+    id: string;
+    forename: string | null;
+    surname: string | null;
+    email: string | null;
+    telephone: string | null;
+    status: string;
+    member_type: string;
+    created_at: Date;
+    numbers: number[] | null;
+  }>(
+    `SELECT m.id, m.forename, m.surname, m.email, m.telephone, m.status, m.member_type, m.created_at,
+            (SELECT array_agg(prize_draw_no ORDER BY prize_draw_no) FROM member_number WHERE member_id = m.id) AS numbers
+       FROM member m WHERE m.id = $1`,
+    [memberId],
+  );
+  const m = memberRows[0];
+  if (!m) return undefined;
+
+  // Not yet drawn: still open, or closed and waiting to be run.
+  const upcomingWhere = `e.member_id = $1 AND d.status IN ('open', 'closed')`;
+  const [{ rows: paymentRows }, funding, { rows: upcomingRows }] = await Promise.all([
+    pool.query<{
+      id: string;
+      received_date: Date;
+      channel: string;
+      amount_pence: string;
+      status: string;
+      source_reference: string | null;
+      line_selection: number[] | null;
+    }>(
+      `SELECT p.id, p.received_date, p.channel, p.amount_pence::text, p.status, p.source_reference,
+              (SELECT ss.selection FROM selection_standing ss
+                WHERE ss.prize_draw_no = p.line_prize_draw_no AND ss.slot = p.line_slot
+                ORDER BY ss.effective_to IS NULL DESC, ss.effective_from DESC LIMIT 1) AS line_selection
+         FROM payment p
+        WHERE p.member_id = $1
+        ORDER BY p.received_date DESC, p.created_at DESC`,
+      [memberId],
+    ),
+    entryFunding(pool, upcomingWhere, [memberId]),
+    pool.query<{ entry_id: string; draw_id: string; draw_number: number; name: string | null; status: string; draw_at: Date | null; draw_date: Date }>(
+      `SELECT e.id AS entry_id, d.id AS draw_id, d.draw_number, d.name, d.status, d.draw_at, d.draw_date
+         FROM entry e JOIN draw d ON d.id = e.draw_id
+        WHERE e.voided_at IS NULL AND ${upcomingWhere}
+        ORDER BY COALESCE(d.draw_at, d.draw_date::timestamptz), d.draw_number, e.selection_slot, e.selection`,
+      [memberId],
+    ),
+  ]);
+
+  return {
+    profile: {
+      id: m.id,
+      forename: m.forename,
+      surname: m.surname,
+      email: m.email,
+      telephone: m.telephone,
+      status: m.status,
+      memberType: m.member_type,
+      prizeDrawNumbers: m.numbers ?? [],
+      createdAt: m.created_at,
+    },
+    payments: paymentRows.map((p) => ({
+      id: p.id,
+      receivedDate: p.received_date,
+      channel: p.channel,
+      amountPence: BigInt(p.amount_pence),
+      status: p.status,
+      reference: p.source_reference,
+      lineSelection: p.line_selection,
+    })),
+    upcoming: upcomingRows.flatMap((r) => {
+      const detail = funding.get(r.entry_id);
+      return detail
+        ? [{ ...detail, drawId: r.draw_id, drawNumber: r.draw_number, drawName: r.name, drawStatus: r.status, drawAt: r.draw_at, drawDate: r.draw_date }]
+        : [];
+    }),
+  };
 }
 
 export type AddEntryOutcome =

@@ -1,6 +1,6 @@
 import { formatPence, pence } from '@qosfc/domain';
 import type { DrawStats, MemberDetails, MyEntry, OpenDraw, SettledDraw } from './db.js';
-import { PURCHASE_BLOCK_SIZES } from './entries.js';
+import { MAX_LINES_PER_PURCHASE, PURCHASE_BLOCK_SIZES } from './entries.js';
 import type { DirectDebitStatus } from './direct-debit.js';
 
 export function escapeHtml(value: string): string {
@@ -90,6 +90,8 @@ const STYLE = `
   .btn-ghost{ background:transparent; color:var(--royal); border:1px solid var(--line); }
   .btn-ghost:hover{ background:var(--royal-soft); }
   .btn-block{ width:100%; }
+  .linkbtn{ all:unset; cursor:pointer; color:var(--royal); font-weight:600; }
+  .linkbtn:hover{ text-decoration:underline; }
 
   .divider{ border:none; border-top:1px solid var(--line); margin:0; }
 
@@ -378,14 +380,28 @@ export function resetPasswordPage(opts: {
   });
 }
 
-function ballGrid(name: string, selected: number[]): string {
+function ballGrid(name: string, selected: readonly number[]): string {
   const cells = Array.from({ length: 20 }, (_, i) => i + 1)
     .map(
       (n) =>
         `<label><input type="checkbox" name="${name}" value="${n}" ${selected.includes(n) ? 'checked' : ''} /><span class="ball">${n}</span></label>`,
     )
     .join('');
-  return `<div class="ball-grid" id="ball-grid">${cells}</div>`;
+  return `<div class="ball-grid">${cells}</div>`;
+}
+
+/** GitHub #19: one picker per line. Line 1 is always shown; the rest appear with "Add another line". */
+function linePicker(index: number, selected: readonly number[], shown: boolean): string {
+  return `<div class="pick-line stack" data-line="${index}" style="gap:.6rem" ${shown ? '' : 'hidden'}>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.6rem;flex-wrap:wrap">
+      <b style="font-size:.92rem">Line ${index}</b>
+      <span class="hint tabular" style="margin:0"><span class="pick-count">0 of 4 selected</span>
+        &middot; <button class="linkbtn quick-pick" type="button">🎲 Pick for me</button>${
+          index > 1 ? ` &middot; <button class="linkbtn remove-line" type="button">Remove</button>` : ''
+        }</span>
+    </div>
+    ${ballGrid(`line${index}`, selected)}
+  </div>`;
 }
 
 export function drawPage(opts: {
@@ -394,6 +410,8 @@ export function drawPage(opts: {
   stats?: DrawStats;
   currentEntry?: MyEntry;
   error?: string;
+  /** Lines already picked, to show again alongside an error. */
+  picked?: readonly (readonly number[])[];
 }): string {
   const { openDraw: draw, stats } = opts;
   if (!draw) {
@@ -431,17 +449,17 @@ export function drawPage(opts: {
       ${opts.error ? `<div class="error" style="margin-bottom:1rem">${escapeHtml(opts.error)}</div>` : ''}
       <div class="grid2">
         <div class="card stack">
-          <div style="display:flex;justify-content:space-between;align-items:baseline">
-            <h3 style="font-size:1rem;text-transform:none;letter-spacing:0">Your numbers for Draw ${draw.drawNumber}</h3>
-            <span class="hint tabular" id="pick-count">0 of 4 selected</span>
-          </div>
-          <form method="get" action="/draw/pay" id="pick-form">
-            ${ballGrid('selection', [])}
-            <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.1rem">
-              <button class="btn btn-ghost" type="button" id="quick-pick">🎲 Pick for me</button>
+          <h3 style="font-size:1rem;text-transform:none;letter-spacing:0">Your numbers for Draw ${draw.drawNumber}</h3>
+          <form method="get" action="/draw/pay" id="pick-form" class="stack">
+            ${Array.from({ length: MAX_LINES_PER_PURCHASE }, (_, i) =>
+              linePicker(i + 1, opts.picked?.[i] ?? [], i === 0 || (opts.picked?.[i]?.length ?? 0) > 0),
+            ).join('<hr class="divider">')}
+            <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+              <button class="btn btn-ghost" type="button" id="add-line">+ Add another line</button>
               <button class="btn btn-primary" type="submit">Continue to payment →</button>
             </div>
           </form>
+          <p class="hint">Each line is a separate entry in every draw it's paid for. Use different numbers on each line &mdash; up to ${MAX_LINES_PER_PURCHASE} lines in one payment.</p>
           <p class="hint">Pay by Direct Debit, or buy 4 or 12 draws by card, and your numbers stay entered automatically &mdash; no need to pick again next week.</p>
         </div>
         <div class="stack">
@@ -458,31 +476,55 @@ export function drawPage(opts: {
       </div>
       <script>
       (function(){
-        var grid = document.getElementById('ball-grid');
-        var count = document.getElementById('pick-count');
-        var boxes = grid.querySelectorAll('input[type=checkbox]');
-        function update(){
-          var checked = grid.querySelectorAll('input:checked');
-          count.textContent = checked.length + ' of 4 selected';
+        var lines = document.querySelectorAll('.pick-line');
+        var addLine = document.getElementById('add-line');
+        function refreshAdd(){
+          var hidden = document.querySelectorAll('.pick-line[hidden]');
+          addLine.hidden = hidden.length === 0;
+          // A divider only between lines that are showing.
+          lines.forEach(function(line){
+            var rule = line.previousElementSibling;
+            if (rule && rule.tagName === 'HR') rule.hidden = line.hidden;
+          });
         }
-        boxes.forEach(function(b){
-          b.addEventListener('change', function(){
-            var checked = grid.querySelectorAll('input:checked');
-            if(checked.length > 4){ b.checked = false; }
+        lines.forEach(function(line){
+          var count = line.querySelector('.pick-count');
+          var boxes = line.querySelectorAll('input[type=checkbox]');
+          function update(){
+            count.textContent = line.querySelectorAll('input:checked').length + ' of 4 selected';
+          }
+          boxes.forEach(function(b){
+            b.addEventListener('change', function(){
+              if(line.querySelectorAll('input:checked').length > 4){ b.checked = false; }
+              update();
+            });
+          });
+          line.querySelector('.quick-pick').addEventListener('click', function(){
+            boxes.forEach(function(b){ b.checked = false; });
+            var pool = []; for(var i=0;i<boxes.length;i++) pool.push(i);
+            for(var n=0;n<4;n++){
+              var idx = Math.floor(Math.random()*pool.length);
+              boxes[pool[idx]].checked = true;
+              pool.splice(idx,1);
+            }
             update();
           });
-        });
-        document.getElementById('quick-pick').addEventListener('click', function(){
-          boxes.forEach(function(b){ b.checked = false; });
-          var pool = []; for(var i=0;i<boxes.length;i++) pool.push(i);
-          for(var n=0;n<4;n++){
-            var idx = Math.floor(Math.random()*pool.length);
-            boxes[pool[idx]].checked = true;
-            pool.splice(idx,1);
-          }
+          var remove = line.querySelector('.remove-line');
+          if (remove) remove.addEventListener('click', function(){
+            // A removed line sends nothing: its boxes are cleared, not just hidden.
+            boxes.forEach(function(b){ b.checked = false; });
+            line.hidden = true;
+            update();
+            refreshAdd();
+          });
           update();
         });
-        update();
+        addLine.addEventListener('click', function(){
+          var next = document.querySelector('.pick-line[hidden]');
+          if (next) next.hidden = false;
+          refreshAdd();
+        });
+        refreshAdd();
       })();
       </script>
     `,
@@ -503,7 +545,8 @@ export type PaymentMethodChoice = 'card' | 'dd';
 export function paymentPage(opts: {
   member: ViewMember;
   openDraw: OpenDraw;
-  selection: number[];
+  /** GitHub #19: every line being paid for, each bought for `blocks` draws. */
+  selections: readonly (readonly number[])[];
   blocks: number;
   method?: PaymentMethodChoice;
   hasDirectDebit?: boolean;
@@ -511,14 +554,22 @@ export function paymentPage(opts: {
   hostedCardPage?: boolean;
   error?: string;
 }): string {
-  const { selection, blocks, openDraw } = opts;
-  const method = opts.method;
-  const selectionFields = selection.map((n) => `<input type="hidden" name="selection" value="${n}" />`).join('');
+  const { selections, blocks, openDraw } = opts;
+  const lineCount = Math.max(1, selections.length);
+  const several = selections.length > 1;
+  // A Direct Debit is set up for one line; several lines are paid by card.
+  const method = several && opts.method === 'dd' ? 'card' : opts.method;
+  const total = (size: number) => formatPence(pence(200n * BigInt(size) * BigInt(lineCount)));
+  const selectionFields = selections
+    .flatMap((line, i) => line.map((n) => `<input type="hidden" name="line${i + 1}" value="${n}" />`))
+    .join('');
   const blockOption = (size: number, label: string) =>
-    `<label class="radio-row"><input type="radio" name="blocks" value="${size}" ${blocks === size ? 'checked' : ''} />${label} <span class="amt">${formatPence(pence(200n * BigInt(size)))}</span></label>`;
-  const methodOption = (value: PaymentMethodChoice, title: string, detail: string) =>
-    `<label class="method-choice"><input type="radio" name="method" value="${value}" ${method === value ? 'checked' : ''} required />
+    `<label class="radio-row"><input type="radio" name="blocks" value="${size}" ${blocks === size ? 'checked' : ''} />${label} <span class="amt">${total(size)}</span></label>`;
+  const methodOption = (value: PaymentMethodChoice, title: string, detail: string, disabled = false) =>
+    `<label class="method-choice"${disabled ? ' style="opacity:.55;cursor:not-allowed"' : ''}><input type="radio" name="method" value="${value}" ${method === value ? 'checked' : ''} ${disabled ? 'disabled' : 'required'} />
        <span><b>${title}</b><span class="hint">${detail}</span></span></label>`;
+  const summaryLine = (size: number) =>
+    several ? `${lineCount} lines × ${size} ${size === 1 ? 'draw' : 'draws'} (from Draw ${openDraw.drawNumber})` : `${size} × entry (from Draw ${openDraw.drawNumber})`;
 
   return layout({
     title: 'Payment',
@@ -533,9 +584,17 @@ export function paymentPage(opts: {
       ${opts.error ? `<div class="error" style="margin-bottom:1rem">${escapeHtml(opts.error)}</div>` : ''}
       <div class="grid2">
         <div class="card stack">
-          <div>
-            <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0;margin-bottom:.5rem">Your numbers for Draw ${openDraw.drawNumber}</h3>
-            <div class="ball-row">${selection.map((n) => `<span class="ball picked">${n}</span>`).join('')}</div>
+          <div class="stack" style="gap:.6rem">
+            <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Your numbers for Draw ${openDraw.drawNumber}</h3>
+            ${selections
+              .map(
+                (line, i) =>
+                  `<div style="display:flex;align-items:center;gap:.7rem">${several ? `<span class="hint" style="margin:0;min-width:3.2rem">Line ${i + 1}</span>` : ''}<div class="ball-row">${line
+                    .map((n) => `<span class="ball picked">${n}</span>`)
+                    .join('')}</div></div>`,
+              )
+              .join('')}
+            <p class="hint" style="margin:0"><a href="/draw">Change numbers or add another line</a></p>
           </div>
           <form method="post" action="${method === 'dd' ? '/direct-debit/setup' : '/draw/enter'}" id="pay-form" class="stack">
             ${csrfField(opts.member.csrf)}
@@ -543,8 +602,12 @@ export function paymentPage(opts: {
             <fieldset>
               <legend>How would you like to pay?</legend>
               <div class="method-choices">
-                ${methodOption('card', 'Debit / credit card', 'Pay now for 1, 4 or 12 draws')}
-                ${methodOption('dd', 'Direct Debit', `Entered every draw until you cancel — ${formatPence(pence(200n))} a draw`)}
+                ${methodOption('card', 'Debit / credit card', several ? `Pay now for all ${lineCount} lines, 1, 4 or 12 draws each` : 'Pay now for 1, 4 or 12 draws')}
+                ${
+                  several
+                    ? methodOption('dd', 'Direct Debit', 'One line of numbers per Direct Debit — pay for several lines by card', true)
+                    : methodOption('dd', 'Direct Debit', `Entered every draw until you cancel — ${formatPence(pence(200n))} a draw`)
+                }
               </div>
             </fieldset>
             ${
@@ -555,7 +618,7 @@ export function paymentPage(opts: {
 
             <div id="pay-card" class="stack" ${method === 'card' ? '' : 'hidden'}>
               <fieldset>
-                <legend>How many draws?</legend>
+                <legend>${several ? 'How many draws for each line?' : 'How many draws?'}</legend>
                 ${PURCHASE_BLOCK_SIZES.map((size) => blockOption(size, size === 1 ? '1 draw' : `${size} draws`)).join('')}
               </fieldset>
               ${
@@ -584,7 +647,7 @@ export function paymentPage(opts: {
             </div>
 
             <button class="btn btn-gold btn-block" type="submit" id="pay-submit" ${method ? '' : 'hidden'}>
-              <span id="submit-card-label" ${method === 'card' ? '' : 'hidden'}>Pay <span class="blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span> &amp; enter →</span>
+              <span id="submit-card-label" ${method === 'card' ? '' : 'hidden'}>Pay <span class="blocks-total">${total(blocks)}</span> &amp; enter →</span>
               <span id="submit-dd-label" ${method === 'dd' ? '' : 'hidden'}>Set up Direct Debit →</span>
             </button>
             <p class="hint" style="text-align:center" id="pay-hint"></p>
@@ -594,9 +657,9 @@ export function paymentPage(opts: {
           <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Order summary</h3>
           <div id="summary-none" ${method ? 'hidden' : ''}><p class="muted">Choose how you'd like to pay.</p></div>
           <div id="summary-card" class="stack" ${method === 'card' ? '' : 'hidden'}>
-            <div style="display:flex;justify-content:space-between;font-size:.9rem"><span id="summary-line">${blocks} × entry (from Draw ${openDraw.drawNumber})</span><span class="amt blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:.9rem"><span id="summary-line">${summaryLine(blocks)}</span><span class="amt blocks-total">${total(blocks)}</span></div>
             <hr class="divider">
-            <div style="display:flex;justify-content:space-between;font-weight:700"><span>Total due today</span><span class="amt blocks-total">${formatPence(pence(200n * BigInt(blocks)))}</span></div>
+            <div style="display:flex;justify-content:space-between;font-weight:700"><span>Total due today</span><span class="amt blocks-total">${total(blocks)}</span></div>
             <p class="hint">Your numbers go into this draw now and each following draw automatically until the draws you've paid for run out.</p>
           </div>
           <div id="summary-dd" class="stack" ${method === 'dd' ? '' : 'hidden'}>
@@ -639,8 +702,8 @@ export function paymentPage(opts: {
         var totals = document.querySelectorAll('.blocks-total');
         document.querySelectorAll('input[name=blocks]').forEach(function(r){
           r.addEventListener('change', function(){
-            var amount = '£' + (Number(r.value) * 2).toFixed(2);
-            summary.textContent = r.value + ' × entry (from Draw ${openDraw.drawNumber})';
+            var amount = '£' + (Number(r.value) * 2 * ${lineCount}).toFixed(2);
+            summary.textContent = ${JSON.stringify(Object.fromEntries(PURCHASE_BLOCK_SIZES.map((size) => [size, summaryLine(size)])))}[r.value];
             totals.forEach(function(el){ el.textContent = amount; });
           });
         });
@@ -660,7 +723,7 @@ export function purchaseReturnPage(opts: {
 }): string {
   const body =
     opts.status === 'paid'
-      ? `<div class="page-head"><h1>You're in!</h1></div><div class="flash">${escapeHtml(opts.message ?? 'Payment received — your entry is confirmed.')}</div>
+      ? `<div class="page-head"><h1>You're in!</h1></div><div class="flash" style="white-space:pre-line">${escapeHtml(opts.message ?? 'Payment received — your entry is confirmed.')}</div>
          <p style="margin-top:1rem"><a class="btn btn-primary" href="/account">View my numbers</a></p>`
       : opts.status === 'pending'
         ? `<div class="page-head"><h1>Payment processing</h1></div><p class="muted">This can take a moment. Refresh this page shortly, or check "My numbers" later.</p>`

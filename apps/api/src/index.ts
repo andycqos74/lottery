@@ -31,7 +31,7 @@ import {
   updateMemberDetails,
 } from './db.js';
 import { cancelDirectDebit, completeDirectDebitSetup, listActiveDirectDebits, startDirectDebitSetup } from './direct-debit.js';
-import { completeEntryPurchase, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
+import { completeEntryPurchase, MAX_LINES_PER_PURCHASE, normaliseLines, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
 import { buildBacsBureau, buildNotifier, buildPaymentGateway } from './providers.js';
 import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
 import {
@@ -363,10 +363,11 @@ app.post('/entries/purchase', async (request, reply) => {
   if (!auth) return reply.code(401).send({ error: 'Not logged in.' });
   if (!requireCsrf(request, reply, auth.session.csrf)) return;
 
-  const body = request.body as { selection?: number[]; blocks?: number };
+  // `selections` buys several lines at once (GitHub #19); `selection` is one.
+  const body = request.body as { selection?: number[]; selections?: number[][]; blocks?: number };
   const outcome = await startEntryPurchase(pool, paymentGateway, {
     memberId: auth.member.id,
-    selection: body.selection ?? [],
+    selections: body.selections ?? [body.selection ?? []],
     blocks: body.blocks ?? 1,
     returnUrl: `${publicBaseUrl}/entries/purchase/return`,
     cancelUrl: `${publicBaseUrl}/entries/purchase/cancelled`,
@@ -396,7 +397,24 @@ app.get('/entries/purchase/return', async (request, reply) => {
 // ── Browser pages ────────────────────────────────────────────────────────────
 
 function parseSelectionInput(raw: string | string[] | undefined): number[] {
-  return (Array.isArray(raw) ? raw : raw ? [raw] : []).map((s) => Number.parseInt(s, 10)).filter((n) => !Number.isNaN(n));
+  return [...new Set((Array.isArray(raw) ? raw : raw ? [raw] : []).map((s) => Number.parseInt(s, 10)).filter((n) => !Number.isNaN(n)))];
+}
+
+type LineFields = Record<string, string | string[] | undefined>;
+
+/**
+ * GitHub #19: the lines picked on the draw page, fields `line1`…`lineN`
+ * (`selection` is still read as line 1). Unused, empty lines are dropped.
+ */
+function parseLinesInput(fields: LineFields): number[][] {
+  const lines = [parseSelectionInput(fields['line1'] ?? fields['selection'])];
+  for (let i = 2; i <= MAX_LINES_PER_PURCHASE; i++) lines.push(parseSelectionInput(fields[`line${i}`]));
+  return lines.filter((line) => line.length > 0);
+}
+
+function blocksOrDefault(raw: string | undefined): number {
+  const blocks = Number(raw);
+  return PURCHASE_BLOCK_SIZES.includes(blocks as (typeof PURCHASE_BLOCK_SIZES)[number]) ? blocks : 4;
 }
 
 app.get('/draw', async (request, reply) => {
@@ -416,19 +434,18 @@ app.get('/draw/pay', async (request, reply) => {
   const openDraw = await getOpenDraw(pool);
   if (!openDraw) return reply.redirect('/draw');
 
-  const query = request.query as { selection?: string | string[]; blocks?: string };
-  const selection = [...new Set(parseSelectionInput(query.selection))].sort((a, b) => a - b);
-  if (selection.length !== 4 || selection.some((n) => n < 1 || n > 20)) {
+  const query = request.query as LineFields & { blocks?: string };
+  const picked = parseLinesInput(query);
+  const lines = normaliseLines(picked);
+  if (lines.kind === 'rejected') {
     const stats = await getDrawStats(pool, openDraw.id);
-    return reply
-      .type('text/html')
-      .send(drawPage({ member: found.view, openDraw, stats, error: 'Pick four distinct numbers between 1 and 20 first.' }));
+    const error = picked.length === 0 ? 'Pick four distinct numbers between 1 and 20 first.' : lines.reason;
+    return reply.type('text/html').send(drawPage({ member: found.view, openDraw, stats, error, picked }));
   }
-  const blocks = PURCHASE_BLOCK_SIZES.includes(Number(query.blocks) as (typeof PURCHASE_BLOCK_SIZES)[number])
-    ? Number(query.blocks)
-    : 4;
   const hasDirectDebit = (await listActiveDirectDebits(pool, found.auth.member.id)).length > 0;
-  reply.type('text/html').send(paymentPage({ member: found.view, openDraw, selection, blocks, hasDirectDebit, hostedCardPage }));
+  reply
+    .type('text/html')
+    .send(paymentPage({ member: found.view, openDraw, selections: lines.lines, blocks: blocksOrDefault(query.blocks), hasDirectDebit, hostedCardPage }));
 });
 
 app.post('/draw/enter', async (request, reply) => {
@@ -436,8 +453,8 @@ app.post('/draw/enter', async (request, reply) => {
   if (!found) return reply.redirect('/login');
   if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
 
-  const body = request.body as { selection?: string | string[]; blocks?: string; csrf?: string };
-  const selection = [...new Set(parseSelectionInput(body.selection))].sort((a, b) => a - b);
+  const body = request.body as LineFields & { blocks?: string; csrf?: string };
+  const selections = parseLinesInput(body).map((line) => line.sort((a, b) => a - b));
   const blocks = Number.parseInt(body.blocks ?? '', 10);
 
   const openDraw = await getOpenDraw(pool);
@@ -445,7 +462,7 @@ app.post('/draw/enter', async (request, reply) => {
 
   const outcome = await startEntryPurchase(pool, paymentGateway, {
     memberId: found.auth.member.id,
-    selection,
+    selections,
     blocks,
     returnUrl: `${publicBaseUrl}/draw/return`,
     cancelUrl: `${publicBaseUrl}/draw`,
@@ -456,8 +473,8 @@ app.post('/draw/enter', async (request, reply) => {
         hostedCardPage,
         member: found.view,
         openDraw,
-        selection,
-        blocks: PURCHASE_BLOCK_SIZES.includes(blocks as (typeof PURCHASE_BLOCK_SIZES)[number]) ? blocks : 4,
+        selections,
+        blocks: blocksOrDefault(body.blocks),
         method: 'card',
         error: outcome.reason,
       }),
@@ -485,7 +502,7 @@ app.get('/draw/return', async (request, reply) => {
         channel: 'email',
         templateId: 'entry_confirmation',
         mergeData: {
-          numbers: outcome.selection.join(', '),
+          numbers: outcome.selections.map((line) => line.join(', ')).join('; '),
           amount: formatPence(pence(BigInt(outcome.amountPence))),
           blocks: String(outcome.blocks),
           summary: outcome.message,
@@ -516,24 +533,28 @@ app.post('/direct-debit/setup', async (request, reply) => {
   if (!found) return reply.redirect('/login');
   if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
 
-  const body = request.body as { selection?: string | string[]; csrf?: string };
-  const selection = [...new Set(parseSelectionInput(body.selection))].sort((a, b) => a - b);
+  const body = request.body as LineFields & { csrf?: string };
+  const selections = parseLinesInput(body).map((line) => line.sort((a, b) => a - b));
 
   const openDraw = await getOpenDraw(pool);
   if (!openDraw) return reply.type('text/html').send(drawPage({ member: found.view, error: 'No draw is currently open for entries.' }));
 
-  const outcome = await startDirectDebitSetup(pool, bacsBureau, {
-    memberId: found.auth.member.id,
-    selection,
-    returnUrl: `${publicBaseUrl}/direct-debit/return`,
-  });
+  // A Direct Debit is set up for one line; several lines are paid by card.
+  const outcome =
+    selections.length > 1
+      ? { kind: 'rejected' as const, reason: 'A Direct Debit covers one line of numbers. Pay for several lines by card, or set up a Direct Debit for each line separately.' }
+      : await startDirectDebitSetup(pool, bacsBureau, {
+          memberId: found.auth.member.id,
+          selection: selections[0] ?? [],
+          returnUrl: `${publicBaseUrl}/direct-debit/return`,
+        });
   if (outcome.kind === 'rejected') {
     return reply.type('text/html').send(
       paymentPage({
         hostedCardPage,
         member: found.view,
         openDraw,
-        selection,
+        selections,
         blocks: 4,
         method: 'dd',
         error: outcome.reason,

@@ -76,11 +76,16 @@ describeDb('online entry purchase and Direct Debit — lines, card first (GAP-09
   }
 
   async function buy(member: string, selection: number[], blocks: number) {
+    return buyLines(member, [selection], blocks);
+  }
+
+  /** One card payment for several lines (GitHub #19). */
+  async function buyLines(member: string, selections: number[][], blocks: number) {
     const gateway = new FakeGateway();
-    gateway.outcome = { status: 'succeeded', providerRef: 'ref', amountPence: String(200 * blocks) };
+    gateway.outcome = { status: 'succeeded', providerRef: 'ref', amountPence: String(200 * blocks * selections.length) };
     const started = await startEntryPurchase(pool, gateway, {
       memberId: member,
-      selection,
+      selections,
       blocks,
       returnUrl: 'https://portal.test/return',
       cancelUrl: 'https://portal.test/cancel',
@@ -177,7 +182,7 @@ describeDb('online entry purchase and Direct Debit — lines, card first (GAP-09
     gateway.outcome = { status: 'failed', reasonCode: 'card_declined', reason: 'The card was declined.' };
     const started = await startEntryPurchase(pool, gateway, {
       memberId,
-      selection: [1, 2, 3, 4],
+      selections: [[1, 2, 3, 4]],
       blocks: 1,
       returnUrl: 'https://portal.test/return',
       cancelUrl: 'https://portal.test/cancel',
@@ -189,7 +194,7 @@ describeDb('online entry purchase and Direct Debit — lines, card first (GAP-09
   it('rejects a selection that is not four distinct numbers 1-20', async () => {
     const outcome = await startEntryPurchase(pool, new FakeGateway(), {
       memberId,
-      selection: [1, 2, 3],
+      selections: [[1, 2, 3]],
       blocks: 1,
       returnUrl: 'https://portal.test/return',
       cancelUrl: 'https://portal.test/cancel',
@@ -200,7 +205,7 @@ describeDb('online entry purchase and Direct Debit — lines, card first (GAP-09
   it('rejects a block size other than 1, 4, or 12', async () => {
     const outcome = await startEntryPurchase(pool, new FakeGateway(), {
       memberId,
-      selection: [1, 2, 3, 4],
+      selections: [[1, 2, 3, 4]],
       blocks: 2,
       returnUrl: 'https://portal.test/return',
       cancelUrl: 'https://portal.test/cancel',
@@ -243,6 +248,68 @@ describeDb('online entry purchase and Direct Debit — lines, card first (GAP-09
     ]);
     expect(second.message).toContain('These are new numbers');
     expect(second.message).toContain('1, 2, 3, 4');
+  });
+
+  it('several lines in one payment (#19): each line is entered in every draw paid for, and each line has its own payment', async () => {
+    const m = await newMember('two.lines@example.test');
+    const bought = await buyLines(m, [[4, 3, 2, 1], [5, 6, 7, 8]], 4);
+    expect(String(bought.amountPence)).toBe('1600');
+    expect(bought.selections).toEqual([[1, 2, 3, 4], [5, 6, 7, 8]]);
+    expect(await entriesByDraw(m)).toEqual([
+      ['1-2-3-4:prepaid', '5-6-7-8:prepaid'],
+      ['1-2-3-4:prepaid', '5-6-7-8:prepaid'],
+      ['1-2-3-4:prepaid', '5-6-7-8:prepaid'],
+      ['1-2-3-4:prepaid', '5-6-7-8:prepaid'],
+      [],
+      [],
+    ]);
+    const { rows } = await pool.query(
+      `SELECT p.amount_pence::int AS pence, ss.selection FROM payment p
+         JOIN selection_standing ss ON ss.prize_draw_no = p.line_prize_draw_no AND ss.slot = p.line_slot
+        WHERE p.member_id = $1 ORDER BY p.line_slot`,
+      [m],
+    );
+    expect(rows).toEqual([
+      { pence: 800, selection: [1, 2, 3, 4] },
+      { pence: 800, selection: [5, 6, 7, 8] },
+    ]);
+    expect(bought.message).toContain('your £16.00 payment covers 2 lines of numbers, 4 draws each');
+    expect(bought.message).toContain('New numbers 5, 6, 7, 8.');
+
+    // Completing it again changes nothing.
+    expect((await completeEntryPurchase(pool, bought.gateway, bought.sessionId)).kind).toBe('already_completed');
+    expect((await pool.query(`SELECT count(*)::int AS n FROM payment WHERE member_id = $1`, [m])).rows[0].n).toBe(2);
+  });
+
+  it('refuses the same numbers twice in one payment (#19), in any order, before taking payment', async () => {
+    const m = await newMember('dup.lines@example.test');
+    const gateway = new FakeGateway();
+    const outcome = await startEntryPurchase(pool, gateway, {
+      memberId: m,
+      selections: [[1, 2, 3, 4], [9, 10, 11, 12], [4, 3, 2, 1]],
+      blocks: 1,
+      returnUrl: 'https://portal.test/return',
+      cancelUrl: 'https://portal.test/cancel',
+    });
+    expect(outcome.kind).toBe('rejected');
+    expect(outcome.kind === 'rejected' && outcome.reason).toContain("You've picked 1, 2, 3, 4 more than once");
+    expect(gateway.lastSessionId).toBe('');
+    expect((await pool.query(`SELECT count(*)::int AS n FROM pending_entry_purchase WHERE member_id = $1`, [m])).rows[0].n).toBe(0);
+  });
+
+  it('a line the member already has adds weeks to it, while new numbers in the same payment start a new line (#19)', async () => {
+    const m = await newMember('mixed.lines@example.test');
+    await buy(m, [1, 2, 3, 4], 1);
+    const bought = await buyLines(m, [[9, 10, 11, 12], [4, 3, 2, 1]], 1);
+    expect(await entriesByDraw(m)).toEqual([['1-2-3-4:prepaid', '9-10-11-12:prepaid'], ['1-2-3-4:prepaid'], [], [], [], []]);
+    expect(bought.message).toContain('New numbers 9, 10, 11, 12.');
+    expect(bought.message).toContain('You already had the numbers 1, 2, 3, 4, so this draw has been added to them.');
+    // Still never two entries with the same numbers in one draw.
+    const { rows } = await pool.query(
+      `SELECT draw_id, selection, count(*)::int AS n FROM entry WHERE member_id = $1 AND voided_at IS NULL GROUP BY 1, 2 HAVING count(*) > 1`,
+      [m],
+    );
+    expect(rows).toEqual([]);
   });
 
   it('Direct Debit set up after a card payment: the paid draws are used first, then the Direct Debit starts', async () => {
