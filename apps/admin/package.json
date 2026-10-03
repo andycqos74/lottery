@@ -14,7 +14,7 @@
     "@qosfc/activities": "workspace:*",
     "@qosfc/adapters-live": "workspace:*",
     "@qosfc/ports": "workspace:*",
-    "@node-rs/argon2": "^2.0.2",
+    "@node-rs/argon2": "^2.2.1",
     "fastify": "^5.12.2",
     "@fastify/cookie": "^11.0.2"
   }
