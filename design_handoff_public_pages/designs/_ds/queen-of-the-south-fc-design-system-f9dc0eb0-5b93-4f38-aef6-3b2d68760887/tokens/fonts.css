@@ -1,0 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Merriweather+Sans:wght@400;700;800&family=Open+Sans:wght@300;400;600;700;800&family=Play:wght@400;700&display=swap");
+@font-face{font-family:"Adam";src:url("../fonts/ADAM.otf") format("opentype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"League Gothic";src:url("../fonts/LeagueGothic-Regular.otf") format("opentype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Bebas Neue";src:url("../fonts/BebasNeue.woff") format("woff"),url("../fonts/BebasNeue.ttf") format("truetype");font-weight:400;font-style:normal;font-display:swap}

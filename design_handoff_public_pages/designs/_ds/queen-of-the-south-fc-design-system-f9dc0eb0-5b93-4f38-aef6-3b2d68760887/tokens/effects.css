@@ -1,0 +1,17 @@
+:root{
+--radius-none:0;             /* panels, list-groups, title bars: square */
+--radius-sm:.25rem;          /* bootstrap default buttons/inputs */
+--radius-pill:10rem;         /* category badge */
+--radius-round:50%;
+--shadow-none:none;
+--shadow-panel-legacy:0 0 15px 0 rgba(50,50,50,.4);
+--shadow-score:inset 0 3px 5px rgba(0,0,0,.125);
+--scrim-hover:rgba(0,0,0,.5);
+--ease-std:ease; /* @kind other */
+--ease-out:ease-out; /* @kind other */
+--dur-fast:.3s; /* @kind other */
+--dur-nav:.4s; /* @kind other */
+--dur-overlay:.5s; /* @kind other */
+--dur-caption:.35s; /* @kind other */
+--dur-burger:.8s; /* @kind other */
+}
