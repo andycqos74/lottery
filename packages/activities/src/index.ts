@@ -11,7 +11,30 @@
 import type { ActivityContext } from './context.js';
 import { openHumanTask, type OpenTaskRequest } from './tasks/human-tasks.js';
 import { generateWinningNumbers, type GenerateNumbersRequest } from './draw/rng.js';
-import { identifyWinners, type IdentifyWinnersRequest } from './draw/winners.js';
+import {
+  countRollDownTiers,
+  identifyWinners,
+  type CountRollDownTiersRequest,
+  type IdentifyWinnersRequest,
+} from './draw/winners.js';
+import {
+  checkDrawProgress,
+  closeDrawForRun,
+  findDueDraws,
+  type CheckDrawProgressRequest,
+  type CloseDrawForRunRequest,
+} from './draw/run.js';
+import { generateDueEntries, type GenerateDueEntriesRequest } from './draw/generate-entries.js';
+import {
+  escalateTask,
+  getTaskEscalationState,
+  listTasksAwaitingEscalation,
+  markEscalationStarted,
+  type EscalateTaskRequest,
+  type GetTaskEscalationStateRequest,
+  type ListTasksAwaitingEscalationRequest,
+  type MarkEscalationStartedRequest,
+} from './tasks/escalation.js';
 import { settleDraw, type SettleDrawRequest } from './draw/settle.js';
 import { getRolloverIn, type GetRolloverInRequest } from './draw/rollover.js';
 import { notifyWinners, type NotifyWinnersRequest } from './draw/notify-winners.js';
@@ -26,6 +49,24 @@ export function createActivities(ctx: ActivityContext) {
       generateWinningNumbers(ctx.pool, ctx.providers.randomness, request),
 
     identifyWinners: (request: IdentifyWinnersRequest) => identifyWinners(ctx.pool, request),
+
+    countRollDownTiers: (request: CountRollDownTiersRequest) => countRollDownTiers(ctx.pool, request),
+
+    findDueDraws: () => findDueDraws(ctx.pool),
+
+    generateDueEntries: (request: GenerateDueEntriesRequest) => generateDueEntries(ctx.pool, request),
+
+    closeDrawForRun: (request: CloseDrawForRunRequest) => closeDrawForRun(ctx.pool, request),
+
+    checkDrawProgress: (request: CheckDrawProgressRequest) => checkDrawProgress(ctx.pool, request),
+
+    listTasksAwaitingEscalation: (request: ListTasksAwaitingEscalationRequest) => listTasksAwaitingEscalation(ctx.pool, request),
+
+    markEscalationStarted: (request: MarkEscalationStartedRequest) => markEscalationStarted(ctx.pool, request),
+
+    getTaskEscalationState: (request: GetTaskEscalationStateRequest) => getTaskEscalationState(ctx.pool, request),
+
+    escalateTask: (request: EscalateTaskRequest) => escalateTask(ctx.pool, request),
 
     getRolloverIn: (request: GetRolloverInRequest) => getRolloverIn(ctx.pool, request),
 
@@ -51,7 +92,26 @@ export function createActivities(ctx: ActivityContext) {
 export type { ActivityContext } from './context.js';
 export type { OpenTaskRequest, OpenTaskResult } from './tasks/human-tasks.js';
 export type { GenerateNumbersRequest, GenerateNumbersResult } from './draw/rng.js';
-export type { IdentifyWinnersRequest, IdentifyWinnersResult } from './draw/winners.js';
+export type {
+  IdentifyWinnersRequest,
+  IdentifyWinnersResult,
+  CountRollDownTiersRequest,
+  CountRollDownTiersResult,
+} from './draw/winners.js';
+export type {
+  DueDraw,
+  FindDueDrawsResult,
+  CloseDrawForRunRequest,
+  CloseDrawForRunResult,
+  CheckDrawProgressRequest,
+  CheckDrawProgressResult,
+} from './draw/run.js';
+export {
+  ESCALATION_INTERVAL_MS,
+  type TaskEscalationState,
+  type EscalateTaskRequest,
+  type EscalateTaskResult,
+} from './tasks/escalation.js';
 export type { SettleDrawRequest, SettleDrawResult } from './draw/settle.js';
 export { getRolloverIn, type GetRolloverInRequest, type GetRolloverInResult } from './draw/rollover.js';
 export type { NotifyWinnersRequest, NotifyWinnersResult } from './draw/notify-winners.js';

@@ -15,8 +15,16 @@ import { fileURLToPath } from 'node:url';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import type { WorkflowHandle } from '@temporalio/client';
-import type { createActivities } from '@qosfc/activities';
-import { DrawWorkflow, mustBeWonDecision, getState, type DrawState, type MustBeWonDecision } from './draw.js';
+import { ApplicationFailure } from '@temporalio/common';
+import type { createActivities, OpenTaskRequest } from '@qosfc/activities';
+import {
+  DrawWorkflow,
+  mustBeWonDecision,
+  retryDraw,
+  getState,
+  type DrawState,
+  type MustBeWonDecision,
+} from './draw.js';
 
 const enabled = process.env['TEST_WORKFLOW_ENV'] === '1';
 const describeWf = enabled ? describe : describe.skip;
@@ -43,8 +51,15 @@ describeWf('DrawWorkflow (TestWorkflowEnvironment)', () => {
       connection: testEnv.nativeConnection,
       taskQueue: 'draw',
       workflowsPath: fileURLToPath(new URL('../dist/draw.js', import.meta.url)),
-      // No previous draw unless a test says otherwise.
-      activities: { getRolloverIn: async () => ({ rolloverInPence: '0', fromDrawId: null }), ...activities },
+      activities: {
+        // No previous draw, entries generate cleanly, the frozen count is the
+        // fixture's, and nobody matched anything — unless a test says otherwise.
+        getRolloverIn: async () => ({ rolloverInPence: '0', fromDrawId: null }),
+        generateDueEntries: async () => ({ candidatesConsidered: 0, generated: 0, directDebitGenerated: 0 }),
+        closeDrawForRun: async () => ({ entriesCount: input.entriesCount }),
+        countRollDownTiers: async () => ({ match3: 0, match2: 0, match1: 0 }),
+        ...activities,
+      },
     });
 
     return worker.runUntil(async () => {
@@ -97,7 +112,7 @@ describeWf('DrawWorkflow (TestWorkflowEnvironment)', () => {
     expect(state.jackpotPaidPence).toBe('0');
   });
 
-  it('blocks on the GAP-24 must-be-won cap, then settles once a valid decision arrives', async () => {
+  it('GAP-24 residual: blocks when nobody matched even one number, then settles once a valid decision arrives', async () => {
     const state = await runInWorker(
       CAPPED_DRAW,
       {
@@ -189,5 +204,98 @@ describeWf('DrawWorkflow (TestWorkflowEnvironment)', () => {
     // 100 entries -> 10,000p prize share, plus the 50,000p rolled in: above the floor, so no top-up.
     expect(state.jackpotPreDrawPence).toBe('60000');
     expect(settledWith).toMatchObject({ jackpotPreDrawPence: '60000', rolloverInPence: '50000', floorTopupPence: '0' });
+  });
+
+  it('GAP-24: rolls a must-be-won jackpot down to the first tier with a winner, without blocking', async () => {
+    let settledWith: { mustBeWonRollDown?: boolean; winningEntries: readonly unknown[] } | undefined;
+    let tasksOpened = 0;
+    const state = await runInWorker(
+      CAPPED_DRAW,
+      {
+        generateWinningNumbers: async () => ({ numbers: [1, 2, 3, 4], source: 'fake', seed: 'fake' }),
+        identifyWinners: async () => ({ winningEntries: [] }),
+        countRollDownTiers: async () => ({ match3: 0, match2: 2, match1: 40 }),
+        openHumanTask: async () => {
+          tasksOpened++;
+          return { taskId: 'fake-task', created: true };
+        },
+        settleDraw: async (req) => {
+          settledWith = req;
+          return { winnersCount: 2, jackpotPaidPence: req.jackpotPreDrawPence, rolloverOutPence: '0', mustBeWonTier: 2 };
+        },
+        notifyWinners: async () => ({ notified: 2, pending: 0 }),
+      },
+      (handle) => handle.result(),
+    );
+    expect(tasksOpened).toBe(0);
+    expect(settledWith).toMatchObject({ mustBeWonRollDown: true, winningEntries: [] });
+    expect(state).toMatchObject({ status: 'settled', winnersCount: 2, mustBeWonTier: 2, winnersNotified: 2 });
+    expect(state.blockedOn).toBeUndefined();
+  });
+
+  it('freezes the entry set itself: generates entries, closes the draw, and computes the jackpot from the frozen count', async () => {
+    const calls: string[] = [];
+    let settledWith: { jackpotPreDrawPence: string } | undefined;
+    const state = await runInWorker(
+      // The input count is ignored — the count closeDrawForRun froze is what counts.
+      { drawId: 'draw-fixture-frozen', drawNumber: 3, entriesCount: 0 },
+      {
+        generateDueEntries: async () => {
+          calls.push('generate');
+          return { candidatesConsidered: 10, generated: 10, directDebitGenerated: 4 };
+        },
+        closeDrawForRun: async (req) => {
+          calls.push(`close:${req.workflowId.startsWith('test-draw-') ? 'own-run' : req.workflowId}`);
+          return { entriesCount: 600 };
+        },
+        generateWinningNumbers: async () => {
+          calls.push('rng');
+          return { numbers: [1, 2, 3, 4], source: 'fake', seed: 'fake' };
+        },
+        identifyWinners: async () => ({ winningEntries: [] }),
+        settleDraw: async (req) => {
+          settledWith = req;
+          return { winnersCount: 0, jackpotPaidPence: '0', rolloverOutPence: req.jackpotPreDrawPence };
+        },
+      },
+      (handle) => handle.result(),
+    );
+    expect(calls).toEqual(['generate', 'close:own-run', 'rng']);
+    // 600 entries x 200p x 50% = 60,000p, above the 50,000p floor.
+    expect(settledWith?.jackpotPreDrawPence).toBe('60000');
+    expect(state.status).toBe('settled');
+  });
+
+  it('blocks on a task when entries cannot be generated, and retries when the task is resolved', async () => {
+    let attempts = 0;
+    const opened: OpenTaskRequest[] = [];
+    const state = await runInWorker(
+      SMALL_DRAW,
+      {
+        generateDueEntries: async () => {
+          attempts++;
+          if (attempts === 1) throw ApplicationFailure.nonRetryable('GAP-17 is not activated.', 'UnresolvedGapError');
+          return { candidatesConsidered: 0, generated: 0, directDebitGenerated: 0 };
+        },
+        openHumanTask: async (req) => {
+          opened.push(req);
+          return { taskId: 'fake-task', created: true };
+        },
+        generateWinningNumbers: async () => ({ numbers: [1, 2, 3, 4], source: 'fake', seed: 'fake' }),
+        identifyWinners: async () => ({ winningEntries: [] }),
+        settleDraw: async (req) => ({ winnersCount: 0, jackpotPaidPence: '0', rolloverOutPence: req.jackpotPreDrawPence }),
+      },
+      async (handle) => {
+        const blocked = await waitForStatus(handle, 'blocked');
+        expect(blocked.blockedOn).toBe('entry generation failed');
+        await handle.signal(retryDraw);
+        return handle.result();
+      },
+    );
+    expect(attempts).toBe(2);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({ kind: 'draw_entries_failed', signalName: 'retry_draw', entityId: SMALL_DRAW.drawId });
+    expect(opened[0]!.detail).toContain('GAP-17 is not activated.');
+    expect(state.status).toBe('settled');
   });
 });

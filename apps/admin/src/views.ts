@@ -180,9 +180,14 @@ export function dashboardPage(opts: { user: { displayName: string; csrf: string 
 }
 
 function taskRow(task: HumanTask, showStatus: boolean): string {
-  const overdue = task.status === 'open' && task.dueAt !== null && task.dueAt.getTime() < Date.now();
+  const overdue =
+    task.status === 'open' && ((task.dueAt !== null && task.dueAt.getTime() < Date.now()) || task.escalationLevel > 0);
+  const escalated =
+    task.status === 'open' && task.escalationLevel > 0
+      ? ` <span class="badge" style="background:#b3261e;color:#fff">escalated ×${task.escalationLevel}</span>`
+      : '';
   return `<tr class="${overdue ? 'overdue' : ''}">
-    <td><a class="row-link" href="/tasks/${task.id}">${escapeHtml(task.title)}</a>${task.requiresSecondApprover ? ' <span class="badge">dual approval</span>' : ''}</td>
+    <td><a class="row-link" href="/tasks/${task.id}">${escapeHtml(task.title)}</a>${task.requiresSecondApprover ? ' <span class="badge">dual approval</span>' : ''}${escalated}</td>
     <td><span class="badge">${escapeHtml(task.kind)}</span></td>
     ${showStatus ? `<td><span class="badge">${escapeHtml(task.status)}</span></td>` : ''}
     <td>${task.openedAt.toISOString().slice(0, 10)}</td>
@@ -805,6 +810,12 @@ export function taskDetailPage(opts: {
     ['Status', task.status],
     ['Opened', task.openedAt.toISOString()],
     ['Due', task.dueAt ? task.dueAt.toISOString() : '—'],
+    [
+      'Escalated',
+      task.escalationLevel > 0
+        ? `${task.escalationLevel}× — last ${task.lastEscalatedAt?.toISOString() ?? '—'} (GAP-42: no escalation policy yet)`
+        : '—',
+    ],
     ['Gap', task.gapId ?? '—'],
     ['Workflow', task.workflowId ?? '—'],
     ['Run', task.runId ?? '—'],

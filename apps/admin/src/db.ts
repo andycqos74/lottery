@@ -114,7 +114,8 @@ export async function dashboardCounts(pool: Pool): Promise<DashboardCounts> {
   const { rows } = await pool.query<{ open_tasks: string; overdue_tasks: string; members: string; draws: string }>(
     `SELECT
        (SELECT count(*) FROM human_task WHERE status = 'open')                                     AS open_tasks,
-       (SELECT count(*) FROM human_task WHERE status = 'open' AND due_at IS NOT NULL AND due_at < now()) AS overdue_tasks,
+       (SELECT count(*) FROM human_task WHERE status = 'open'
+          AND ((due_at IS NOT NULL AND due_at < now()) OR escalation_level > 0))                   AS overdue_tasks,
        (SELECT count(*) FROM member)                                                                AS members,
        (SELECT count(*) FROM draw)                                                                  AS draws`,
   );
@@ -148,6 +149,9 @@ export interface HumanTask {
   readonly secondApproverId: string | null;
   readonly resolvedBy: string | null;
   readonly resolvedAt: Date | null;
+  /** FR-5.6: how many times EscalationWorkflow has raised this task for being overdue. */
+  readonly escalationLevel: number;
+  readonly lastEscalatedAt: Date | null;
 }
 
 function mapTaskRow(row: {
@@ -171,6 +175,8 @@ function mapTaskRow(row: {
   second_approver_id: string | null;
   resolved_by: string | null;
   resolved_at: Date | null;
+  escalation_level: number;
+  last_escalated_at: Date | null;
 }): HumanTask {
   return {
     id: row.id,
@@ -193,16 +199,18 @@ function mapTaskRow(row: {
     secondApproverId: row.second_approver_id,
     resolvedBy: row.resolved_by,
     resolvedAt: row.resolved_at,
+    escalationLevel: row.escalation_level,
+    lastEscalatedAt: row.last_escalated_at,
   };
 }
 
 const TASK_COLUMNS = `id, kind, title, detail, consequence_if_ignored, gap_id, entity_type, entity_id, workflow_id, run_id,
        signal_name, update_name, opened_at, due_at, status, requires_second_approver,
-       first_approver_id, second_approver_id, resolved_by, resolved_at`;
+       first_approver_id, second_approver_id, resolved_by, resolved_at, escalation_level, last_escalated_at`;
 
 /**
  * `status: 'all'` drops the WHERE clause; `'open'` keeps the urgency-first
- * ordering (soonest due date first) since that's the working inbox view,
+ * ordering (most escalated, then soonest due date) since that's the working inbox view,
  * everything else is most-recent-first (a history view).
  */
 export async function listTasksByStatus(
@@ -212,7 +220,7 @@ export async function listTasksByStatus(
 ): Promise<HumanTask[]> {
   if (status === 'open') {
     const { rows } = await pool.query(
-      `SELECT ${TASK_COLUMNS} FROM human_task WHERE status = 'open' ORDER BY due_at NULLS LAST, opened_at LIMIT $1`,
+      `SELECT ${TASK_COLUMNS} FROM human_task WHERE status = 'open' ORDER BY escalation_level DESC, due_at NULLS LAST, opened_at LIMIT $1`,
       [limit],
     );
     return rows.map(mapTaskRow);
@@ -403,11 +411,6 @@ export async function getJackpotInputs(pool: Pool): Promise<JackpotInputs> {
   };
 }
 
-export async function countEntries(pool: Pool, drawId: string): Promise<number> {
-  const { rows } = await pool.query<{ n: string }>(`SELECT count(*) AS n FROM entry WHERE draw_id = $1 AND voided_at IS NULL`, [drawId]);
-  return Number(rows[0]!.n);
-}
-
 export async function nextDrawNumber(pool: Pool): Promise<number> {
   const { rows } = await pool.query<{ next: number }>(`SELECT COALESCE(MAX(draw_number), 0) + 1 AS next FROM draw`);
   return rows[0]!.next;
@@ -522,18 +525,6 @@ export async function createDraws(
 /** #5: a draw's name is presentation only, so it may be changed at any status. */
 export async function renameDraw(pool: Pool, drawId: string, name: string | null): Promise<void> {
   await pool.query(`UPDATE draw SET name = $2 WHERE id = $1`, [drawId, name]);
-}
-
-export async function closeDrawAndRecordWorkflow(
-  pool: Pool,
-  drawId: string,
-  workflowId: string,
-  entriesCount: number,
-): Promise<void> {
-  await pool.query(
-    `UPDATE draw SET status = 'closed', workflow_id = $2, entries_count = $3 WHERE id = $1`,
-    [drawId, workflowId, entriesCount],
-  );
 }
 
 export interface MemberSummary {

@@ -30,8 +30,6 @@ import { CsvBankFeed } from '@qosfc/adapters-live';
 import { formatPence, pence, TICKET_PRICE_PENCE } from '@qosfc/domain';
 import {
   addEntry,
-  countEntries,
-  closeDrawAndRecordWorkflow,
   createDraws,
   createMember,
   dashboardCounts,
@@ -76,7 +74,7 @@ import {
 import { planOneOffDraw, planRecurringDraws, type Recurrence } from './draw-schedule.js';
 import { decryptSecret } from './secret-box.js';
 import { verifyTotp } from './totp.js';
-import { deliverTaskDecision, startDrawWorkflow } from './temporal.js';
+import { deliverTaskDecision, notifyEscalationTaskClosed, startDrawWorkflow } from './temporal.js';
 
 const port = Number(process.env['PORT'] ?? 8081);
 const nodeEnv = process.env['NODE_ENV'] ?? 'development';
@@ -628,24 +626,21 @@ app.post('/draws/:id/run', async (request, reply) => {
   if (!draw) return reply.code(404).type('text/html').send('<p>Draw not found.</p>');
   if (draw.status !== 'open') return sendDrawPage(request, reply, id, { error: `Draw is already '${draw.status}'.` });
 
-  // #9/#11: every Direct Debit member, and every member with prepaid weeks
-  // left, is entered before the entry set is frozen — otherwise their entries
-  // depend on someone remembering to press "Generate" first. If that can't
-  // run (e.g. GAP-17 not activated) the draw does not run either: running it
-  // anyway would silently leave paid-up members out.
-  let generated;
+  // #9/#11: the workflow itself enters every Direct Debit member and every
+  // member with prepaid weeks left, then closes the draw — so the same run
+  // happens whether a human presses this or the scheduled dispatcher reaches
+  // the draw's time first. If entries can't be generated (e.g. GAP-17 not
+  // activated) the run blocks on a task in the inbox rather than going ahead
+  // without paid-up members.
+  let workflowId: string;
   try {
-    generated = await generateDueEntries(pool, { drawId: id, actorId: request.authUser!.id, actorLabel: request.authUser!.email });
+    ({ workflowId } = await startDrawWorkflow({ drawId: id, drawNumber: draw.drawNumber }));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return sendDrawPage(request, reply, id, {
-      error: `The draw was not run: standing-order and Direct Debit entries could not be generated first. ${message}`,
-    });
+    if (error instanceof Error && error.name === 'WorkflowExecutionAlreadyStartedError') {
+      return sendDrawPage(request, reply, id, { error: 'This draw is already running — it may have been started automatically at its draw time.' });
+    }
+    throw error;
   }
-
-  const entriesCount = await countEntries(pool, id);
-  const { workflowId } = await startDrawWorkflow({ drawId: id, drawNumber: draw.drawNumber, entriesCount });
-  await closeDrawAndRecordWorkflow(pool, id, workflowId, entriesCount);
 
   await insertAuditLog(pool, {
     actorId: request.authUser!.id,
@@ -654,7 +649,6 @@ app.post('/draws/:id/run', async (request, reply) => {
     entity: 'draw',
     entityId: id,
     workflowId,
-    after: { entriesCount, generatedEntries: generated.generated, directDebitEntries: generated.directDebitGenerated },
   });
 
   reply.redirect(`/draws/${id}`);
@@ -850,14 +844,21 @@ app.post('/tasks/:id/resolve', async (request, reply) => {
   // once accepted, can't be rolled back, so the human decision stays recorded
   // regardless of what happens next.
   let flash = `Task resolved.${paymentFlash}`;
-  if (refreshed.firstApproverId && refreshed.secondApproverId) {
+  await notifyEscalationTaskClosed(id).catch((error: unknown) =>
+    request.log.warn({ err: error }, 'could not tell the escalation workflow its task closed; it will notice on its next check'),
+  );
+
+  // GAP-44: a two-approver task only reaches here once both have approved, and
+  // the workflow re-checks the quorum itself. A single-approver task (e.g.
+  // retry_draw) is decided by whoever resolved it.
+  if (refreshed.workflowId && refreshed.signalName) {
     const [firstApprover, secondApprover] = await Promise.all([
-      findUserById(pool, refreshed.firstApproverId),
-      findUserById(pool, refreshed.secondApproverId),
+      refreshed.firstApproverId ? findUserById(pool, refreshed.firstApproverId) : undefined,
+      refreshed.secondApproverId ? findUserById(pool, refreshed.secondApproverId) : undefined,
     ]);
     const delivery = await deliverTaskDecision(refreshed, {
-      decidedBy: firstApprover?.email ?? refreshed.firstApproverId,
-      secondApproverId: secondApprover?.email ?? refreshed.secondApproverId,
+      decidedBy: firstApprover?.email ?? refreshed.firstApproverId ?? request.authUser!.email,
+      secondApproverId: secondApprover?.email ?? refreshed.secondApproverId ?? '',
       mechanism,
       note,
     });
