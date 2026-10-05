@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/colors.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/typography.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/effects.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/base.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<script src="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/_ds_bundle.js"></script>
+<script src="./image-slot.js"></script>
+<style>body{margin:0;background:#fff;font-family:var(--font-body);color:var(--grey-800)} *{box-sizing:border-box} a{color:var(--qos-navy)} a:hover{color:var(--qos-mid)}</style>
+</helmet>
+
+<div data-screen-label="Landing" style="width:100%;background:#fff;position:relative;overflow:hidden">
+
+    <nav style="position:relative;z-index:5;height:76px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 clamp(16px,4vw,48px);background:var(--qos-sky)">
+      <a href="#" style="display:flex;align-items:center;gap:clamp(8px,2vw,14px);text-decoration:none;min-width:0">
+        <img src="assets/qos-crest.png" alt="Queen of the South FC" style="height:clamp(40px,10vw,52px);width:clamp(40px,10vw,52px);flex:none">
+        <span style="display:flex;flex-direction:column;gap:2px">
+          <span style="font-family:var(--font-body);font-size:clamp(9px,2.6vw,11px);font-weight:700;letter-spacing:clamp(1px,.5vw,2px);text-transform:uppercase;color:var(--qos-ice-2);white-space:nowrap">Queen of the South FC</span>
+          <span style="font-family:var(--font-display);font-weight:800;font-size:clamp(15px,4.2vw,20px);color:var(--qos-ice);white-space:nowrap">The Doonhamers Draw</span>
+        </span>
+      </a>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button type="button" onClick="{{ toggleMenuB }}" style="display:flex;align-items:center;gap:10px;height:44px;min-width:44px;justify-content:center;padding:0 clamp(6px,2vw,16px);background:transparent;border:0;color:var(--qos-ice);font-family:var(--font-body);font-weight:700;font-size:15px;letter-spacing:1px;text-transform:uppercase;cursor:pointer" style-hover="color:var(--qos-navy)"><sc-if value="{{ wide }}" hint-placeholder-val="{{ true }}"><span>Menu</span></sc-if><span style="font-size:22px">{{ menuGlyphB }}</span></button>
+        <a href="#" title="My account" style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:var(--qos-navy);color:#fff;text-decoration:none" style-hover="opacity:.7"><i class="fa fa-user" aria-hidden="true" style="font-size:20px"></i></a>
+      </div>
+      <sc-if value="{{ menuB }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;top:76px;right:clamp(0px,4vw,48px);width:min(300px,100%);background:var(--qos-navy);padding:12px 0;display:flex;flex-direction:column">
+          <sc-for list="{{ menuItems }}" as="m" hint-placeholder-count="6">
+            <a href="#" style="padding:12px 24px;color:#fff;text-decoration:none;font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase" style-hover="background:var(--qos-sky)">{{ m }}</a>
+          </sc-for>
+        </div>
+      </sc-if>
+    </nav>
+
+    <header style="position:relative;background:var(--qos-ice);display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));min-height:560px">
+      <div style="display:flex;flex-direction:column;justify-content:center;gap:20px;padding:clamp(32px,7vw,56px) clamp(16px,4vw,32px) clamp(48px,9vw,80px) clamp(16px,4vw,48px);position:relative;z-index:2;min-width:0" data-reveal="left">
+        <span style="font-family:var(--font-accent);font-size:clamp(13px,3.4vw,16px);letter-spacing:1px;text-transform:uppercase;color:var(--qos-mid);font-weight:700">Draw No. 143 · Saturday 10 October · 7pm</span>
+        <h1 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:clamp(22px,5.5vw,30px);color:var(--qos-navy)">Estimated jackpot</h1>
+        <div style="position:relative;align-self:flex-start">
+          <div style="position:absolute;left:-12px;right:-24px;top:58%;height:44px;background:var(--qos-sky);opacity:.25;clip-path:polygon(0 30%,100% 0,97% 100%,2% 80%)"></div>
+          <div data-pulse="1" data-count="jp" style="position:relative;font-family:var(--font-display);font-weight:800;font-size:clamp(72px,11vw,140px);line-height:.95;color:var(--qos-navy);letter-spacing:-3px;transform-origin:left center">{{ jpDisplay }}</div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px">
+          <sc-for list="{{ countdown }}" as="c" hint-placeholder-count="4">
+            <div style="flex:1 1 0;min-width:60px;max-width:84px;padding:10px 0;background:#fff;border:1px solid var(--qos-steel-line);display:flex;flex-direction:column;align-items:center;font-family:var(--font-accent)"><span style="font-size:clamp(24px,7vw,32px);font-weight:700;color:var(--qos-navy);line-height:1">{{ c.v }}</span><span style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--grey-500)">{{ c.k }}</span></div>
+          </sc-for>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px">
+          <a href="#entryB" style="height:54px;padding:0 28px;background:var(--qos-navy);color:#fff;text-decoration:none;font-weight:700;font-size:16px;display:flex;align-items:center;gap:10px" style-hover="background:#3068a7">Play this week <i class="fa fa-arrow-right" aria-hidden="true"></i></a>
+          <a href="#" style="height:54px;padding:0 24px;border:2px solid var(--qos-navy);color:var(--qos-navy);text-decoration:none;font-weight:700;font-size:16px;display:flex;align-items:center">How it works</a>
+        </div>
+      </div>
+      <div style="position:relative;min-height:clamp(220px,45vw,380px)">
+        <div style="position:absolute;inset:0;background:var(--qos-sky);clip-path:polygon(14% 0,100% 0,100% 100%,0 100%,9% 70%,4% 46%,12% 22%)"></div>
+        <div style="position:absolute;inset:0;clip-path:polygon(17% 0,100% 0,100% 100%,3% 100%,12% 70%,7% 46%,15% 22%)" data-reveal="right"><image-slot id="hero-photo-b" shape="rect" placeholder="Palmerston Park crowd or match photo"></image-slot></div>
+      </div>
+    </header>
+
+    <div style="position:relative;margin-top:-40px;z-index:3">
+      <div style="position:absolute;inset:-14px 0 14px 0;background:var(--qos-sky);transform:skewY(-1.6deg)"></div>
+      <div style="position:relative;background:var(--qos-navy);transform:skewY(-1.6deg);padding:clamp(28px,6vw,40px) clamp(16px,4vw,48px)">
+        <div style="transform:skewY(1.6deg);display:flex;flex-wrap:wrap;align-items:center;gap:20px clamp(24px,5vw,48px);color:#fff" data-reveal="up">
+          <div style="display:flex;flex-direction:column;gap:4px;min-width:170px">
+            <span style="font-family:var(--font-display);font-weight:800;font-size:26px">Last draw</span>
+            <span style="font-family:var(--font-accent);font-size:14px;color:#9cc9f0">No. 142 · Sat 3 Oct</span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:clamp(8px,2.5vw,14px)" data-balls="1">
+            <sc-for list="{{ lastNumbers }}" as="n" hint-placeholder-count="4">
+              <span data-ball="1" style="width:clamp(56px,16vw,76px);height:clamp(56px,16vw,76px);border-radius:50%;background:#fff;color:var(--qos-navy);display:flex;align-items:center;justify-content:center;font-family:var(--font-accent);font-weight:700;font-size:clamp(24px,7vw,34px)">{{ n }}</span>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px;margin-left:{{ jpMargin }}">
+            <span style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9cc9f0">Jackpot</span>
+            <span data-pulse="1" style="font-family:var(--font-display);font-weight:800;font-size:clamp(32px,9vw,44px);line-height:1;transform-origin:left center">£1,240</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9cc9f0">Winners</span>
+            <span style="font-family:var(--font-display);font-weight:800;font-size:clamp(32px,9vw,44px);line-height:1">2 <span style="font-family:var(--font-body);font-size:15px;font-weight:600;color:#d3e4f5">£620 each</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="entryB" style="max-width:1280px;margin:0 auto;padding:clamp(64px,12vw,110px) clamp(16px,4vw,48px) clamp(56px,10vw,96px);display:flex;flex-wrap:wrap;gap:48px 64px;align-items:flex-start">
+      <div style="flex:1 1 280px;display:flex;flex-direction:column;gap:16px" data-reveal="left">
+        <span style="font-family:var(--font-accent);font-size:15px;letter-spacing:2px;text-transform:uppercase;color:var(--qos-sky);font-weight:700">Easy entry</span>
+        <h2 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:clamp(28px,7vw,40px);color:var(--qos-navy);line-height:1.15">Pick your four for Draw 143</h2>
+        <p style="margin:0;font-size:16px;line-height:1.6;color:var(--grey-600)">Tap four numbers or use Lucky Dip. Choose how many draws, then pay by card or Direct Debit on the next step.</p>
+      </div>
+      <div style="flex:3 1 min(100%,480px);min-width:0;background:var(--qos-ice);border:1px solid var(--qos-steel-line);padding:clamp(16px,3vw,32px);display:flex;flex-direction:column;gap:22px" data-reveal="right" data-delay="120">
+        <div ref="{{ ballGridRef }}" style="display:grid;grid-template-columns:repeat({{ ballCols }},minmax(0,1fr));gap:12px;justify-items:center;max-width:{{ ballGridMax }};width:100%;margin:0 auto">
+          <sc-for list="{{ ballsB }}" as="b" hint-placeholder-count="20">
+            <button type="button" onClick="{{ b.toggle }}" style="width:100%;max-width:60px;aspect-ratio:1;padding:0;border-radius:50%;border:2px solid {{ b.bd }};background:{{ b.bg }};color:{{ b.fg }};font-family:var(--font-accent);font-weight:700;font-size:21px;cursor:pointer;transition:all .2s ease">{{ b.n }}</button>
+          </sc-for>
+        </div>
+        <div style="height:2px;background:var(--qos-steel-line);clip-path:polygon(0 0,100% 0,100% 100%,0 100%)"></div>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <span style="font-weight:700;font-size:15px;min-width:110px">{{ countB }}</span>
+          <button type="button" onClick="{{ luckyB }}" style="height:48px;padding:0 18px;background:#fff;border:1px solid var(--qos-steel-line);color:var(--qos-navy);font-weight:700;font-size:14px;cursor:pointer" style-hover="background:#e1e8f9"><i class="fa fa-random" aria-hidden="true"></i> Lucky Dip</button>
+          <div style="display:flex;border:1px solid var(--qos-steel-line)">
+            <sc-for list="{{ plansB }}" as="p" hint-placeholder-count="3">
+              <button type="button" onClick="{{ p.pick }}" style="height:48px;padding:0 16px;border:0;background:{{ p.bg }};color:{{ p.fg }};cursor:pointer;font-family:var(--font-body);font-weight:700;font-size:14px">{{ p.label }}</button>
+            </sc-for>
+          </div>
+          <button type="button" style="margin-left:auto;flex:1 1 240px;justify-content:space-between;height:54px;padding:0 22px;border:0;background:{{ payBgB }};color:#fff;font-family:var(--font-body);font-weight:700;font-size:16px;cursor:pointer;display:flex;align-items:center;gap:12px">{{ payLabelB }} <i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:var(--qos-ice);position:relative;padding:clamp(56px,10vw,96px) clamp(16px,4vw,48px)">
+      <svg width="1280" height="40" viewBox="0 0 1280 40" preserveAspectRatio="none" style="position:absolute;top:-1px;left:0;width:100%;display:block"><polygon points="0,0 1280,0 1280,14 1130,30 980,8 820,26 650,6 500,32 330,10 170,28 0,12" fill="#ffffff"></polygon></svg>
+      <h2 style="margin:0 0 clamp(32px,6vw,56px);font-family:var(--font-display);font-weight:800;font-size:clamp(28px,7vw,40px);color:var(--qos-navy)" data-reveal="left">How to play</h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:40px 36px">
+        <sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+            <div style="position:relative;display:flex;flex-direction:column;gap:12px;padding-left:28px" data-reveal="up" data-delay="{{ s.delay }}">
+              <div style="position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--qos-sky);transform:skewX(-12deg)"></div>
+              <span style="width:84px;height:84px;background:var(--qos-navy);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--font-accent);font-weight:700;font-size:30px;clip-path:polygon(0 8%,100% 0,94% 100%,4% 92%)">{{ s.num }}</span>
+              <h3 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:22px;color:var(--qos-navy)">{{ s.title }}</h3>
+              <p style="margin:0;font-size:15px;line-height:1.6;color:var(--grey-600)">{{ s.body }}</p>
+            </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="max-width:1280px;margin:0 auto;padding:clamp(56px,10vw,96px) clamp(16px,4vw,48px);display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:56px 64px;background:#fff">
+      <div style="display:flex;flex-direction:column;gap:10px" data-reveal="left">
+        <span style="font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grey-500)">Prize money paid out</span>
+        <span data-count="totals" style="font-family:var(--font-display);font-weight:800;font-size:clamp(60px,8vw,100px);line-height:1;color:var(--qos-navy)">{{ prizeDisplay }}</span>
+        <svg width="360" height="18" viewBox="0 0 360 18" preserveAspectRatio="none" style="display:block;width:100%;max-width:360px"><polyline points="0,12 50,4 110,14 170,3 230,13 290,5 360,10" fill="none" stroke="#009fff" stroke-width="6" stroke-linejoin="bevel"></polyline></svg>
+        <span style="font-size:15px;color:var(--grey-600)">to winners since the draw began</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px" data-reveal="right">
+        <span style="font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grey-500)">Contributed to charity</span>
+        <span style="font-family:var(--font-display);font-weight:800;font-size:clamp(60px,8vw,100px);line-height:1;color:var(--qos-navy)">{{ charityDisplay }}</span>
+        <svg width="360" height="18" viewBox="0 0 360 18" preserveAspectRatio="none" style="display:block;width:100%;max-width:360px"><polyline points="0,8 60,14 120,4 180,13 240,3 300,12 360,6" fill="none" stroke="#009fff" stroke-width="6" stroke-linejoin="bevel"></polyline></svg>
+        <span style="font-size:15px;color:var(--grey-600)">for the Queen of the South Community Trust</span>
+      </div>
+      <div style="grid-column:1 / -1;display:flex;flex-direction:column;gap:12px" data-reveal="up">
+        <div style="display:flex;height:14px;gap:4px"><div style="width:50%;background:var(--qos-navy);transform:skewX(-20deg)"></div><div style="width:40%;background:var(--qos-sky);transform:skewX(-20deg)"></div><div style="width:10%;background:var(--qos-steel-line);transform:skewX(-20deg)"></div></div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px 24px;font-size:14px;font-weight:600;line-height:1.3"><span style="display:flex;align-items:center;gap:8px;color:var(--qos-navy)"><i style="width:14px;height:14px;background:var(--qos-navy);transform:skewX(-20deg)"></i>50% Prize fund</span><span style="display:flex;align-items:center;gap:8px;color:var(--qos-mid)"><i style="width:14px;height:14px;background:var(--qos-sky);transform:skewX(-20deg)"></i>40% Community Trust</span><span style="display:flex;align-items:center;gap:8px;color:var(--grey-500)"><i style="width:14px;height:14px;background:var(--qos-steel-line);transform:skewX(-20deg)"></i>10% Running costs</span></div>
+      </div>
+    </div>
+
+    <div style="background:var(--qos-ice);position:relative;padding:clamp(64px,12vw,110px) clamp(16px,4vw,48px) clamp(72px,12vw,120px)">
+      <svg width="1280" height="40" viewBox="0 0 1280 40" preserveAspectRatio="none" style="position:absolute;top:-1px;left:0;width:100%;display:block"><polygon points="0,0 1280,0 1280,22 1120,6 960,30 800,10 640,34 480,8 320,28 160,12 0,26" fill="#ffffff"></polygon></svg>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr));gap:clamp(40px,7vw,56px);align-items:center">
+        <div style="position:relative;height:clamp(220px,50vw,320px);margin-right:14px" data-reveal="left">
+          <div style="position:absolute;inset:14px -14px -14px 14px;background:var(--qos-sky);clip-path:polygon(0 4%,100% 0,97% 100%,3% 94%)"></div>
+          <div style="position:absolute;inset:0;clip-path:polygon(0 4%,100% 0,97% 100%,3% 94%)"><image-slot id="trust-photo-b" shape="rect" placeholder="Community Trust photo"></image-slot></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:16px" data-reveal="right">
+          <span style="font-family:var(--font-accent);font-size:15px;letter-spacing:2px;text-transform:uppercase;color:var(--qos-sky);font-weight:700">Good causes</span>
+          <h3 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:clamp(26px,6.5vw,36px);color:var(--qos-navy);line-height:1.15">Playing supports the community</h3>
+          <p style="margin:0;font-size:16px;line-height:1.7;color:var(--grey-600);max-width:52ch">Forty pence in every pound goes to the Queen of the South Community Trust. Every line you enter helps fund its work across Dumfries and Galloway.</p>
+          <a href="#" style="font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px">About the Trust <i class="fa fa-angle-double-right" aria-hidden="true"></i></a>
+        </div>
+      </div>
+    </div>
+
+    <footer style="background:var(--qos-navy);color:#d3e4f5;padding:40px clamp(16px,4vw,48px);display:flex;flex-wrap:wrap;align-items:center;gap:24px;font-size:13px;clip-path:polygon(0 12px,30% 0,62% 14px,100% 2px,100% 100%,0 100%)">
+      <img src="assets/qos-crest.png" alt="" style="height:44px;width:44px">
+      <span>The Doonhamers Draw · Queen of the South FC · Palmerston Park, Dumfries</span>
+      <div style="margin-left:auto;display:flex;flex-wrap:wrap;gap:24px"><a href="#" style="color:#fff;text-decoration:none">Rules</a><a href="#" style="color:#fff;text-decoration:none">Privacy</a><a href="#" style="color:#fff;text-decoration:none">Play responsibly</a><a href="#" style="color:#fff;text-decoration:none">Contact</a></div>
+    </footer>
+  </div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { pA: [], pB: [], dA: 1, dB: 1, jp: 1860, prize: 48200, charity: 38560, menuA: false, menuB: false, now: Date.now(), ballCols: 10, vw: window.innerWidth };
+  ballGridRef = React.createRef();
+  componentDidMount() {
+    this.tick = setInterval(() => this.setState({ now: Date.now() }), 1000);
+    setTimeout(() => this.setupMotion(), 80);
+    this.onResize = () => this.setState({ vw: window.innerWidth }); window.addEventListener('resize', this.onResize);
+    const fit = () => { const el = this.ballGridRef.current; if (!el) return; const w = el.parentElement.clientWidth; const cols = w >= 10 * 48 + 9 * 12 + 40 ? 10 : 5; if (cols !== this.state.ballCols) this.setState({ ballCols: cols }); };
+    this.ro = new ResizeObserver(fit); if (this.ballGridRef.current) this.ro.observe(this.ballGridRef.current.parentElement); fit();
+  }
+  componentWillUnmount() {
+    clearInterval(this.tick); clearInterval(this.checkTimer); this.ro && this.ro.disconnect(); window.removeEventListener('resize', this.onResize);
+    if (this.check) { window.removeEventListener('scroll', this.check, true); window.removeEventListener('wheel', this.check); window.removeEventListener('resize', this.check); }
+  }
+  setupMotion() {
+    const off = { left: 'translateX(-90px)', right: 'translateX(90px)', up: 'translateY(50px)' };
+    const hide = (el) => { el.style.opacity = '0'; el.style.transform = off[el.dataset.reveal] || off.up; };
+    document.querySelectorAll('[data-reveal]').forEach((el) => {
+      if (el.getBoundingClientRect().top >= (window.innerHeight || 0)) hide(el);
+      el.style.transition = 'opacity .8s ease, transform .9s cubic-bezier(.2,.7,.2,1)';
+      el.style.transitionDelay = (el.dataset.delay || 0) + 'ms';
+    });
+    const els = Array.from(document.querySelectorAll('[data-reveal]'));
+    const H = () => window.innerHeight || document.documentElement.clientHeight;
+    const show = (el) => {
+      if (el._shown) return; el._shown = true;
+      el.style.opacity = '1'; el.style.transform = 'none';
+      el.querySelectorAll('[data-ball]').forEach((b, i) => b.animate(
+        [{ transform: 'scale(0) rotate(-120deg)', opacity: 0 }, { transform: 'scale(1.15)', opacity: 1, offset: .7 }, { transform: 'scale(1)' }],
+        { duration: 700, delay: 300 + i * 180, easing: 'ease-out', fill: 'backwards' }));
+      const c = el.matches('[data-count]') ? el : el.querySelector('[data-count]');
+      if (c) this.countUp(c.dataset.count);
+    };
+    // Only pre-hide what starts below the fold; everything visible on load shows immediately.
+    els.forEach((el) => { if (el.getBoundingClientRect().top < H()) show(el); });
+    this.check = () => els.forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.top < H() * 0.92 && r.bottom > 0) show(el);
+      else if (r.top > H() && el._shown) { el._shown = false; hide(el); }
+    });
+    window.addEventListener('scroll', this.check, true);
+    window.addEventListener('wheel', this.check, { passive: true });
+    window.addEventListener('resize', this.check);
+    this.checkTimer = setInterval(this.check, 300);
+    document.querySelectorAll('[data-pulse]').forEach((el) => el.animate(
+      [{ transform: 'scale(1)' }, { transform: 'scale(1.035)' }, { transform: 'scale(1)' }],
+      { duration: 2800, iterations: Infinity, easing: 'ease-in-out' }));
+    document.querySelectorAll('[data-ball]').forEach((b, i) => b.animate(
+      [{ boxShadow: '0 0 0 0 rgba(0,159,255,.6)' }, { boxShadow: '0 0 0 16px rgba(0,159,255,0)' }],
+      { duration: 1600, delay: 1500 + (i % 4) * 400, iterations: Infinity, easing: 'ease-out' }));
+  }
+  countUp(key) {
+    const targets = key === 'jp' ? { jp: 1860 } : { prize: 48200, charity: 38560 };
+    const t0 = performance.now(), dur = 1600;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3), s = {};
+      for (const n in targets) s[n] = targets[n] * e;
+      this.setState(s);
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  balls(key) {
+    const picks = this.state[key];
+    return Array.from({ length: 20 }, (_, i) => {
+      const n = i + 1, on = picks.includes(n);
+      return { n, bg: on ? '#094582' : '#fff', fg: on ? '#fff' : '#094582', bd: on ? '#094582' : '#c9d7e4',
+        toggle: () => this.setState((s) => {
+          const p = s[key];
+          if (p.includes(n)) return { [key]: p.filter((x) => x !== n) };
+          return p.length >= 4 ? null : { [key]: [...p, n] };
+        }) };
+    });
+  }
+  lucky(key) {
+    const pool = Array.from({ length: 20 }, (_, i) => i + 1), out = [];
+    while (out.length < 4) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    this.setState({ [key]: out });
+  }
+  plans(key) {
+    return [1, 4, 12].map((d) => {
+      const on = this.state[key] === d;
+      return { label: d === 1 ? '1 draw' : d + ' draws', price: '£' + (d * 2).toFixed(2), bg: on ? '#094582' : '#fff', fg: on ? '#fff' : '#094582', pick: () => this.setState({ [key]: d }) };
+    });
+  }
+  renderVals() {
+    const gbp = (v) => '£' + Math.round(v).toLocaleString('en-GB');
+    const ms = Math.max(0, new Date('2026-10-10T19:00:00+01:00').getTime() - this.state.now);
+    const pad = (v) => String(v).padStart(2, '0');
+    const countdown = [
+      { k: 'Days', v: pad(Math.floor(ms / 864e5)) }, { k: 'Hours', v: pad(Math.floor(ms / 36e5) % 24) },
+      { k: 'Mins', v: pad(Math.floor(ms / 6e4) % 60) }, { k: 'Secs', v: pad(Math.floor(ms / 1e3) % 60) }];
+    const pay = (p, d) => p.length === 4
+      ? { label: 'Continue to payment · £' + (d * 2).toFixed(2), bg: '#094582' }
+      : { label: 'Pick ' + (4 - p.length) + ' more number' + (p.length === 3 ? '' : 's'), bg: '#8fa6c1' };
+    const pa = pay(this.state.pA, this.state.dA), pb = pay(this.state.pB, this.state.dB);
+    const steps = [
+      { num: '01', title: 'Create an account', body: 'Register with your name, email address and a password.' },
+      { num: '02', title: 'Pick 4 numbers', body: 'Choose 4 numbers from 1 to 20, or use Lucky Dip. Add more lines if you like.' },
+      { num: '03', title: 'Pay £2 per draw', body: 'Pay by card for 1, 4 or 12 draws, or by Direct Debit to stay entered every draw.' },
+      { num: '04', title: 'Watch the draw', body: 'Match all 4 to share the jackpot. If nobody does, it rolls over to the next draw.' }];
+    const stepsB = [];
+    steps.forEach((s, i) => { if (i) stepsB.push({ rule: true }); stepsB.push({ ...s, card: true, delay: i * 140 }); });
+    return {
+      jpDisplay: gbp(this.state.jp), prizeDisplay: gbp(this.state.prize), charityDisplay: gbp(this.state.charity),
+      countdown, lastNumbers: [3, 9, 14, 18],
+      steps: steps.map((s, i) => ({ ...s, delay: i * 140 })), stepsB,
+      menuItems: ['Home', 'Current draw', 'Results', 'How to play', 'Good causes', 'Log in / Sign up'],
+      menuA: this.state.menuA, menuB: this.state.menuB,
+      menuGlyphA: this.state.menuA ? '×' : '☰', menuGlyphB: this.state.menuB ? '×' : '☰',
+      toggleMenuA: () => this.setState((s) => ({ menuA: !s.menuA })),
+      toggleMenuB: () => this.setState((s) => ({ menuB: !s.menuB })),
+      ballsA: this.balls('pA'), ballsB: this.balls('pB'),
+      luckyA: () => this.lucky('pA'), luckyB: () => this.lucky('pB'),
+      clearA: () => this.setState({ pA: [] }),
+      countA: this.state.pA.length + ' of 4 selected', countB: this.state.pB.length + ' of 4 selected',
+      plansA: this.plans('dA'), plansB: this.plans('dB'),
+      wide: this.state.vw >= 560, jpMargin: this.state.vw >= 900 ? 'auto' : '0',
+      ballGridRef: this.ballGridRef, ballCols: this.state.ballCols, ballGridMax: this.state.ballCols === 10 ? '100%' : '360px',
+      payLabelA: pa.label, payBgA: pa.bg, payLabelB: pb.label, payBgB: pb.bg,
+    };
+  }
+}
+</script>
+</body>
+</html>

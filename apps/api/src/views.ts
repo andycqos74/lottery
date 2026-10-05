@@ -1,7 +1,16 @@
 import { formatPence, pence } from '@qosfc/domain';
-import type { DrawStats, MemberDetails, MyEntry, OpenDraw, SettledDraw } from './db.js';
+import type { DrawStats, LifetimeTotals, MemberDetails, MyEntry, OpenDraw, RevenueSplit, SettledDraw } from './db.js';
 import { MAX_LINES_PER_PURCHASE, PURCHASE_BLOCK_SIZES } from './entries.js';
 import type { DirectDebitStatus } from './direct-debit.js';
+import { assetUrl } from './assets.js';
+
+/*
+ * The member-facing pages, in the Queen of the South FC identity
+ * (docs/design_handoff_public_pages). Server-rendered strings, as before — but
+ * styles and behaviour live in apps/api/public/site.css and site.js, never
+ * inline: the site is served under a strict CSP (deploy/compose/Caddyfile)
+ * that blocks inline <style>, <script> and style="" attributes.
+ */
 
 export function escapeHtml(value: string): string {
   return value
@@ -12,151 +21,6 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-const STYLE = `
-  :root{
-    --ink:#17213c; --ink-soft:#4a5270; --paper:#f6f2e7; --surface:#ffffff; --surface-sunk:#efe9db;
-    --line:#ddd4bd; --royal:#1e3f8f; --royal-deep:#12275e; --royal-soft:#e7ecf8;
-    --gold:#a9761f; --gold-bright:#c98d24; --gold-soft:#f4e6c8; --good:#2f6d4e; --good-soft:#e2f0e6;
-    --focus:#c98d24; --shadow: 0 1px 2px rgba(23,33,60,.06), 0 8px 24px -12px rgba(23,33,60,.18);
-  }
-  @media (prefers-color-scheme: dark){
-    :root:not([data-theme="light"]){
-      --ink:#eee8d9; --ink-soft:#b7b3ac; --paper:#0e1730; --surface:#141f3f; --surface-sunk:#0a1226;
-      --line:#2a3660; --royal:#7695e6; --royal-deep:#a9c0f2; --royal-soft:#1b2a54;
-      --gold:#e0b158; --gold-bright:#f0c774; --gold-soft:#2c2413; --good:#7bcc9e; --good-soft:#12271c;
-      --focus:#e0b158; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.6);
-    }
-  }
-  :root[data-theme="dark"]{
-    --ink:#eee8d9; --ink-soft:#b7b3ac; --paper:#0e1730; --surface:#141f3f; --surface-sunk:#0a1226;
-    --line:#2a3660; --royal:#7695e6; --royal-deep:#a9c0f2; --royal-soft:#1b2a54;
-    --gold:#e0b158; --gold-bright:#f0c774; --gold-soft:#2c2413; --good:#7bcc9e; --good-soft:#12271c;
-    --focus:#e0b158; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.6);
-  }
-  *{box-sizing:border-box}
-  body{ margin:0; background:var(--paper); color:var(--ink); font-family:'Figtree', system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
-  h1,h2,h3,.display{ font-family:'Big Shoulders Display', 'Arial Narrow', sans-serif; text-transform:uppercase; letter-spacing:.02em; margin:0; color:var(--ink); }
-  .num, .tabular{ font-family:'Space Mono', ui-monospace, monospace; font-variant-numeric:tabular-nums; }
-  a{ color:var(--royal) }
-  :where(a,button,input,select):focus-visible{ outline:2px solid var(--focus); outline-offset:2px; border-radius:4px; }
-
-  .app{ display:grid; grid-template-columns:250px 1fr; min-height:100vh; }
-  .side{ background:var(--royal-deep); color:#eef1fa; padding:1.5rem 1.1rem; display:flex; flex-direction:column; gap:1.6rem; }
-  .brand{ line-height:1; }
-  .brand .club{ font-size:.72rem; letter-spacing:.16em; color:var(--gold-bright); font-weight:600; display:block; margin-bottom:.35rem; }
-  .brand .name{ font-size:1.9rem; font-weight:800; color:#fff; line-height:.95; text-decoration:none; display:block; }
-  .brand .sub{ display:block; margin-top:.4rem; font-size:.78rem; color:#b9c3e6; font-family:'Figtree',sans-serif; text-transform:none; letter-spacing:0; }
-
-  nav.pages{ display:flex; flex-direction:column; gap:.15rem; }
-  nav.pages a{ display:flex; align-items:baseline; gap:.6rem; padding:.55rem .6rem; border-radius:8px; font-size:.93rem; font-weight:600;
-               color:#c7cfe8; text-decoration:none; transition:background .15s, color .15s; }
-  nav.pages a .idx{ font-family:'Space Mono',monospace; font-size:.72rem; color:#7488c0; width:1.1rem; }
-  nav.pages a:hover{ background:rgba(255,255,255,.06); color:#fff; }
-  nav.pages a.active{ background:#fff; color:var(--royal-deep); }
-  nav.pages a.active .idx{ color:var(--gold); }
-  nav.pages form{ margin-top:.5rem; }
-  nav.pages form button{ all:unset; cursor:pointer; display:block; padding:.55rem .6rem; border-radius:8px; font-size:.93rem; font-weight:600; color:#c7cfe8; width:100%; }
-  nav.pages form button:hover{ background:rgba(255,255,255,.06); color:#fff; }
-
-  .countdown{ margin-top:auto; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:.85rem .9rem; }
-  .countdown .lbl{ font-size:.68rem; letter-spacing:.12em; color:#9fadd6; text-transform:uppercase; }
-  .countdown .val{ font-family:'Space Mono',monospace; font-size:1.05rem; color:#fff; margin-top:.25rem; }
-  .countdown .val b{ color:var(--gold-bright); }
-
-  main{ padding:1.6rem 2.4rem 4rem; max-width:920px; }
-  .page-head{ margin-bottom:1.6rem; }
-  .page-head h1{ font-size:2.5rem; }
-  .page-head p{ color:var(--ink-soft); margin:.4rem 0 0; max-width:60ch; font-size:1rem; }
-
-  .card{ background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); padding:1.4rem 1.5rem; }
-  .stack{ display:flex; flex-direction:column; gap:1.1rem; }
-  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:1.1rem; }
-  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:.9rem; }
-
-  label{ font-size:.82rem; font-weight:600; color:var(--ink-soft); display:block; margin-bottom:.3rem; }
-  input[type=text],input[type=email],input[type=password],input[type=tel],select{
-    width:100%; font:inherit; font-family:'Figtree',sans-serif; padding:.6rem .7rem; border-radius:8px;
-    border:1px solid var(--line); background:var(--surface); color:var(--ink);
-  }
-  .field{ margin-bottom:0; }
-  .hint{ font-size:.78rem; color:var(--ink-soft); margin-top:.35rem; }
-
-  .btn{ all:unset; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:.4rem; font-weight:700; font-size:.92rem;
-        padding:.65rem 1.2rem; border-radius:9px; font-family:'Figtree',sans-serif; }
-  .btn-primary{ background:var(--royal); color:#fff; }
-  .btn-primary:hover{ background:var(--royal-deep); }
-  .btn-gold{ background:var(--gold-bright); color:#2a1c02; }
-  .btn-gold:hover{ filter:brightness(.94); }
-  .btn-ghost{ background:transparent; color:var(--royal); border:1px solid var(--line); }
-  .btn-ghost:hover{ background:var(--royal-soft); }
-  .btn-block{ width:100%; }
-  .linkbtn{ all:unset; cursor:pointer; color:var(--royal); font-weight:600; }
-  .linkbtn:hover{ text-decoration:underline; }
-
-  .divider{ border:none; border-top:1px solid var(--line); margin:0; }
-
-  .ball-row{ display:flex; flex-wrap:wrap; gap:.5rem; }
-  .ball{ width:2.5rem; height:2.5rem; border-radius:50%; display:flex; align-items:center; justify-content:center;
-         font-family:'Space Mono',monospace; font-weight:700; font-size:.95rem; border:1.5px solid var(--line);
-         background:var(--surface); color:var(--ink); }
-  .ball.picked{ background:var(--royal); border-color:var(--royal); color:#fff; }
-  .ball.win{ background:var(--gold-bright); border-color:var(--gold-bright); color:#2a1c02; }
-  .ball-grid{ display:grid; grid-template-columns:repeat(10,2.5rem); gap:.5rem; }
-  .ball-grid label{ margin:0; cursor:pointer; }
-  .ball-grid input{ position:absolute; opacity:0; width:2.5rem; height:2.5rem; cursor:pointer; }
-  .ball-grid .ball{ pointer-events:none; }
-  .ball-grid input:checked + .ball{ background:var(--royal); border-color:var(--royal); color:#fff; }
-
-  .pill{ display:inline-flex; align-items:center; gap:.35rem; font-size:.74rem; font-weight:700; letter-spacing:.03em; padding:.22rem .55rem; border-radius:999px; }
-  .pill-open{ background:var(--good-soft); color:var(--good); }
-  .pill-rollover{ background:var(--gold-soft); color:var(--gold); }
-  .pill-win{ background:var(--gold-bright); color:#2a1c02; }
-
-  table{ width:100%; border-collapse:collapse; }
-  th{ text-align:left; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft); padding:.5rem .6rem; border-bottom:1px solid var(--line); }
-  td{ padding:.65rem .6rem; border-bottom:1px solid var(--line); font-size:.9rem; vertical-align:middle; }
-  tr:last-child td{ border-bottom:none; }
-  .amt{ font-family:'Space Mono',monospace; font-weight:700; }
-
-  .stat{ display:flex; flex-direction:column; gap:.15rem; }
-  .stat .k{ font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); }
-  .stat .v{ font-family:'Big Shoulders Display',sans-serif; font-size:1.9rem; font-weight:800; }
-  .stat .v small{ font-size:1rem; font-weight:600; font-family:'Figtree',sans-serif; text-transform:none; color:var(--ink-soft); }
-
-  .banner{ background:var(--royal-soft); border:1px solid var(--royal); border-radius:10px; padding:.75rem 1rem; font-size:.86rem;
-           color:var(--royal-deep); display:flex; gap:.6rem; align-items:flex-start; }
-  .error{ background:#fdecea; color:#b3261e; border:1px solid #f3c1bd; border-radius:10px; padding:.75rem 1rem; font-size:.9rem; }
-  .flash{ background:var(--good-soft); color:var(--good); border:1px solid var(--good); border-radius:10px; padding:.75rem 1rem; font-size:.9rem; }
-
-  .method-choices{ display:grid; grid-template-columns:1fr 1fr; gap:.6rem; }
-  .method-choice{ display:flex; gap:.6rem; align-items:flex-start; padding:.75rem .8rem; border:1px solid var(--line); border-radius:10px; cursor:pointer; background:var(--surface); }
-  .method-choice b{ display:block; font-size:.92rem; }
-  .method-choice .hint{ display:block; margin-top:.15rem; }
-  .method-choice:has(input:checked){ border-color:var(--royal); background:var(--royal-soft); }
-  @media (max-width: 640px){ .method-choices{ grid-template-columns:1fr; } }
-  [hidden]{ display:none !important; }
-
-  .muted{ color:var(--ink-soft); }
-  .sep-label{ font-size:.72rem; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-soft); margin:1.6rem 0 .7rem; }
-  .toggle-note{ display:flex; align-items:flex-start; gap:.5rem; font-size:.85rem; }
-  .toggle-note input{ margin-top:.2rem; }
-
-  fieldset{ border:1px solid var(--line); border-radius:10px; padding:.8rem .9rem; margin:0; }
-  fieldset legend{ font-size:.82rem; font-weight:600; color:var(--ink-soft); padding:0 .3rem; }
-  .radio-row{ display:flex; align-items:center; gap:.5rem; padding:.35rem 0; font-size:.9rem; cursor:pointer; }
-  .radio-row .amt{ margin-left:auto; }
-
-  @media (max-width:860px){
-    .app{ grid-template-columns:1fr; }
-    .side{ flex-direction:row; align-items:center; overflow-x:auto; padding:1rem; }
-    nav.pages{ flex-direction:row; }
-    .countdown{ display:none; }
-    main{ padding:1.2rem 1.2rem 3rem; }
-    .grid2,.row2{ grid-template-columns:1fr; }
-    .ball-grid{ grid-template-columns:repeat(5,2.5rem); }
-  }
-`;
-
 const LONDON_DATE_TIME = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Europe/London',
   weekday: 'short',
@@ -166,9 +30,25 @@ const LONDON_DATE_TIME = new Intl.DateTimeFormat('en-GB', {
   minute: '2-digit',
 });
 
+const LONDON_LONG_DATE = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long' });
+const LONDON_HOUR = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', minute: '2-digit', hour12: true });
+const SHORT_DATE = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
+
 /** All draw times are UK times, whatever timezone the server runs in. */
 function formatLondon(value: Date): string {
   return LONDON_DATE_TIME.format(value);
+}
+
+/** "Saturday 10 October · 7pm" — the landing hero's draw time. */
+function formatLondonLong(value: Date): string {
+  const time = LONDON_HOUR.format(value).replace(':00', '').replace(/\s/g, '').toLowerCase();
+  return `${LONDON_LONG_DATE.format(value).replace(',', '')} · ${time}`;
+}
+
+/** "Sat 3 Oct" from a draw's calendar date (YYYY-MM-DD). */
+function formatDrawDate(isoDate: string): string {
+  const date = new Date(`${isoDate}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? isoDate : SHORT_DATE.format(date).replace(',', '');
 }
 
 function drawWhen(draw: OpenDraw): string {
@@ -179,8 +59,49 @@ function drawHeading(draw: OpenDraw): string {
   return draw.name ? `${draw.name} — Draw No. ${draw.drawNumber}` : `Draw No. ${draw.drawNumber}`;
 }
 
+/** Whole pounds for headline figures ("£1,240"), falling back to pence so an odd amount is never misstated. */
+function formatMoney(p: bigint): string {
+  return p % 100n === 0n ? `£${(p / 100n).toLocaleString('en-GB')}` : formatPence(pence(p));
+}
+
+function moneyOrDash(raw: string | null): string {
+  return raw === null || BigInt(raw) === 0n ? '—' : formatMoney(BigInt(raw));
+}
+
 function csrfField(csrf: string): string {
   return `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}" />`;
+}
+
+/** Carries a post-login destination (e.g. the landing page's picks) through log in and sign up. */
+function nextField(next: string | undefined): string {
+  return next ? `<input type="hidden" name="next" value="${escapeHtml(next)}" />` : '';
+}
+
+function withNext(href: string, next: string | undefined): string {
+  return next ? `${href}?next=${encodeURIComponent(next)}` : href;
+}
+
+const icon = (name: string) => `<i class="fa ${name}" aria-hidden="true"></i>`;
+const arrow = icon('fa-arrow-right');
+
+function notice(iconName: string, html: string): string {
+  return `<div class="notice">${icon(iconName)}<span>${html}</span></div>`;
+}
+
+function errorNotice(message: string | undefined): string {
+  return message ? `<div class="notice-error" role="alert">${escapeHtml(message)}</div>` : '';
+}
+
+function jaggedDivider(onNavy = false): string {
+  return `<svg class="jag${onNavy ? ' on-navy' : ''}" viewBox="0 0 400 10" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,5 50,2 110,8 170,3 240,7 300,2 360,7 400,4"></polyline></svg>`;
+}
+
+function primaryButton(label: string, attrs = ''): string {
+  return `<button class="btn-primary" type="submit" ${attrs}><span>${label}</span>${arrow}</button>`;
+}
+
+function field(opts: { label: string; input: string; hint?: string; className?: string }): string {
+  return `<label class="field${opts.className ? ` ${opts.className}` : ''}">${opts.label}${opts.input}${opts.hint ? `<span class="hint">${opts.hint}</span>` : ''}</label>`;
 }
 
 export interface ViewMember {
@@ -188,142 +109,351 @@ export interface ViewMember {
   readonly csrf: string;
 }
 
-interface NavItem {
-  readonly idx: string;
+// ── Shell ───────────────────────────────────────────────────────────────────
+
+interface MenuItem {
   readonly label: string;
   readonly href: string;
-  readonly id: string;
 }
 
-const LOGGED_IN_NAV: NavItem[] = [
-  { idx: '01', label: 'Current draw', href: '/draw', id: 'draw' },
-  { idx: '02', label: 'My numbers', href: '/account', id: 'account' },
-  { idx: '03', label: 'My details', href: '/details', id: 'details' },
-  { idx: '04', label: 'Past draws', href: '/past-draws', id: 'past' },
+const LOGGED_OUT_MENU: MenuItem[] = [
+  { label: 'Home', href: '/' },
+  { label: 'Current draw', href: '/draw' },
+  { label: 'Results', href: '/past-draws' },
+  { label: 'How to play', href: '/#how-to-play' },
+  { label: 'Good causes', href: '/#good-causes' },
+  { label: 'Log in / Sign up', href: '/login' },
 ];
 
-const LOGGED_OUT_NAV: NavItem[] = [
-  { idx: '01', label: 'Sign up', href: '/register', id: 'register' },
-  { idx: '02', label: 'Log in', href: '/login', id: 'login' },
-  { idx: '03', label: 'Past draws', href: '/past-draws', id: 'past' },
+const LOGGED_IN_MENU: MenuItem[] = [
+  { label: 'Home', href: '/' },
+  { label: 'Current draw', href: '/draw' },
+  { label: 'My numbers', href: '/account' },
+  { label: 'My details', href: '/details' },
+  { label: 'Results', href: '/past-draws' },
 ];
 
-function layout(opts: {
-  title: string;
-  body: string;
-  member?: ViewMember | undefined;
-  active: string;
-  openDraw?: OpenDraw | undefined;
-}): string {
-  const items = opts.member ? LOGGED_IN_NAV : LOGGED_OUT_NAV;
-  const navHtml = items
-    .map(
-      (item) =>
-        `<a href="${item.href}" class="${item.id === opts.active ? 'active' : ''}"><span class="idx">${item.idx}</span>${escapeHtml(item.label)}</a>`,
-    )
-    .join('');
-  const logout = opts.member
-    ? `<form method="post" action="/logout">${csrfField(opts.member.csrf)}<button type="submit">Log out</button></form>`
+// The club has not supplied these pages yet; the links are placeholders until it does.
+const FOOTER_LINKS: MenuItem[] = [
+  { label: 'Rules', href: '#' },
+  { label: 'Privacy', href: '#' },
+  { label: 'Play responsibly', href: '#' },
+  { label: 'Contact', href: '#' },
+];
+
+function nav(member: ViewMember | undefined): string {
+  const items = (member ? LOGGED_IN_MENU : LOGGED_OUT_MENU).map((m) => `<a href="${m.href}">${escapeHtml(m.label)}</a>`).join('');
+  const logout = member
+    ? `<form method="post" action="/logout">${csrfField(member.csrf)}<button type="submit">Log out</button></form>`
     : '';
-  const countdown = opts.openDraw
-    ? `<div class="countdown"><span class="lbl">Draw No. ${opts.openDraw.drawNumber}</span><div class="val">${escapeHtml(drawWhen(opts.openDraw))}</div>${
-        opts.openDraw.entriesCloseAt
-          ? `<div class="lbl" style="margin-top:.45rem">Entries close</div><div class="val" style="font-size:.9rem">${escapeHtml(formatLondon(opts.openDraw.entriesCloseAt))}</div>`
-          : ''
-      }</div>`
-    : `<div class="countdown"><span class="lbl">Next draw</span><div class="val">None open right now</div></div>`;
+  return `<nav class="site-nav" aria-label="Main">
+    <a class="brand" href="/">
+      <img src="/assets/img/qos-crest.png" alt="Queen of the South FC" width="52" height="52" />
+      <span class="brand-text"><span class="brand-club">Queen of the South FC</span><span class="brand-name">The Doonhamers Draw</span></span>
+    </a>
+    <div class="nav-actions">
+      <button type="button" class="menu-btn" aria-expanded="false" aria-controls="site-menu"><span class="menu-word">Menu</span><span class="menu-glyph" aria-hidden="true">&#9776;</span></button>
+      <a class="profile-link" href="${member ? '/account' : '/login'}" title="${member ? 'My account' : 'Log in'}" aria-label="${member ? 'My account' : 'Log in'}">${icon('fa-user')}</a>
+    </div>
+    <div class="site-menu" id="site-menu" hidden>${items}${logout}</div>
+  </nav>`;
+}
 
+function footer(): string {
+  return `<footer class="site-footer">
+    <img src="/assets/img/qos-crest.png" alt="" width="42" height="42" />
+    <span>The Doonhamers Draw · Queen of the South FC · Palmerston Park, Dumfries</span>
+    <div class="footer-links">${FOOTER_LINKS.map((l) => `<a href="${l.href}">${escapeHtml(l.label)}</a>`).join('')}</div>
+  </footer>`;
+}
+
+function document_(opts: { title: string; pageClass: 'page-inner' | 'page-landing'; content: string }): string {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(opts.title)} — The Doonhamers Draw</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800;900&family=Figtree:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap">
-  <style>${STYLE}</style>
+  <link rel="icon" href="/assets/img/qos-crest.png" />
+  <link rel="preload" href="/assets/fonts/merriweather-sans-0.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/assets/fonts/open-sans-1.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="${assetUrl('fonts.css')}" />
+  <link rel="stylesheet" href="${assetUrl('site.css')}" />
+  <script src="${assetUrl('site.js')}" defer></script>
 </head>
-<body>
-  <div class="app">
-    <aside class="side">
-      <div class="brand">
-        <span class="club">Queen of the South F.C.</span>
-        <a class="name" href="${opts.member ? '/draw' : '/past-draws'}">The Doonhamers<br>Draw</a>
-        <span class="sub">Numbers portal — Palmerston Park</span>
-      </div>
-      <nav class="pages" aria-label="Portal pages">
-        ${navHtml}
-        ${logout}
-      </nav>
-      ${countdown}
-    </aside>
-    <main>${opts.body}</main>
+<body class="${opts.pageClass}">
+  <div class="site">
+${opts.content}
   </div>
 </body>
 </html>`;
 }
 
-export function registerPage(opts: { error?: string; openDraw?: OpenDraw | undefined }): string {
+/** Every page except the landing page: nav, header, slanted band, main, footer. */
+function layout(opts: {
+  title: string;
+  eyebrow: string;
+  heading: string;
+  lede?: string;
+  body: string;
+  member?: ViewMember | undefined;
+}): string {
+  return document_({
+    title: opts.title,
+    pageClass: 'page-inner',
+    content: `${nav(opts.member)}
+    <header class="page-header">
+      <div class="page-header-text" data-reveal="left">
+        <span class="eyebrow">${escapeHtml(opts.eyebrow)}</span>
+        <h1>${escapeHtml(opts.heading)}</h1>
+        ${opts.lede ? `<p class="lede">${opts.lede}</p>` : ''}
+      </div>
+      <div class="page-header-art" aria-hidden="true">
+        <div class="art-sky"></div>
+        <div class="art-navy" data-reveal="right"></div>
+        <div class="art-mid" data-reveal="right" data-delay="120"></div>
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="70,0 58,34 63,58 52,100" fill="none" stroke="#009fff" stroke-width="3" vector-effect="non-scaling-stroke"></polyline></svg>
+      </div>
+    </header>
+    <div class="slant-band" aria-hidden="true"><div class="slant-top"></div><div class="slant-bottom"></div></div>
+    <main class="page-main">${opts.body}</main>
+    ${footer()}`,
+  });
+}
+
+// ── Landing ─────────────────────────────────────────────────────────────────
+
+function ballPicker(name: string, selected: readonly number[]): string {
+  return Array.from({ length: 20 }, (_, i) => i + 1)
+    .map(
+      (n) =>
+        `<label class="ball-pick"><input type="checkbox" name="${name}" value="${n}" ${selected.includes(n) ? 'checked' : ''} aria-label="Number ${n}" /><span>${n}</span></label>`,
+    )
+    .join('');
+}
+
+function segmentedDraws(opts: { selected: number; price: (size: number) => string; compact?: boolean; legend: string }): string {
+  const options = PURCHASE_BLOCK_SIZES.map(
+    (size) =>
+      `<label><input type="radio" name="blocks" value="${size}" ${opts.selected === size ? 'checked' : ''} /><b>${size === 1 ? '1 draw' : `${size} draws`}</b>${
+        opts.compact ? '' : `<span>${opts.price(size)}</span>`
+      }</label>`,
+  ).join('');
+  return `<div class="segmented${opts.compact ? ' compact' : ''}" role="radiogroup" aria-label="${escapeHtml(opts.legend)}">${options}</div>`;
+}
+
+export function landingPage(opts: {
+  member?: ViewMember | undefined;
+  openDraw?: OpenDraw | undefined;
+  stats?: DrawStats | undefined;
+  lastDraw?: SettledDraw | undefined;
+  totals: LifetimeTotals;
+  split: RevenueSplit;
+}): string {
+  const { openDraw: draw, stats, lastDraw, totals, split } = opts;
+  const pct = (bp: number) => `${Math.round(bp / 100)}%`;
+  const goodCausePence = Math.round(split.goodCauseBp / 100);
+
+  const heroText = draw
+    ? `<span class="hero-eyebrow">Draw No. ${draw.drawNumber}${draw.drawAt ? ` · ${escapeHtml(formatLondonLong(draw.drawAt))}` : ''}</span>
+        <h1>Estimated jackpot</h1>
+        <div class="jackpot">
+          <div class="jackpot-highlight" aria-hidden="true"></div>
+          <div class="jackpot-figure" data-pulse data-count-to="${stats?.jackpotEstimatePence ?? 0}">${stats ? formatMoney(stats.jackpotEstimatePence) : '—'}</div>
+        </div>
+        ${
+          draw.drawAt
+            ? `<div class="countdown" data-countdown="${draw.drawAt.toISOString()}" aria-label="Time until the draw">
+            <div class="countdown-box"><b data-unit="d">--</b><span>Days</span></div>
+            <div class="countdown-box"><b data-unit="h">--</b><span>Hours</span></div>
+            <div class="countdown-box"><b data-unit="m">--</b><span>Mins</span></div>
+            <div class="countdown-box"><b data-unit="s">--</b><span>Secs</span></div>
+          </div>
+          <span class="countdown-live" hidden>Draw in progress</span>`
+            : ''
+        }
+        <div class="hero-ctas">
+          <a class="btn-primary" href="#easy-entry">Play this week ${arrow}</a>
+          <a class="btn-secondary" href="#how-to-play">How it works</a>
+        </div>`
+    : `<span class="hero-eyebrow">The Doonhamers Draw</span>
+        <p class="hero-soon">Next draw coming soon</p>
+        <div class="hero-ctas"><a class="btn-secondary" href="#how-to-play">How it works</a></div>`;
+
+  let band = '';
+  if (lastDraw) {
+    const paid = BigInt(lastDraw.jackpotPaidPence ?? '0');
+    const rolled = BigInt(lastDraw.rolloverOutPence ?? '0');
+    const winners = lastDraw.winnersCount ?? 0;
+    band = `<section class="last-band" aria-label="Last draw">
+      <div class="last-band-sky" aria-hidden="true"></div>
+      <div class="last-band-navy">
+        <div class="last-band-content" data-reveal="up">
+          <div class="last-title"><b>Last draw</b><span>No. ${lastDraw.drawNumber} · ${escapeHtml(formatDrawDate(lastDraw.drawDate))}</span></div>
+          <div class="balls">${lastDraw.winningNumbers.map((n) => `<span class="ball ball-band" data-ball>${n}</span>`).join('')}</div>
+          <div class="band-stat push"><span class="stat-label">Jackpot</span><span class="stat-value" data-pulse>${formatMoney(paid + rolled)}</span></div>
+          ${
+            winners > 0
+              ? `<div class="band-stat"><span class="stat-label">Winners</span><span class="stat-value">${winners} <small>${formatMoney(paid / BigInt(winners))} each</small></span></div>`
+              : `<div class="band-stat"><span class="stat-label">Rolled over</span><span class="stat-value">${formatMoney(rolled)}</span></div>`
+          }
+        </div>
+      </div>
+    </section>`;
+  }
+
+  const easyEntry = draw
+    ? `<section id="easy-entry" class="section-centred easy-entry">
+      <div class="easy-intro" data-reveal="left">
+        <span class="sky-eyebrow">Easy entry</span>
+        <h2 class="section-h2">Pick your four for Draw ${draw.drawNumber}</h2>
+        <p class="body-copy">Tap four numbers or use Lucky Dip. Choose how many draws, then pay by card or Direct Debit on the next step.</p>
+      </div>
+      <form class="easy-panel" id="easy-form" method="get" action="/draw/pay" data-reveal="right" data-delay="120">
+        <div class="easy-grid-wrap"><div class="easy-grid" role="group" aria-label="Pick four numbers">${ballPicker('line1', [])}</div></div>
+        <div class="easy-rule" aria-hidden="true"></div>
+        <div class="easy-controls">
+          <span class="easy-count" aria-live="polite">0 of 4 selected</span>
+          <button type="button" class="btn-lucky" id="easy-lucky">${icon('fa-random')} Lucky Dip</button>
+          ${segmentedDraws({ selected: 1, price: () => '', compact: true, legend: 'How many draws' })}
+          <button class="btn-primary" type="submit" id="easy-submit"><span class="label">Continue to payment</span>${arrow}</button>
+        </div>
+      </form>
+    </section>`
+    : '';
+
+  const steps = [
+    ['01', 'Create an account', 'Register with your name, email address and a password.'],
+    ['02', 'Pick 4 numbers', 'Choose 4 numbers from 1 to 20, or use Lucky Dip. Add more lines if you like.'],
+    ['03', 'Pay £2 per draw', 'Pay by card for 1, 4 or 12 draws, or by Direct Debit to stay entered every draw.'],
+    ['04', 'Watch the draw', 'Match all 4 to share the jackpot. If nobody does, it rolls over to the next draw.'],
+  ]
+    .map(
+      ([num, title, body], i) =>
+        `<div class="step" data-reveal="up"${i > 0 ? ` data-delay="${i * 140}"` : ''}><span class="step-num">${num}</span><h3>${title}</h3><p>${body}</p></div>`,
+    )
+    .join('');
+
+  return document_({
+    title: 'Home',
+    pageClass: 'page-landing',
+    content: `${nav(opts.member)}
+    <header class="hero">
+      <div class="hero-text" data-reveal="left">${heroText}</div>
+      <div class="hero-photo">
+        <div class="hero-photo-sky" aria-hidden="true"></div>
+        <div class="hero-photo-img" data-reveal="right">
+          <picture><source srcset="/assets/img/landing-hero.webp" type="image/webp" /><img src="/assets/img/landing-hero.jpg" alt="Queen of the South players celebrating a goal in front of the home crowd at Palmerston Park" width="1200" height="800" /></picture>
+        </div>
+      </div>
+    </header>
+    ${band}
+    <main>
+    ${easyEntry}
+    <section id="how-to-play" class="how-to-play">
+      <svg class="jag-edge" viewBox="0 0 1280 40" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,0 1280,0 1280,14 1130,30 980,8 820,26 650,6 500,32 330,10 170,28 0,12"></polygon></svg>
+      <h2 class="section-h2" data-reveal="left">How to play</h2>
+      <div class="steps">${steps}</div>
+    </section>
+    <section class="section-centred totals" aria-label="Where the money goes">
+      <div class="total span-all" data-reveal="left">
+        <span class="total-label">Prize money paid out</span>
+        <span class="total-value" data-count-to="${totals.prizePaidPence}">${formatMoney(totals.prizePaidPence)}</span>
+        <svg class="total-under" viewBox="0 0 360 18" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,12 50,4 110,14 170,3 230,13 290,5 360,10"></polyline></svg>
+        <span class="total-caption">to winners since the draw began</span>
+      </div>
+      <div class="split" data-reveal="up">
+        <div class="split-bar" data-split="${split.prizeBp},${split.goodCauseBp},${split.adminBp}" aria-hidden="true"><i class="s-prize"></i><i class="s-trust"></i><i class="s-costs"></i></div>
+        <div class="split-legend">
+          <span class="l-prize"><i></i>${pct(split.prizeBp)} Prize fund</span>
+          <span class="l-trust"><i></i>${pct(split.goodCauseBp)} Community Trust</span>
+          <span class="l-costs"><i></i>${pct(split.adminBp)} Running costs</span>
+        </div>
+      </div>
+    </section>
+    <section id="good-causes" class="community">
+      <svg class="jag-edge" viewBox="0 0 1280 40" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,0 1280,0 1280,22 1120,6 960,30 800,10 640,34 480,8 320,28 160,12 0,26"></polygon></svg>
+      <div class="community-grid">
+        <div class="community-photo" data-reveal="left">
+          <div class="community-photo-sky" aria-hidden="true"></div>
+          <div class="community-photo-img"><picture><source srcset="/assets/img/community-trust.webp" type="image/webp" /><img src="/assets/img/community-trust.jpg" alt="Queen of the South Community Trust volunteers at a community event in Dumfries" width="1040" height="693" loading="lazy" /></picture></div>
+        </div>
+        <div class="community-text" data-reveal="right">
+          <span class="sky-eyebrow">Good causes</span>
+          <h3>Playing supports the community</h3>
+          <p>${goodCausePence}p in every £1 goes to the Queen of the South Community Trust. Every line you enter helps fund its work across Dumfries and Galloway.</p>
+          <a class="more-link" href="#">About the Trust ${icon('fa-angle-double-right')}</a>
+        </div>
+      </div>
+    </section>
+    </main>
+    ${footer()}`,
+  });
+}
+
+// ── Sign up, log in, password reset ─────────────────────────────────────────
+
+export function registerPage(opts: {
+  error?: string;
+  openDraw?: OpenDraw | undefined;
+  next?: string | undefined;
+  split?: RevenueSplit | undefined;
+}): string {
+  const goodCausePence = Math.round((opts.split?.goodCauseBp ?? 4000) / 100);
+  const why = [
+    ['fa-heart', `${goodCausePence}p in every £1 goes to the Queen of the South Community Trust.`],
+    ['fa-ticket', 'Entries are £2 each. Pay per draw, or in blocks of 4 or 12 to skip the top-up.'],
+    ['fa-trophy', "Match all 4 of 4 numbers to share that week's jackpot. No match, no worries — it rolls into next week's."],
+  ]
+    .map(([name, text]) => `<div class="why-row"><span class="why-icon">${icon(name!)}</span><span>${escapeHtml(text!)}</span></div>`)
+    .join('');
   return layout({
     title: 'Sign up',
-    active: 'register',
-    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
+    eyebrow: 'Sign up',
+    heading: 'Join the draw',
+    lede: 'Pick 4 numbers from 1&ndash;20, every week, for £2. Every entry supports Queen of the South FC &mdash; match all four and share the jackpot.',
     body: `
-      <div class="page-head">
-        <h1>Join the draw</h1>
-        <p>Pick 4 numbers from 1&ndash;20, every week, for £2. Every entry supports Queen of the South FC &mdash; match all four and share the jackpot.</p>
-      </div>
-      <div class="grid2">
-        <div class="card stack">
-          ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
-          <form method="post" action="/register" class="stack">
-            <div class="row2">
-              <div class="field"><label for="forename">Forename</label><input id="forename" name="forename" type="text" required autofocus /></div>
-              <div class="field"><label for="surname">Surname</label><input id="surname" name="surname" type="text" required /></div>
-            </div>
-            <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autocomplete="username" /></div>
-            <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" required minlength="10" autocomplete="new-password" />
-              <p class="hint">At least 10 characters.</p></div>
-            <button class="btn btn-primary btn-block" type="submit">Create my account</button>
-          </form>
-          <p class="hint" style="text-align:center">Already a member? <a href="/login">Log in</a></p>
-        </div>
-        <div class="stack">
-          <div class="card stack">
-            <h3 style="font-size:1.1rem;text-transform:none;letter-spacing:0">Why join the Draw</h3>
-            <div class="stack" style="gap:.6rem">
-              <div class="banner"><span>🏟️</span><span><b>100% of profit</b> goes to first-team and youth academy funding at Palmerston Park.</span></div>
-              <div class="banner"><span>🎟️</span><span>Entries are £2 each. Pay per draw, or in blocks of 4 or 12 to skip the top-up.</span></div>
-              <div class="banner"><span>🏆</span><span>Match all <b>4 of 4</b> numbers to share that week's jackpot. No match, no worries &mdash; it rolls into next week's.</span></div>
-            </div>
+      <div class="cols">
+        <form method="post" action="/register" class="panel" data-reveal="left">
+          <h2>Create your account</h2>
+          ${errorNotice(opts.error)}
+          ${nextField(opts.next)}
+          <div class="field-pair">
+            ${field({ label: 'Forename', input: '<input id="forename" name="forename" type="text" required autofocus autocomplete="given-name" />' })}
+            ${field({ label: 'Surname', input: '<input id="surname" name="surname" type="text" required autocomplete="family-name" />' })}
           </div>
+          ${field({ label: 'Email address', input: '<input id="email" name="email" type="email" required autocomplete="username" />' })}
+          ${field({ label: 'Password', input: '<input id="password" name="password" type="password" required minlength="10" autocomplete="new-password" />', hint: 'At least 10 characters.' })}
+          ${primaryButton('Create my account')}
+          <p class="center-text">Already a member? <a href="${withNext('/login', opts.next)}">Log in</a></p>
+        </form>
+        <div class="panel-navy" data-reveal="right" data-delay="120">
+          <h2>Why join the Draw</h2>
+          ${why}
         </div>
       </div>
     `,
   });
 }
 
-export function loginPage(opts: { error?: string; notice?: string; openDraw?: OpenDraw | undefined }): string {
+export function loginPage(opts: { error?: string; notice?: string; openDraw?: OpenDraw | undefined; next?: string | undefined }): string {
   return layout({
     title: 'Log in',
-    active: 'login',
-    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
+    eyebrow: 'Log in',
+    heading: 'Welcome back',
+    lede: "Log in to check this week's numbers, top up your entries, or see what you've won.",
     body: `
-      <div class="page-head">
-        <h1>Welcome back</h1>
-        <p>Log in to check this week's numbers, top up your entries, or see what you've won.</p>
-      </div>
-      <div class="card stack" style="max-width:420px">
-        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
-        ${opts.notice ? `<div class="banner"><span>✅</span><span>${escapeHtml(opts.notice)}</span></div>` : ''}
-        <form method="post" action="/login" class="stack">
-          <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autofocus autocomplete="username" /></div>
-          <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" required autocomplete="current-password" /></div>
-          <button class="btn btn-primary btn-block" type="submit">Log in</button>
-        </form>
-        <p class="hint" style="text-align:center"><a href="/forgot-password">Forgotten your password?</a></p>
-        <hr class="divider">
-        <p class="hint" style="text-align:center">New to the Draw? <a href="/register">Create an account</a></p>
-      </div>
+      <form method="post" action="/login" class="panel narrow" data-reveal="left">
+        ${errorNotice(opts.error)}
+        ${opts.notice ? notice('fa-check', escapeHtml(opts.notice)) : ''}
+        ${nextField(opts.next)}
+        ${field({ label: 'Email address', input: '<input id="email" name="email" type="email" required autofocus autocomplete="username" />' })}
+        ${field({ label: 'Password', input: '<input id="password" name="password" type="password" required autocomplete="current-password" />' })}
+        ${primaryButton('Log in')}
+        <a class="center-link" href="/forgot-password">Forgotten your password?</a>
+        ${jaggedDivider()}
+        <p class="center-text">New to the Draw? <a href="${withNext('/register', opts.next)}">Create an account</a></p>
+      </form>
     `,
   });
 }
@@ -331,76 +461,57 @@ export function loginPage(opts: { error?: string; notice?: string; openDraw?: Op
 export function forgotPasswordPage(opts: { error?: string; sent?: boolean; openDraw?: OpenDraw | undefined }): string {
   return layout({
     title: 'Forgotten password',
-    active: 'login',
-    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
+    eyebrow: 'Log in',
+    heading: 'Forgotten password',
+    lede: "Enter the email address on your account and we'll send you a link to reset your password.",
     body: `
-      <div class="page-head">
-        <h1>Forgotten password</h1>
-        <p>Enter the email address on your account and we'll send you a link to reset your password.</p>
-      </div>
-      <div class="card stack" style="max-width:420px">
-        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+      <div class="panel narrow" data-reveal="left">
+        ${errorNotice(opts.error)}
         ${
           opts.sent
-            ? `<div class="banner"><span>✉️</span><span>If that email address is registered, a reset link is on its way &mdash; it expires in an hour.</span></div>`
+            ? notice('fa-envelope', 'If that email address is registered, a reset link is on its way &mdash; it expires in an hour.')
             : `<form method="post" action="/forgot-password" class="stack">
-                 <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autofocus autocomplete="username" /></div>
-                 <button class="btn btn-primary btn-block" type="submit">Send reset link</button>
+                 ${field({ label: 'Email address', input: '<input id="email" name="email" type="email" required autofocus autocomplete="username" />' })}
+                 ${primaryButton('Send reset link')}
                </form>`
         }
-        <p class="hint" style="text-align:center"><a href="/login">Back to log in</a></p>
+        <a class="center-link" href="/login">Back to log in</a>
       </div>
     `,
   });
 }
 
-export function resetPasswordPage(opts: {
-  token: string;
-  error?: string;
-  openDraw?: OpenDraw | undefined;
-}): string {
+export function resetPasswordPage(opts: { token: string; error?: string; openDraw?: OpenDraw | undefined }): string {
   return layout({
     title: 'Reset password',
-    active: 'login',
-    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
+    eyebrow: 'Log in',
+    heading: 'Choose a new password',
+    lede: 'Use at least 10 characters.',
     body: `
-      <div class="page-head">
-        <h1>Choose a new password</h1>
-      </div>
-      <div class="card stack" style="max-width:420px">
-        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
-        <form method="post" action="/reset-password" class="stack">
-          <input type="hidden" name="token" value="${escapeHtml(opts.token)}" />
-          <div class="field"><label for="password">New password</label><input id="password" name="password" type="password" required minlength="10" autocomplete="new-password" autofocus />
-            <p class="hint">At least 10 characters.</p></div>
-          <button class="btn btn-primary btn-block" type="submit">Reset password</button>
-        </form>
-      </div>
+      <form method="post" action="/reset-password" class="panel narrow" data-reveal="left">
+        ${errorNotice(opts.error)}
+        <input type="hidden" name="token" value="${escapeHtml(opts.token)}" />
+        ${field({ label: 'New password', input: '<input id="password" name="password" type="password" required minlength="10" autocomplete="new-password" autofocus />', hint: 'At least 10 characters.' })}
+        ${primaryButton('Reset password')}
+      </form>
     `,
   });
 }
 
-function ballGrid(name: string, selected: readonly number[]): string {
-  const cells = Array.from({ length: 20 }, (_, i) => i + 1)
-    .map(
-      (n) =>
-        `<label><input type="checkbox" name="${name}" value="${n}" ${selected.includes(n) ? 'checked' : ''} /><span class="ball">${n}</span></label>`,
-    )
-    .join('');
-  return `<div class="ball-grid">${cells}</div>`;
-}
+// ── Current draw ────────────────────────────────────────────────────────────
 
 /** GitHub #19: one picker per line. Line 1 is always shown; the rest appear with "Add another line". */
 function linePicker(index: number, selected: readonly number[], shown: boolean): string {
-  return `<div class="pick-line stack" data-line="${index}" style="gap:.6rem" ${shown ? '' : 'hidden'}>
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.6rem;flex-wrap:wrap">
-      <b style="font-size:.92rem">Line ${index}</b>
-      <span class="hint tabular" style="margin:0"><span class="pick-count">0 of 4 selected</span>
-        &middot; <button class="linkbtn quick-pick" type="button">🎲 Pick for me</button>${
-          index > 1 ? ` &middot; <button class="linkbtn remove-line" type="button">Remove</button>` : ''
-        }</span>
+  return `<div class="pick-line" data-line="${index}" ${shown ? '' : 'hidden'}>
+    <div class="pick-line-head">
+      <b>Line ${index}</b>
+      <div class="pick-line-tools">
+        <span class="pick-count" aria-live="polite">${selected.length} of 4 selected</span>
+        <button class="btn-small quick-pick" type="button">${icon('fa-random')} Pick for me</button>
+        ${index > 1 ? `<button class="btn-small plain remove-line" type="button">Remove</button>` : ''}
+      </div>
     </div>
-    ${ballGrid(`line${index}`, selected)}
+    <div class="ball-grid" role="group" aria-label="Line ${index} numbers">${ballPicker(`line${index}`, selected)}</div>
   </div>`;
 }
 
@@ -417,123 +528,64 @@ export function drawPage(opts: {
   if (!draw) {
     return layout({
       title: 'Current draw',
+      eyebrow: 'Current draw',
+      heading: 'Current draw',
       member: opts.member,
-      active: 'draw',
-      body: `<div class="page-head"><h1>Current draw</h1></div><div class="card"><p class="muted">No draw is open for entries right now &mdash; check back soon.</p></div>`,
+      body: `<div class="panel narrow" data-reveal="left"><p class="body-copy">No draw is open for entries right now &mdash; check back soon.</p></div>`,
     });
   }
 
   const stub = opts.currentEntry
-    ? `<div class="card stack">
-        <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Ticket stub &mdash; prize draw no.</h3>
-        <div style="display:flex;align-items:center;gap:.8rem">
-          <span class="num" style="font-size:1.6rem;font-weight:700;color:var(--royal)">#${opts.currentEntry.id.slice(0, 8)}</span>
-          <span class="pill pill-open">Entered ✓</span>
-        </div>
-        <p class="hint">This is your entry for this draw. Come back after it closes to see the result.</p>
+    ? `<div class="panel panel-white">
+        <span class="stat-label tight">Ticket stub &mdash; prize draw no.</span>
+        <div class="stub-row"><span class="stub-no">#${escapeHtml(opts.currentEntry.id.slice(0, 8))}</span><span class="badge">${icon('fa-check')} Entered</span></div>
+        <p class="small-hint">This is your entry for this draw. Come back after it closes to see the result.</p>
       </div>`
     : '';
 
   return layout({
     title: 'Current draw',
+    eyebrow: `Draw No. ${draw.drawNumber} · ${drawWhen(draw)}`,
+    heading: draw.name ? drawHeading(draw) : 'Current draw',
+    lede: `Drawn ${escapeHtml(drawWhen(draw))}${
+      draw.entriesCloseAt ? ` &mdash; entries close ${escapeHtml(formatLondon(draw.entriesCloseAt))}` : ''
+    }. Pick 4 numbers from 1 to 20, or let us pick for you.`,
     member: opts.member,
-    active: 'draw',
-    openDraw: draw,
     body: `
-      <div class="page-head">
-        <h1>${escapeHtml(drawHeading(draw))}</h1>
-        <p>Drawn ${escapeHtml(drawWhen(draw))}${
-          draw.entriesCloseAt ? ` &mdash; entries close ${escapeHtml(formatLondon(draw.entriesCloseAt))}` : ''
-        }. Pick 4 numbers from 1 to 20, or let us pick for you.</p>
-      </div>
-      ${opts.error ? `<div class="error" style="margin-bottom:1rem">${escapeHtml(opts.error)}</div>` : ''}
-      <div class="grid2">
-        <div class="card stack">
-          <h3 style="font-size:1rem;text-transform:none;letter-spacing:0">Your numbers for Draw ${draw.drawNumber}</h3>
+      <div class="flex-cols">
+        <div class="col-main panel panel-tight" data-reveal="left">
+          <h2 class="h-22">Your numbers for Draw ${draw.drawNumber}</h2>
+          ${errorNotice(opts.error)}
           <form method="get" action="/draw/pay" id="pick-form" class="stack">
             ${Array.from({ length: MAX_LINES_PER_PURCHASE }, (_, i) =>
               linePicker(i + 1, opts.picked?.[i] ?? [], i === 0 || (opts.picked?.[i]?.length ?? 0) > 0),
-            ).join('<hr class="divider">')}
-            <div style="display:flex;gap:.6rem;flex-wrap:wrap">
-              <button class="btn btn-ghost" type="button" id="add-line">+ Add another line</button>
-              <button class="btn btn-primary" type="submit">Continue to payment →</button>
+            ).join('')}
+            <div class="btn-row">
+              <button class="btn-secondary small" type="button" id="add-line">+ Add another line</button>
+              <button class="btn-primary inline" type="submit">Continue to payment ${arrow}</button>
             </div>
           </form>
-          <p class="hint">Each line is a separate entry in every draw it's paid for. Use different numbers on each line &mdash; up to ${MAX_LINES_PER_PURCHASE} lines in one payment.</p>
-          <p class="hint">Pay by Direct Debit, or buy 4 or 12 draws by card, and your numbers stay entered automatically &mdash; no need to pick again next week.</p>
+          <p class="small-hint">Each line is a separate entry in every draw it's paid for. Use different numbers on each line &mdash; up to ${MAX_LINES_PER_PURCHASE} lines in one payment.</p>
         </div>
-        <div class="stack">
-          <div class="card stack">
-            <div class="stat"><span class="k">Estimated jackpot</span><span class="v">${formatEstimate(stats?.jackpotEstimatePence)}</span></div>
-            <hr class="divider">
-            <div class="row2">
-              <div class="stat"><span class="k">Ticket price</span><span class="v" style="font-size:1.3rem">${formatPence(pence(200n))}</span></div>
-              <div class="stat"><span class="k">Entries this week</span><span class="v" style="font-size:1.3rem">${stats?.entriesCount ?? 0}</span></div>
-            </div>
+        <div class="col-side" data-reveal="right" data-delay="120">
+          <div class="panel-navy angle-b">
+            <span class="stat-label">Estimated jackpot</span>
+            <span class="stat-value v-64" data-pulse>${stats ? formatMoney(stats.jackpotEstimatePence) : '—'}</span>
+            <svg class="jag-under" viewBox="0 0 200 12" aria-hidden="true"><polyline points="0,8 40,3 80,10 120,2 160,9 200,4"></polyline></svg>
+          </div>
+          <div class="stats-panel">
+            <div class="stat"><span class="stat-label tight">Ticket price</span><span class="stat-value v-28">${formatPence(pence(200n))}</span></div>
+            <div class="stat"><span class="stat-label tight">Entries this week</span><span class="stat-value v-28">${stats?.entriesCount ?? 0}</span></div>
+            <p class="small-hint">Pay by Direct Debit, or buy 4 or 12 draws by card, and your numbers stay entered automatically &mdash; no need to pick again next week.</p>
           </div>
           ${stub}
         </div>
       </div>
-      <script>
-      (function(){
-        var lines = document.querySelectorAll('.pick-line');
-        var addLine = document.getElementById('add-line');
-        function refreshAdd(){
-          var hidden = document.querySelectorAll('.pick-line[hidden]');
-          addLine.hidden = hidden.length === 0;
-          // A divider only between lines that are showing.
-          lines.forEach(function(line){
-            var rule = line.previousElementSibling;
-            if (rule && rule.tagName === 'HR') rule.hidden = line.hidden;
-          });
-        }
-        lines.forEach(function(line){
-          var count = line.querySelector('.pick-count');
-          var boxes = line.querySelectorAll('input[type=checkbox]');
-          function update(){
-            count.textContent = line.querySelectorAll('input:checked').length + ' of 4 selected';
-          }
-          boxes.forEach(function(b){
-            b.addEventListener('change', function(){
-              if(line.querySelectorAll('input:checked').length > 4){ b.checked = false; }
-              update();
-            });
-          });
-          line.querySelector('.quick-pick').addEventListener('click', function(){
-            boxes.forEach(function(b){ b.checked = false; });
-            var pool = []; for(var i=0;i<boxes.length;i++) pool.push(i);
-            for(var n=0;n<4;n++){
-              var idx = Math.floor(Math.random()*pool.length);
-              boxes[pool[idx]].checked = true;
-              pool.splice(idx,1);
-            }
-            update();
-          });
-          var remove = line.querySelector('.remove-line');
-          if (remove) remove.addEventListener('click', function(){
-            // A removed line sends nothing: its boxes are cleared, not just hidden.
-            boxes.forEach(function(b){ b.checked = false; });
-            line.hidden = true;
-            update();
-            refreshAdd();
-          });
-          update();
-        });
-        addLine.addEventListener('click', function(){
-          var next = document.querySelector('.pick-line[hidden]');
-          if (next) next.hidden = false;
-          refreshAdd();
-        });
-        refreshAdd();
-      })();
-      </script>
     `,
   });
 }
 
-function formatEstimate(p: bigint | undefined): string {
-  return p === undefined ? '—' : formatPence(pence(p));
-}
+// ── Payment ─────────────────────────────────────────────────────────────────
 
 export type PaymentMethodChoice = 'card' | 'dd';
 
@@ -563,154 +615,125 @@ export function paymentPage(opts: {
   const selectionFields = selections
     .flatMap((line, i) => line.map((n) => `<input type="hidden" name="line${i + 1}" value="${n}" />`))
     .join('');
-  const blockOption = (size: number, label: string) =>
-    `<label class="radio-row"><input type="radio" name="blocks" value="${size}" ${blocks === size ? 'checked' : ''} />${label} <span class="amt">${total(size)}</span></label>`;
-  const methodOption = (value: PaymentMethodChoice, title: string, detail: string, disabled = false) =>
-    `<label class="method-choice"${disabled ? ' style="opacity:.55;cursor:not-allowed"' : ''}><input type="radio" name="method" value="${value}" ${method === value ? 'checked' : ''} ${disabled ? 'disabled' : 'required'} />
-       <span><b>${title}</b><span class="hint">${detail}</span></span></label>`;
+  const methodOption = (value: PaymentMethodChoice, iconName: string, title: string, detail: string, disabled = false) =>
+    `<label class="method${disabled ? ' is-disabled' : ''}"><input type="radio" name="method" value="${value}" ${method === value ? 'checked' : ''} ${disabled ? 'disabled' : 'required'} />
+       ${icon(iconName)}<span class="method-text"><b>${title}</b><span>${detail}</span></span></label>`;
   const summaryLine = (size: number) =>
     several ? `${lineCount} lines × ${size} ${size === 1 ? 'draw' : 'draws'} (from Draw ${openDraw.drawNumber})` : `${size} × entry (from Draw ${openDraw.drawNumber})`;
+  const hints = {
+    card: opts.hostedCardPage ? 'Card payments are processed securely by Elavon.' : "Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.",
+    dd: "Direct Debit setup runs through QOSFC's sandbox Bacs bureau while a real route is being set up. No payment is taken today.",
+  };
+  const summaries = Object.fromEntries(PURCHASE_BLOCK_SIZES.map((size) => [size, summaryLine(size)]));
 
   return layout({
     title: 'Payment',
+    eyebrow: `Draw No. ${openDraw.drawNumber}`,
+    heading: 'Pay for your entries',
+    lede: `${formatPence(pence(200n))} buys one entry into one draw. Pay by card for a set number of draws, or by Direct Debit to stay entered every draw.`,
     member: opts.member,
-    active: 'draw',
-    openDraw,
     body: `
-      <div class="page-head">
-        <h1>Pay for your entries</h1>
-        <p>${formatPence(pence(200n))} buys one entry into one draw. Pay by card for a set number of draws, or by Direct Debit to stay entered every draw.</p>
-      </div>
-      ${opts.error ? `<div class="error" style="margin-bottom:1rem">${escapeHtml(opts.error)}</div>` : ''}
-      <div class="grid2">
-        <div class="card stack">
-          <div class="stack" style="gap:.6rem">
-            <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Your numbers for Draw ${openDraw.drawNumber}</h3>
+      <div class="flex-cols">
+        <form method="post" action="${method === 'dd' ? '/direct-debit/setup' : '/draw/enter'}" id="pay-form" class="col-main panel panel-tight" data-reveal="left"
+              data-hints="${escapeHtml(JSON.stringify(hints))}" data-summaries="${escapeHtml(JSON.stringify(summaries))}" data-lines="${lineCount}">
+          ${errorNotice(opts.error)}
+          ${csrfField(opts.member.csrf)}
+          ${selectionFields}
+          <div class="stack-10">
+            <h2 class="h-20">Your numbers for Draw ${openDraw.drawNumber}</h2>
             ${selections
               .map(
                 (line, i) =>
-                  `<div style="display:flex;align-items:center;gap:.7rem">${several ? `<span class="hint" style="margin:0;min-width:3.2rem">Line ${i + 1}</span>` : ''}<div class="ball-row">${line
-                    .map((n) => `<span class="ball picked">${n}</span>`)
+                  `<div class="pay-line">${several ? `<span class="pay-line-label">Line ${i + 1}</span>` : ''}<div class="balls">${line
+                    .map((n) => `<span class="ball ball-44">${n}</span>`)
                     .join('')}</div></div>`,
               )
               .join('')}
-            <p class="hint" style="margin:0"><a href="/draw">Change numbers or add another line</a></p>
+            <a class="center-link" href="/draw">Change numbers or add another line</a>
           </div>
-          <form method="post" action="${method === 'dd' ? '/direct-debit/setup' : '/draw/enter'}" id="pay-form" class="stack">
-            ${csrfField(opts.member.csrf)}
-            ${selectionFields}
-            <fieldset>
-              <legend>How would you like to pay?</legend>
-              <div class="method-choices">
-                ${methodOption('card', 'Debit / credit card', several ? `Pay now for all ${lineCount} lines, 1, 4 or 12 draws each` : 'Pay now for 1, 4 or 12 draws')}
-                ${
-                  several
-                    ? methodOption('dd', 'Direct Debit', 'One line of numbers per Direct Debit — pay for several lines by card', true)
-                    : methodOption('dd', 'Direct Debit', `Entered every draw until you cancel — ${formatPence(pence(200n))} a draw`)
-                }
-              </div>
-            </fieldset>
-            ${
-              opts.hasDirectDebit
-                ? `<div class="banner"><span>ℹ️</span><span>You already pay by Direct Debit. Paying with the same numbers adds paid draws, which are used first while your Direct Debit pauses; different numbers add an extra entry alongside your existing ones.</span></div>`
-                : ''
-            }
-
-            <div id="pay-card" class="stack" ${method === 'card' ? '' : 'hidden'}>
-              <fieldset>
-                <legend>${several ? 'How many draws for each line?' : 'How many draws?'}</legend>
-                ${PURCHASE_BLOCK_SIZES.map((size) => blockOption(size, size === 1 ? '1 draw' : `${size} draws`)).join('')}
-              </fieldset>
+          <div class="stack-10">
+            <span class="field-label" id="method-label">How would you like to pay?</span>
+            <div class="methods" role="radiogroup" aria-labelledby="method-label">
+              ${methodOption('card', 'fa-credit-card', 'Debit / credit card', several ? `Pay now for all ${lineCount} lines, 1, 4 or 12 draws each` : 'Pay now for 1, 4 or 12 draws')}
               ${
-                opts.hostedCardPage
-                  ? `<div class="banner"><span>🔒</span><span>You'll enter your card details on <b>Elavon's secure payment page</b> next. They never pass through this site.</span></div>`
-                  : // Sandbox only: practice fields with no name attribute, so nothing typed here is ever posted.
-                    `<div class="field"><label for="pc-name">Name on card</label><input id="pc-name" type="text" placeholder="Full name" autocomplete="off" data-required /></div>
-              <div class="row2">
-                <div class="field"><label for="pc-num">Card number</label><input id="pc-num" type="text" placeholder="4242 4242 4242 4242" autocomplete="off" data-required /></div>
-                <div class="row2" style="grid-template-columns:1fr 1fr">
-                  <div class="field"><label for="pc-exp">Expiry</label><input id="pc-exp" type="text" placeholder="MM/YY" autocomplete="off" data-required /></div>
-                  <div class="field"><label for="pc-cvc">CVC</label><input id="pc-cvc" type="text" placeholder="123" autocomplete="off" data-required /></div>
-                </div>
-              </div>
-              <div class="banner"><span>🧪</span><span><b>Sandbox payment</b> &mdash; any name, card number, expiry and CVC are accepted; this is a test transaction and no funds move.</span></div>`
+                several
+                  ? methodOption('dd', 'fa-university', 'Direct Debit', 'One line of numbers per Direct Debit — pay for several lines by card', true)
+                  : methodOption('dd', 'fa-university', 'Direct Debit', `Entered every draw until you cancel — ${formatPence(pence(200n))} a draw`)
               }
             </div>
+          </div>
+          ${
+            opts.hasDirectDebit
+              ? notice('fa-info-circle', 'You already pay by Direct Debit. Paying with the same numbers adds paid draws, which are used first while your Direct Debit pauses; different numbers add an extra entry alongside your existing ones.')
+              : ''
+          }
 
-            <div id="pay-dd" class="stack" ${method === 'dd' ? '' : 'hidden'}>
-              <div class="field"><label for="dd-name">Name of account holder</label><input id="dd-name" name="dd-name" type="text" placeholder="Full name" autocomplete="off" data-required /></div>
-              <div class="row2">
-                <div class="field"><label for="dd-sort">Sort code</label><input id="dd-sort" name="dd-sort" type="text" placeholder="00-00-00" autocomplete="off" data-required /></div>
-                <div class="field"><label for="dd-acc">Account number</label><input id="dd-acc" name="dd-acc" type="text" placeholder="12345678" autocomplete="off" data-required /></div>
-              </div>
-              <div class="banner"><span>🧪</span><span><b>Sandbox Direct Debit</b> &mdash; any name, sort code and account number are accepted; this is a test mandate and no funds move.</span></div>
+          <div id="pay-card" class="stack" ${method === 'card' ? '' : 'hidden'}>
+            <div class="stack-10">
+              <span class="field-label">${several ? 'How many draws for each line?' : 'How many draws?'}</span>
+              ${segmentedDraws({ selected: blocks, price: total, legend: several ? 'How many draws for each line' : 'How many draws' })}
             </div>
+            ${
+              opts.hostedCardPage
+                ? notice('fa-lock', "You'll enter your card details on <b>Elavon's secure payment page</b> next. They never pass through this site.")
+                : // Sandbox only: practice fields with no name attribute, so nothing typed here is ever posted.
+                  `${field({ label: 'Name on card', input: '<input id="pc-name" type="text" placeholder="Full name" autocomplete="off" data-required />' })}
+            <div class="field-row">
+              ${field({ label: 'Card number', input: '<input id="pc-num" type="text" placeholder="4242 4242 4242 4242" autocomplete="off" data-required />', className: 'grow-2' })}
+              ${field({ label: 'Expiry', input: '<input id="pc-exp" type="text" placeholder="MM/YY" autocomplete="off" data-required />', className: 'grow-1' })}
+              ${field({ label: 'CVC', input: '<input id="pc-cvc" type="text" placeholder="123" autocomplete="off" data-required />', className: 'grow-1' })}
+            </div>
+            ${notice('fa-flask', '<b>Sandbox payment</b> &mdash; any name, card number, expiry and CVC are accepted; this is a test transaction and no funds move.')}`
+            }
+          </div>
 
-            <button class="btn btn-gold btn-block" type="submit" id="pay-submit" ${method ? '' : 'hidden'}>
-              <span id="submit-card-label" ${method === 'card' ? '' : 'hidden'}>Pay <span class="blocks-total">${total(blocks)}</span> &amp; enter →</span>
-              <span id="submit-dd-label" ${method === 'dd' ? '' : 'hidden'}>Set up Direct Debit →</span>
-            </button>
-            <p class="hint" style="text-align:center" id="pay-hint"></p>
-          </form>
-        </div>
-        <div class="card stack" style="align-self:start">
-          <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Order summary</h3>
-          <div id="summary-none" ${method ? 'hidden' : ''}><p class="muted">Choose how you'd like to pay.</p></div>
+          <div id="pay-dd" class="stack" ${method === 'dd' ? '' : 'hidden'}>
+            ${field({ label: 'Name of account holder', input: '<input id="dd-name" name="dd-name" type="text" placeholder="Full name" autocomplete="off" data-required />' })}
+            <div class="field-grid">
+              ${field({ label: 'Sort code', input: '<input id="dd-sort" name="dd-sort" type="text" placeholder="00-00-00" autocomplete="off" data-required />' })}
+              ${field({ label: 'Account number', input: '<input id="dd-acc" name="dd-acc" type="text" placeholder="12345678" autocomplete="off" data-required />' })}
+            </div>
+            ${notice('fa-flask', '<b>Sandbox Direct Debit</b> &mdash; any name, sort code and account number are accepted; this is a test mandate and no funds move.')}
+          </div>
+
+          <button class="btn-primary tall" type="submit" id="pay-submit" ${method ? '' : 'hidden'}>
+            <span id="submit-card-label" ${method === 'card' ? '' : 'hidden'}>Pay <span class="blocks-total">${total(blocks)}</span> &amp; enter</span>
+            <span id="submit-dd-label" ${method === 'dd' ? '' : 'hidden'}>Set up Direct Debit</span>
+            ${arrow}
+          </button>
+          <p class="pay-hint" id="pay-hint"></p>
+        </form>
+        <aside class="col-side panel-navy angle-c" data-reveal="right" data-delay="120" aria-label="Order summary">
+          <h3 class="h-20">Order summary</h3>
+          <div id="summary-none" ${method ? 'hidden' : ''}><p class="summary-muted">Choose how you'd like to pay.</p></div>
           <div id="summary-card" class="stack" ${method === 'card' ? '' : 'hidden'}>
-            <div style="display:flex;justify-content:space-between;font-size:.9rem"><span id="summary-line">${summaryLine(blocks)}</span><span class="amt blocks-total">${total(blocks)}</span></div>
-            <hr class="divider">
-            <div style="display:flex;justify-content:space-between;font-weight:700"><span>Total due today</span><span class="amt blocks-total">${total(blocks)}</span></div>
-            <p class="hint">Your numbers go into this draw now and each following draw automatically until the draws you've paid for run out.</p>
+            <div class="summary-row"><span id="summary-line">${summaryLine(blocks)}</span><span class="amount blocks-total">${total(blocks)}</span></div>
+            ${jaggedDivider(true)}
+            <div class="summary-total"><span>Total due today</span><span class="amount blocks-total" data-pulse>${total(blocks)}</span></div>
+            <p class="summary-note">Your numbers go into this draw now and each following draw automatically until the draws you've paid for run out.</p>
           </div>
           <div id="summary-dd" class="stack" ${method === 'dd' ? '' : 'hidden'}>
-            <div style="display:flex;justify-content:space-between;font-size:.9rem"><span>Each draw, from Draw ${openDraw.drawNumber}</span><span class="amt">${formatPence(pence(200n))}</span></div>
-            <hr class="divider">
-            <div style="display:flex;justify-content:space-between;font-weight:700"><span>Due today</span><span class="amt">${formatPence(pence(0n))}</span></div>
-            <p class="hint">Your numbers are entered into every draw until you cancel the Direct Debit from "My numbers".</p>
+            <div class="summary-row"><span>Each draw, from Draw ${openDraw.drawNumber}</span><span class="amount">${formatPence(pence(200n))}</span></div>
+            ${jaggedDivider(true)}
+            <div class="summary-total"><span>Due today</span><span class="amount" data-pulse>${formatPence(pence(0n))}</span></div>
+            <p class="summary-note">Your numbers are entered into every draw until you cancel the Direct Debit from "My numbers".</p>
           </div>
-        </div>
+        </aside>
       </div>
-      <script>
-      (function(){
-        var form = document.getElementById('pay-form');
-        var submit = document.getElementById('pay-submit');
-        var hint = document.getElementById('pay-hint');
-        var HINTS = {
-          card: ${JSON.stringify(opts.hostedCardPage ? "Card payments are processed securely by Elavon." : "Payments run through QOSFC's sandbox payment gateway while a real card acquirer is being set up.")},
-          dd: "Direct Debit setup runs through QOSFC's sandbox Bacs bureau while a real route is being set up. No payment is taken today."
-        };
-        function show(id, on){ document.getElementById(id).hidden = !on; }
-        function choose(method){
-          var isCard = method === 'card';
-          show('pay-card', isCard); show('pay-dd', !isCard);
-          show('summary-none', false); show('summary-card', isCard); show('summary-dd', !isCard);
-          show('submit-card-label', isCard); show('submit-dd-label', !isCard);
-          submit.hidden = false;
-          // Only the visible section's fields are required — and the number of
-          // draws only exists for card: a Direct Debit has no end.
-          document.querySelectorAll('#pay-card [data-required]').forEach(function(el){ el.required = isCard; });
-          document.querySelectorAll('#pay-dd [data-required]').forEach(function(el){ el.required = !isCard; });
-          document.querySelectorAll('input[name=blocks]').forEach(function(el){ el.disabled = !isCard; });
-          form.action = isCard ? '/draw/enter' : '/direct-debit/setup';
-          hint.textContent = HINTS[method];
-        }
-        document.querySelectorAll('input[name=method]').forEach(function(r){
-          r.addEventListener('change', function(){ choose(r.value); });
-          if (r.checked) choose(r.value);
-        });
-        var summary = document.getElementById('summary-line');
-        var totals = document.querySelectorAll('.blocks-total');
-        document.querySelectorAll('input[name=blocks]').forEach(function(r){
-          r.addEventListener('change', function(){
-            var amount = '£' + (Number(r.value) * 2 * ${lineCount}).toFixed(2);
-            summary.textContent = ${JSON.stringify(Object.fromEntries(PURCHASE_BLOCK_SIZES.map((size) => [size, summaryLine(size)])))}[r.value];
-            totals.forEach(function(el){ el.textContent = amount; });
-          });
-        });
-      })();
-      </script>
     `,
   });
+}
+
+// ── Payment / Direct Debit results (adopt the shell) ────────────────────────
+
+function resultPanel(kind: 'success' | 'error' | 'muted', message: string, action?: { href: string; label: string }): string {
+  const box =
+    kind === 'success'
+      ? `<div class="notice-success">${escapeHtml(message)}</div>`
+      : kind === 'error'
+        ? `<div class="notice-error" role="alert">${escapeHtml(message)}</div>`
+        : `<p class="body-copy">${escapeHtml(message)}</p>`;
+  return `<div class="panel narrow" data-reveal="left">${box}${action ? `<a class="btn-primary" href="${action.href}"><span>${action.label}</span>${arrow}</a>` : ''}</div>`;
 }
 
 export function purchaseReturnPage(opts: {
@@ -721,17 +744,15 @@ export function purchaseReturnPage(opts: {
   /** What was done with the payment (more weeks, or an extra entry; any Direct Debit pause). */
   message?: string;
 }): string {
-  const body =
+  const [heading, body] =
     opts.status === 'paid'
-      ? `<div class="page-head"><h1>You're in!</h1></div><div class="flash" style="white-space:pre-line">${escapeHtml(opts.message ?? 'Payment received — your entry is confirmed.')}</div>
-         <p style="margin-top:1rem"><a class="btn btn-primary" href="/account">View my numbers</a></p>`
+      ? ["You're in!", resultPanel('success', opts.message ?? 'Payment received — your entry is confirmed.', { href: '/account', label: 'View my numbers' })]
       : opts.status === 'pending'
-        ? `<div class="page-head"><h1>Payment processing</h1></div><p class="muted">This can take a moment. Refresh this page shortly, or check "My numbers" later.</p>`
+        ? ['Payment processing', resultPanel('muted', 'This can take a moment. Refresh this page shortly, or check "My numbers" later.')]
         : opts.status === 'failed'
-          ? `<div class="page-head"><h1>Payment did not go through</h1></div><div class="error">${escapeHtml(opts.reason ?? 'The payment was not successful.')}</div>
-             <p style="margin-top:1rem"><a class="btn btn-primary" href="/draw">Try again</a></p>`
-          : `<div class="page-head"><h1>Unknown payment session</h1></div><p class="muted">We couldn't find that payment attempt.</p>`;
-  return layout({ title: 'Payment', member: opts.member, active: 'draw', ...(opts.openDraw ? { openDraw: opts.openDraw } : {}), body });
+          ? ['Payment did not go through', resultPanel('error', opts.reason ?? 'The payment was not successful.', { href: '/draw', label: 'Try again' })]
+          : ['Unknown payment session', resultPanel('muted', "We couldn't find that payment attempt.")];
+  return layout({ title: 'Payment', eyebrow: 'Payment', heading, member: opts.member, body });
 }
 
 export function directDebitReturnPage(opts: {
@@ -742,30 +763,35 @@ export function directDebitReturnPage(opts: {
   /** What the Direct Debit does (new numbers alongside, or after paid draws run out). */
   message?: string;
 }): string {
-  const body =
+  const [heading, body] =
     opts.status === 'active'
-      ? `<div class="page-head"><h1>Direct Debit set up</h1></div><div class="flash">${escapeHtml(opts.message ?? 'Your Direct Debit is set up.')}</div>
-         <p style="margin-top:1rem"><a class="btn btn-primary" href="/account">View my numbers</a></p>`
+      ? ['Direct Debit set up', resultPanel('success', opts.message ?? 'Your Direct Debit is set up.', { href: '/account', label: 'View my numbers' })]
       : opts.status === 'failed'
-        ? `<div class="page-head"><h1>Direct Debit setup did not complete</h1></div><div class="error">${escapeHtml(opts.reason ?? 'The mandate setup was not successful.')}</div>
-           <p style="margin-top:1rem"><a class="btn btn-primary" href="/draw">Try again</a></p>`
-        : `<div class="page-head"><h1>Unknown Direct Debit setup</h1></div><p class="muted">We couldn't find that setup attempt.</p>`;
-  return layout({ title: 'Direct Debit', member: opts.member, active: 'draw', ...(opts.openDraw ? { openDraw: opts.openDraw } : {}), body });
+        ? ['Direct Debit setup did not complete', resultPanel('error', opts.reason ?? 'The mandate setup was not successful.', { href: '/draw', label: 'Try again' })]
+        : ['Unknown Direct Debit setup', resultPanel('muted', "We couldn't find that setup attempt.")];
+  return layout({ title: 'Direct Debit', eyebrow: 'Direct Debit', heading, member: opts.member, body });
+}
+
+// ── My numbers / My details (adopt the shell) ───────────────────────────────
+
+function smallBalls(selection: readonly number[]): string {
+  return `<div class="balls">${selection.map((n) => `<span class="ball ball-sm">${n}</span>`).join('')}</div>`;
 }
 
 function entryHistoryRow(e: MyEntry): string {
-  const balls = e.selection
-    .map((n) => `<span class="ball win" style="width:2rem;height:2rem;font-size:.8rem">${n}</span>`)
-    .join('');
   const matched = e.winningNumbers ? e.selection.filter((n) => e.winningNumbers!.includes(n)).length : undefined;
   const won = e.drawStatus === 'settled' && matched === 4;
   const result =
     e.drawStatus !== 'settled'
-      ? `<span class="pill pill-open">Open</span>`
+      ? `<span class="badge">Open</span>`
       : won
-        ? `<span class="pill pill-win">Jackpot won 🏆</span>`
-        : `<span class="muted">${matched} matched</span>`;
-  return `<tr><td class="num">${e.drawNumber}</td><td>${escapeHtml(e.drawDate)}</td><td><div class="ball-row">${balls}</div></td><td>${result}</td></tr>`;
+        ? `<span class="badge">${icon('fa-trophy')} Jackpot won</span>`
+        : `${matched} matched`;
+  return `<tr><td class="draw-no">${e.drawNumber}</td><td>${escapeHtml(formatDrawDate(e.drawDate))}</td><td>${smallBalls(e.selection)}</td><td>${result}</td></tr>`;
+}
+
+function flashNotice(flash: string | undefined): string {
+  return flash ? notice('fa-check', escapeHtml(flash)) : '';
 }
 
 export function accountPage(opts: {
@@ -778,55 +804,50 @@ export function accountPage(opts: {
   flash?: string;
 }): string {
   const { entries, standingSelections, directDebits } = opts;
-  const balls = (s: readonly number[]) => `<div class="ball-row">${s.map((n) => `<span class="ball picked">${n}</span>`).join('')}</div>`;
-  const ddCard =
+  const balls44 = (s: readonly number[]) => `<div class="balls">${s.map((n) => `<span class="ball ball-44">${n}</span>`).join('')}</div>`;
+  const ddPanel =
     directDebits.length > 0
-      ? `<div class="card stack">
-        <div style="display:flex;justify-content:space-between;align-items:baseline">
-          <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Direct Debit</h3>
-          <span class="pill pill-open">Active</span>
-        </div>
-        <p class="hint">${formatPence(pence(200n))} a draw for each set of numbers below. Draws you have paid for by card are used first; the Direct Debit pauses for those and resumes after.</p>
+      ? `<div class="panel">
+        <div class="panel-head"><h3>Direct Debit</h3><span class="badge">Active</span></div>
+        <p class="small-hint">${formatPence(pence(200n))} a draw for each set of numbers below. Draws you have paid for by card are used first; the Direct Debit pauses for those and resumes after.</p>
         ${directDebits
           .map(
-            (dd) => `<div class="stack" style="gap:.4rem">
-          ${dd.selection ? balls(dd.selection) : ''}
-          <p class="hint">Set up ${escapeHtml(formatLondon(dd.since))}.</p>
-          <form method="post" action="/direct-debit/cancel" onsubmit="return confirm('Cancel this Direct Debit? These numbers will no longer be entered by Direct Debit.');">
+            (dd) => `<div class="stack-10">
+          ${dd.selection ? balls44(dd.selection) : ''}
+          <p class="small-hint">Set up ${escapeHtml(formatLondon(dd.since))}.</p>
+          <form method="post" action="/direct-debit/cancel" data-confirm="Cancel this Direct Debit? These numbers will no longer be entered by Direct Debit.">
             ${csrfField(opts.member.csrf)}
             <input type="hidden" name="paymentMethodId" value="${escapeHtml(dd.id)}" />
-            <button class="btn btn-ghost" type="submit">Cancel this Direct Debit</button>
+            <button class="btn-secondary small" type="submit">Cancel this Direct Debit</button>
           </form>
         </div>`,
           )
-          .join('<hr class="divider">')}
+          .join(jaggedDivider())}
       </div>`
       : '';
-  const rows = entries.map(entryHistoryRow).join('\n');
   return layout({
     title: 'My numbers',
+    eyebrow: 'My account',
+    heading: 'My numbers',
+    lede: "Your numbers, upcoming entries and how they've fared.",
     member: opts.member,
-    active: 'account',
-    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
     body: `
-      <div class="page-head"><h1>My numbers</h1><p>Your numbers, upcoming entries and how they've fared.</p></div>
-      ${opts.flash ? `<div class="flash" style="margin-bottom:1rem">${escapeHtml(opts.flash)}</div>` : ''}
-      <div class="grid2">
-        <div class="card stack">
-          <div style="display:flex;justify-content:space-between;align-items:baseline">
-            <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Currently entered</h3>
-            ${standingSelections.length > 0 ? `<span class="pill pill-open">Entered ✓</span>` : ''}
+      <div class="stack">
+        ${flashNotice(opts.flash)}
+        <div class="cols">
+          <div class="panel" data-reveal="left">
+            <div class="panel-head"><h3>Currently entered</h3>${standingSelections.length > 0 ? `<span class="badge">${icon('fa-check')} Entered</span>` : ''}</div>
+            ${standingSelections.length > 0 ? standingSelections.map(balls44).join('') : `<p class="body-copy">No standing numbers yet.</p>`}
+            <a class="btn-secondary small" href="/draw">Add draws or numbers</a>
           </div>
-          ${standingSelections.length > 0 ? standingSelections.map(balls).join('') : `<p class="muted">No standing numbers yet.</p>`}
-          <a class="btn btn-ghost" href="/draw">Add draws or numbers</a>
+          ${ddPanel}
         </div>
-        ${ddCard}
-        <div class="card stack">
-          <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Entry history</h3>
+        <div class="panel panel-white" data-reveal="up" data-delay="120">
+          <h3>Entry history</h3>
           ${
             entries.length === 0
-              ? `<p class="muted">No entries yet &mdash; <a href="/draw">enter the current draw</a>.</p>`
-              : `<table><thead><tr><th>Draw</th><th>Date</th><th>Numbers</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>`
+              ? `<p class="body-copy">No entries yet &mdash; <a href="/draw">enter the current draw</a>.</p>`
+              : `<div class="table-wrap"><table class="history"><thead><tr><th>Draw</th><th>Date</th><th>Numbers</th><th>Result</th></tr></thead><tbody>${entries.map(entryHistoryRow).join('\n')}</tbody></table></div>`
           }
         </div>
       </div>
@@ -834,86 +855,124 @@ export function accountPage(opts: {
   });
 }
 
-export function detailsPage(opts: {
-  member: ViewMember;
-  openDraw?: OpenDraw | undefined;
-  details: MemberDetails;
-  flash?: string;
-}): string {
+export function detailsPage(opts: { member: ViewMember; openDraw?: OpenDraw | undefined; details: MemberDetails; flash?: string }): string {
   const { details } = opts;
   const contactOption = (value: string, label: string) =>
-    `<label class="toggle-note"><input type="radio" name="preferredContact" value="${value}" ${details.preferredContact === value ? 'checked' : ''} /> ${label}</label>`;
+    `<label><input type="radio" name="preferredContact" value="${value}" ${details.preferredContact === value ? 'checked' : ''} /> ${label}</label>`;
+  const text = (id: string, label: string, value: string | null, type = 'text') =>
+    field({ label, input: `<input id="${id}" name="${id}" type="${type}" value="${escapeHtml(value ?? '')}" />` });
   return layout({
     title: 'My details',
+    eyebrow: 'My account',
+    heading: 'My details',
+    lede: "Keep this up to date &mdash; it's how we reach you if your numbers come up.",
     member: opts.member,
-    active: 'details',
-    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
     body: `
-      <div class="page-head"><h1>My details</h1><p>Keep this up to date &mdash; it's how we reach you if your numbers come up.</p></div>
-      ${opts.flash ? `<div class="flash" style="margin-bottom:1rem">${escapeHtml(opts.flash)}</div>` : ''}
-      <div class="grid2">
-        <div class="card stack">
-          <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Contact</h3>
-          <div class="row2">
-            <div class="field"><label>Forename</label><input type="text" value="${escapeHtml(details.forename ?? '')}" disabled /></div>
-            <div class="field"><label>Surname</label><input type="text" value="${escapeHtml(details.surname ?? '')}" disabled /></div>
+      <div class="stack">
+        ${flashNotice(opts.flash)}
+        <div class="cols">
+          <div class="panel" data-reveal="left">
+            <h3>Contact</h3>
+            <div class="field-pair">
+              ${field({ label: 'Forename', input: `<input type="text" value="${escapeHtml(details.forename ?? '')}" disabled />` })}
+              ${field({ label: 'Surname', input: `<input type="text" value="${escapeHtml(details.surname ?? '')}" disabled />` })}
+            </div>
+            ${field({ label: 'Email', input: `<input type="email" value="${escapeHtml(details.email ?? '')}" disabled />` })}
+            <form method="post" action="/details" class="stack">
+              ${csrfField(opts.member.csrf)}
+              ${text('telephone', 'Mobile / telephone', details.telephone, 'tel')}
+              ${text('address1', 'Address line 1', details.address1)}
+              ${text('address2', 'Address line 2', details.address2)}
+              <div class="field-pair">
+                ${text('address3', 'Town', details.address3)}
+                ${text('postCode', 'Postcode', details.postCode)}
+              </div>
+              <span class="field-label">Notify me by</span>
+              <div class="radio-row">
+                ${contactOption('email', 'Email')}
+                ${contactOption('phone', 'Phone')}
+                ${contactOption('post', 'Post')}
+              </div>
+              ${primaryButton('Save changes')}
+            </form>
           </div>
-          <div class="field"><label>Email</label><input type="email" value="${escapeHtml(details.email ?? '')}" disabled /></div>
-          <form method="post" action="/details" class="stack">
-            ${csrfField(opts.member.csrf)}
-            <div class="field"><label for="telephone">Mobile / telephone</label><input id="telephone" name="telephone" type="tel" value="${escapeHtml(details.telephone ?? '')}" /></div>
-            <div class="field"><label for="address1">Address line 1</label><input id="address1" name="address1" type="text" value="${escapeHtml(details.address1 ?? '')}" /></div>
-            <div class="field"><label for="address2">Address line 2</label><input id="address2" name="address2" type="text" value="${escapeHtml(details.address2 ?? '')}" /></div>
-            <div class="row2">
-              <div class="field"><label for="address3">Town</label><input id="address3" name="address3" type="text" value="${escapeHtml(details.address3 ?? '')}" /></div>
-              <div class="field"><label for="postCode">Postcode</label><input id="postCode" name="postCode" type="text" value="${escapeHtml(details.postCode ?? '')}" /></div>
-            </div>
-            <span class="sep-label">Notify me by</span>
-            <div style="display:flex;gap:1.2rem">
-              ${contactOption('email', 'Email')}
-              ${contactOption('phone', 'Phone')}
-              ${contactOption('post', 'Post')}
-            </div>
-            <button class="btn btn-primary" type="submit" style="align-self:flex-start">Save changes</button>
-          </form>
-        </div>
-        <div class="card stack" style="align-self:start">
-          <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Prize payout account</h3>
-          <div class="banner"><span>🏗️</span><span>Online payout account management is coming soon. Winnings are currently arranged directly with QOSFC.</span></div>
+          <div class="panel panel-white" data-reveal="right" data-delay="120">
+            <h3>Prize payout account</h3>
+            ${notice('fa-info-circle', 'Online payout account management is coming soon. Winnings are currently arranged directly with QOSFC.')}
+          </div>
         </div>
       </div>
     `,
   });
 }
 
-function pastDrawRow(d: SettledDraw): string {
-  const balls = d.winningNumbers.map((n) => `<span class="ball win" style="width:2rem;height:2rem;font-size:.8rem">${n}</span>`).join('');
-  const rolled = d.rolloverOutPence !== null && BigInt(d.rolloverOutPence) > 0n;
-  return `<tr>
-    <td class="num">${d.drawNumber}</td>
-    <td>${escapeHtml(d.drawDate)}</td>
-    <td><div class="ball-row">${balls}</div></td>
-    <td class="amt">${d.jackpotPaidPence !== null ? formatPence(pence(BigInt(d.jackpotPaidPence))) : '—'}</td>
-    <td>${rolled ? `<span class="pill pill-rollover">Rolled over</span>` : `<span class="pill pill-win">Won — shared by ${d.winnersCount ?? 0}</span>`}</td>
-  </tr>`;
-}
+// ── Past draws ──────────────────────────────────────────────────────────────
 
 export function pastDrawsPage(opts: { member?: ViewMember; openDraw?: OpenDraw | undefined; draws: SettledDraw[] }): string {
-  const rows = opts.draws.map(pastDrawRow).join('\n');
+  const [latest] = opts.draws;
+  const balls = (d: SettledDraw, cls: string, data = '') => d.winningNumbers.map((n) => `<span class="ball ${cls}"${data}>${n}</span>`).join('');
+
+  const latestCard = latest
+    ? (() => {
+        const paid = BigInt(latest.jackpotPaidPence ?? '0');
+        const rolled = BigInt(latest.rolloverOutPence ?? '0');
+        const winners = latest.winnersCount ?? 0;
+        return `<div class="latest-card" data-reveal="left">
+          <div class="stack-10">
+            <span class="stat-label">Latest · Draw No. ${latest.drawNumber} · ${escapeHtml(formatDrawDate(latest.drawDate))}</span>
+            <div class="balls">${balls(latest, 'ball-result', ' data-ball')}</div>
+          </div>
+          <div class="skew-rule" aria-hidden="true"></div>
+          <div class="stat"><span class="stat-label">Jackpot</span><span class="stat-value" data-pulse>${formatMoney(paid + rolled)}</span></div>
+          ${
+            winners > 0
+              ? `<div class="stat"><span class="stat-label">Winners</span><span class="stat-value">${winners}</span></div>`
+              : `<div class="stat"><span class="stat-label">Rolled over</span><span class="stat-value">${formatMoney(rolled)}</span></div>`
+          }
+        </div>`;
+      })()
+    : '';
+
+  const head = ['Draw', 'Date', 'Winning numbers', 'Jackpot', 'Winners', 'Rollover']
+    .map((h, i) => `<span class="th${i === 0 ? ' first' : i === 5 ? ' last' : ''}">${h}</span>`)
+    .join('');
+  const rows = opts.draws
+    .map(
+      (d) => `<span class="first draw-no">${d.drawNumber}</span>
+        <span>${escapeHtml(formatDrawDate(d.drawDate))}</span>
+        <span class="balls-cell">${balls(d, 'ball-sm')}</span>
+        <span class="money">${moneyOrDash(d.jackpotPaidPence)}</span>
+        <span>${d.winnersCount ?? 0}</span>
+        <span class="last rollover">${moneyOrDash(d.rolloverOutPence)}</span>`,
+    )
+    .join('');
+  const cards = opts.draws
+    .map(
+      (d) => `<div class="result-card">
+        <div class="result-card-head"><b>Draw ${d.drawNumber}</b><span>${escapeHtml(formatDrawDate(d.drawDate))}</span></div>
+        <div class="balls">${balls(d, 'ball-card')}</div>
+        <div class="result-card-stats">
+          <span>Jackpot<b>${moneyOrDash(d.jackpotPaidPence)}</b></span>
+          <span>Winners<b>${d.winnersCount ?? 0}</b></span>
+          <span class="rollover">Rollover<b>${moneyOrDash(d.rolloverOutPence)}</b></span>
+        </div>
+      </div>`,
+    )
+    .join('');
+
   return layout({
     title: 'Past draws',
+    eyebrow: 'Results',
+    heading: 'Past draws',
+    lede: 'Winning numbers, jackpots and winners from every settled draw.',
     ...(opts.member ? { member: opts.member } : {}),
-    active: 'past',
-    ...(opts.openDraw ? { openDraw: opts.openDraw } : {}),
-    body: `
-      <div class="page-head"><h1>Past draws</h1><p>Winning numbers and outcomes for recent weeks.</p></div>
-      <div class="card">
-        ${
-          opts.draws.length === 0
-            ? '<p class="muted">No draws have been settled yet.</p>'
-            : `<table><thead><tr><th>Draw</th><th>Date</th><th>Winning numbers</th><th>Jackpot</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table>`
-        }
-      </div>
-    `,
+    body:
+      opts.draws.length === 0
+        ? `<div class="panel narrow" data-reveal="left"><p class="body-copy">No draws have been settled yet.</p></div>`
+        : `<div class="stack">
+        ${latestCard}
+        <div class="results-table" data-reveal="up" data-delay="120"><div class="results-grid">${head}${rows}</div></div>
+        <div class="results-cards" data-reveal="up" data-delay="120">${cards}</div>
+      </div>`,
   });
 }

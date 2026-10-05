@@ -1,0 +1,68 @@
+:root{
+/* Brand blues — lifted from 2024main.css, custom.css, 2024content-master.master */
+--qos-navy:#094582;          /* primary: nav, panel headings, score divider */
+--qos-navy-deep:#083d72;     /* legacy navbar + footer */
+--qos-sky:#009fff;           /* page-title bars, pagination bar, hover fill */
+--qos-mid:#3068a7;           /* overlay sub-heads, season bar, nav link hover */
+--qos-slate:#39648f;         /* category badge pill */
+--qos-midnight:#00091c;      /* full-screen menu columns */
+--qos-midnight-90:rgba(0,9,28,.9);
+--qos-link:#337ab7;          /* bootstrap link / hover */
+--qos-ice:#f2f8fe;           /* body background */
+--qos-ice-2:#e1e8f9;         /* panel footer */
+--qos-ice-line:#b7c7f1;      /* panel footer border */
+--qos-steel-line:#c9d7e4;    /* article card border */
+--qos-pitch:#8fa6c1;         /* pitch diagram fill */
+/* Neutrals */
+--white:#ffffff;
+--grey-25:#fdfdfd;
+--grey-50:#f8f9fa;
+--grey-100:#f7f7f7;
+--grey-150:#efefef;
+--grey-200:#eeeeee;
+--grey-300:#dee2e6;
+--grey-500:#6c757d;
+--grey-600:#666666;
+--grey-800:#333333;
+--grey-900:#292b2c;
+--black:#000000;
+--glass-dark:rgba(51,51,51,.5);
+/* League table row tints (custom.css .LeagueTableRowN) */
+--table-champion:#dff0d8;
+--table-playoff:#d9edf7;
+--table-playoff-rel:#fcf8e3;
+--table-relegated:#f2dede;
+/* Live update action cells */
+--update-kickoff:#094582;
+--update-goal-qos:#061df9;
+--update-goal-opp:#555353;
+--update-yellow:#ffff00;
+--update-red:#ff0000;
+--update-sub:#00a9e0;
+/* Bootstrap 4.6 defaults the 2024 templates inherit (links, nav-pills, tables) */
+--bs-primary:#007bff;
+--bs-primary-hover:#0056b3;
+--bs-thead-bg:#e9ecef;
+--bs-thead-fg:#495057;
+--bs-stripe:rgba(0,0,0,.05);
+--bs-hr:rgba(0,0,0,.1);
+/* Semantic */
+--success:#28a745;
+--notify:#ff0000;
+--cta-ticket:#14c214;
+/* Aliases */
+--surface-page:var(--qos-ice);
+--surface-content:var(--grey-100);
+--surface-card:var(--white);
+--surface-brand:var(--qos-navy);
+--surface-brand-strong:var(--qos-midnight);
+--surface-title:var(--qos-sky);
+--text-body:var(--grey-800);
+--text-muted:var(--grey-500);
+--text-brand:var(--qos-navy);
+--text-on-brand:var(--white);
+--border-card:var(--qos-steel-line);
+--border-subtle:var(--grey-150);
+--link:var(--bs-primary);
+--link-hover:var(--bs-primary-hover);
+}
