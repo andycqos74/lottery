@@ -381,7 +381,7 @@ app.post('/reset-password', async (request, reply) => {
 
 app.post('/logout', async (request, reply) => {
   reply.clearCookie(SESSION_COOKIE, { path: '/' });
-  if (isFormRequest(request)) return reply.redirect('/login');
+  if (isFormRequest(request)) return reply.redirect('/');
   return { ok: true };
 });
 
