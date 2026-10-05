@@ -152,7 +152,7 @@ function isFormRequest(request: FastifyRequest): boolean {
  */
 function safeNext(raw: unknown): string | undefined {
   if (typeof raw !== 'string' || raw.length > 512) return undefined;
-  return /^\/draw(\/pay)?(\?[\w=&%.\-]*)?$/.test(raw) ? raw : undefined;
+  return /^\/draw(\/pay)?(\?[\w=&%.-]*)?$/.test(raw) ? raw : undefined;
 }
 
 async function viewMember(request: FastifyRequest): Promise<{ auth: NonNullable<Awaited<ReturnType<typeof currentMember>>>; view: ViewMember } | undefined> {
