@@ -27,6 +27,9 @@ x-worker-env: &worker-env
   TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-qosfc-lottery}
   TEMPORAL_CODEC_KEY_DIR: /run/secrets/codec
   TEMPORAL_CODEC_ACTIVE_KEY_ID: ${TEMPORAL_CODEC_ACTIVE_KEY_ID:?set in .env}
+  # Only worker-draw acts on it: whether to create the draw-dispatch and
+  # task-escalation-sweep schedules (packages/temporal-common/src/schedules.ts).
+  TEMPORAL_SCHEDULES: ${TEMPORAL_SCHEDULES:-on}
   APP_DB_URL: postgres://lottery_app@postgres-app:5432/lottery_app
   APP_DB_PASSWORD_FILE: /run/secrets/app_role_password
   # Which adapter set each port uses. `sandbox` is refused in production by the

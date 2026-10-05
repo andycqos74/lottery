@@ -12,8 +12,11 @@ import { createActivities } from '@qosfc/activities';
 import {
   EncryptionCodec,
   SEARCH_ATTRIBUTES,
+  TASK_QUEUES,
   assertTaskQueue,
   connectionConfigFromEnv,
+  createClient,
+  ensureSchedules,
 } from '@qosfc/temporal-common';
 import { describeRegistry } from '@qosfc/ports';
 import { buildProviderRegistry } from './composition-root.js';
@@ -40,6 +43,16 @@ const connection = await NativeConnection.connect({ address: config.address });
  */
 await assertSearchAttributesRegistered();
 
+/**
+ * The draw-dispatch and task-escalation schedules (schedules.ts). Owned by the
+ * draw worker alone so exactly one process creates them; idempotent, so every
+ * restart is safe. TEMPORAL_SCHEDULES=off leaves them uncreated — for a dev
+ * stack whose seeded draws should not start running on their own.
+ */
+const schedulesEnabled = process.env['TEMPORAL_SCHEDULES'] !== 'off';
+const schedules =
+  taskQueue === TASK_QUEUES.draw && schedulesEnabled ? await ensureSchedulesWithClient() : undefined;
+
 const worker = await Worker.create({
   connection,
   namespace: config.namespace,
@@ -61,6 +74,7 @@ console.log(
     taskQueue,
     namespace: config.namespace,
     payloadEncryption: config.keyProvider ? 'enabled' : 'DISABLED (non-production only)',
+    ...(taskQueue === TASK_QUEUES.draw ? { schedules: schedules ?? 'disabled (TEMPORAL_SCHEDULES=off)' } : {}),
     providers: describeRegistry(providers),
   }),
 );
@@ -73,6 +87,15 @@ try {
 } finally {
   connection.close();
   await pool.end();
+}
+
+async function ensureSchedulesWithClient() {
+  const client = await createClient(config);
+  try {
+    return await ensureSchedules(client);
+  } finally {
+    await client.connection.close();
+  }
 }
 
 async function assertSearchAttributesRegistered(): Promise<void> {

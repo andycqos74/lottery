@@ -54,11 +54,16 @@ export const NAMESPACE = process.env['TEMPORAL_NAMESPACE'] ?? 'qosfc-lottery';
 
 /**
  * Workflow IDs are BUSINESS KEYS (T-8.1). This is what makes duplicate execution
- * structurally impossible rather than merely checked: `draw-2026-W37` cannot run
+ * structurally impossible rather than merely checked: `draw-<drawId>` cannot run
  * twice, because Temporal will not start a second workflow with that ID.
+ *
+ * The draw's key is its row, not an ISO week: draws are materialised one row
+ * each and may be weekly, fortnightly or monthly (0015). Workflow code keeps
+ * its own copy of the draw, watchdog and escalation IDs in
+ * packages/workflows/src/ids.ts — keep the two identical.
  */
 export const workflowIds = {
-  draw: (isoYear: number, isoWeek: number) => `draw-${isoYear}-W${String(isoWeek).padStart(2, '0')}`,
+  draw: (drawId: string) => `draw-${drawId}`,
   member: (memberId: string) => `member-${memberId}`,
   onboarding: (signupId: string) => `onboard-${signupId}`,
   ddCollection: (cycleKey: string) => `dd-${cycleKey}`,
@@ -70,6 +75,5 @@ export const workflowIds = {
   statutoryReturn: (period: string) => `return-${period}`,
   migration: (runId: string) => `migration-${runId}`,
   escalation: (taskId: string) => `escalation-${taskId}`,
-  drawWatchdog: (isoYear: number, isoWeek: number) =>
-    `draw-watchdog-${isoYear}-W${String(isoWeek).padStart(2, '0')}`,
+  drawWatchdog: (drawId: string) => `draw-watchdog-${drawId}`,
 } as const;

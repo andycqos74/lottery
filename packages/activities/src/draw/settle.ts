@@ -15,8 +15,18 @@
 import { randomUUID } from 'node:crypto';
 import { withTransaction, type Pool } from '@qosfc/db';
 import type { PoolClient } from 'pg';
-import { pence, settleOutcome, shareJackpot, type Pence, type SharePolicy, type WinningEntry } from '@qosfc/domain';
+import {
+  pence,
+  resolveMustBeWon,
+  settleOutcome,
+  shareJackpot,
+  type Pence,
+  type SharedJackpot,
+  type SharePolicy,
+  type WinningEntry,
+} from '@qosfc/domain';
 import { writeAudit } from '../audit.js';
+import { fetchRollDownTiers } from './winners.js';
 
 export interface SettleDrawRequest {
   readonly drawId: string;
@@ -30,10 +40,19 @@ export interface SettleDrawRequest {
    */
   readonly rolloverInPence?: string;
   readonly floorTopupPence?: string;
+  /**
+   * GAP-24: the must-be-won cap was reached with no match-4 winner, so the
+   * jackpot rolls down to the first of match 3 → 2 → 1 with a winning entry
+   * (`resolveMustBeWon`). The tiers are read here, from the frozen entry set,
+   * rather than passed in. Only valid with no `winningEntries`.
+   */
+  readonly mustBeWonRollDown?: boolean;
 }
 
 export interface SettleDrawResult {
   readonly winnersCount: number;
+  /** Set when the must-be-won roll-down paid: which tier won. */
+  readonly mustBeWonTier?: 3 | 2 | 1;
   readonly jackpotPaidPence: string;
   readonly rolloverOutPence: string;
 }
@@ -88,9 +107,12 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
       winners_count: number | null;
       jackpot_paid_pence: bigint | null;
       rollover_out_pence: bigint | null;
-    }>(`SELECT status, winners_count, jackpot_paid_pence, rollover_out_pence FROM draw WHERE id = $1 FOR UPDATE`, [
-      request.drawId,
-    ]);
+      must_be_won_decision: { tier?: 3 | 2 | 1 } | null;
+    }>(
+      `SELECT status, winners_count, jackpot_paid_pence, rollover_out_pence, must_be_won_decision
+         FROM draw WHERE id = $1 FOR UPDATE`,
+      [request.drawId],
+    );
     const draw = existing.rows[0];
     if (!draw) throw new Error(`Draw ${request.drawId} does not exist.`);
 
@@ -99,11 +121,22 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
         winnersCount: draw.winners_count ?? 0,
         jackpotPaidPence: (draw.jackpot_paid_pence ?? 0n).toString(),
         rolloverOutPence: (draw.rollover_out_pence ?? 0n).toString(),
+        ...(draw.must_be_won_decision?.tier ? { mustBeWonTier: draw.must_be_won_decision.tier } : {}),
       };
     }
 
+    if (request.mustBeWonRollDown && request.winningEntries.length > 0) {
+      throw new Error('A must-be-won roll-down only applies when nobody matched all four numbers.');
+    }
+
     const jackpotPreDrawPence = pence(BigInt(request.jackpotPreDrawPence));
-    const winnersCount = request.winningEntries.length;
+    // GAP-24: resolveMustBeWon() throws UnresolvedGapError if no tier has an
+    // entry — the workflow checks for that residual case and blocks for a
+    // human before ever asking for a roll-down, so reaching it here is a bug.
+    const rollDown = request.mustBeWonRollDown
+      ? resolveMustBeWon(jackpotPreDrawPence, await fetchRollDownTiers(client, request.drawId))
+      : undefined;
+    const winnersCount = rollDown ? rollDown.shared.shares.length : request.winningEntries.length;
     const outcome = settleOutcome(jackpotPreDrawPence, winnersCount);
     const txnId = randomUUID();
 
@@ -133,7 +166,9 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
       });
     }
 
-    if (winnersCount > 0) {
+    if (rollDown) {
+      await payShares(client, { txnId, prizeFundId, drawId: request.drawId, jackpotPaidPence: outcome.jackpotPaidPence, shared: rollDown.shared });
+    } else if (winnersCount > 0) {
       const { rows: configRows } = await client.query<{
         share_basis: 'per_winning_entry' | 'per_winner' | null;
         share_remainder_rule: 'largest_remainder_to_winners' | 'to_rollover' | 'to_good_cause' | null;
@@ -157,44 +192,7 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
         : undefined;
 
       const shared = shareJackpot(outcome.jackpotPaidPence, request.winningEntries, policy);
-
-      await postLeg(client, {
-        txnId,
-        accountId: prizeFundId,
-        amountPence: pence(-outcome.jackpotPaidPence),
-        drawId: request.drawId,
-        description: `Jackpot paid out — draw ${request.drawId}`,
-      });
-
-      for (const share of shared.shares) {
-        const memberAccountId = await getOrCreateMemberBalanceAccount(client, share.memberId);
-        await postLeg(client, {
-          txnId,
-          accountId: memberAccountId,
-          amountPence: share.amountPence,
-          drawId: request.drawId,
-          entryId: share.entryId,
-          description: `Prize share — draw ${request.drawId}`,
-        });
-        await client.query(
-          `INSERT INTO prize (draw_id, entry_id, member_id, amount_pence, status)
-           VALUES ($1, $2, $3, $4, 'pending_notification')`,
-          [request.drawId, share.entryId, share.memberId, share.amountPence],
-        );
-      }
-
-      if (shared.remainderPence > 0n) {
-        const destKind = shared.remainderDestination === 'good_cause' ? 'good_cause' : 'rollover';
-        const destName = destKind === 'good_cause' ? 'Good cause' : 'Rollover';
-        const destAccountId = await getOrCreateSingletonAccount(client, destKind, destName);
-        await postLeg(client, {
-          txnId,
-          accountId: destAccountId,
-          amountPence: shared.remainderPence,
-          drawId: request.drawId,
-          description: `Indivisible remainder to ${destKind} — draw ${request.drawId}`,
-        });
-      }
+      await payShares(client, { txnId, prizeFundId, drawId: request.drawId, jackpotPaidPence: outcome.jackpotPaidPence, shared });
     } else {
       const rolloverId = await getOrCreateSingletonAccount(client, 'rollover', 'Rollover');
       await postLeg(client, {
@@ -217,7 +215,8 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
       `UPDATE draw
           SET status = 'settled', winners_count = $2, jackpot_paid_pence = $3,
               rollover_out_pence = $4, settled_at = now(),
-              jackpot_pre_draw_pence = $5, rollover_in_pence = $6, floor_topup_pence = $7
+              jackpot_pre_draw_pence = $5, rollover_in_pence = $6, floor_topup_pence = $7,
+              must_be_won_triggered = must_be_won_triggered OR $8, must_be_won_decision = COALESCE($9, must_be_won_decision)
         WHERE id = $1`,
       [
         request.drawId,
@@ -227,6 +226,8 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
         jackpotPreDrawPence,
         rolloverInPence,
         BigInt(request.floorTopupPence ?? '0'),
+        rollDown !== undefined,
+        rollDown ? JSON.stringify({ rule: 'GAP-24 roll-down: match 3 → 2 → 1, split equally per winner', tier: rollDown.tier }) : null,
       ],
     );
 
@@ -241,6 +242,7 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
         rolloverOutPence: outcome.rolloverOutPence.toString(),
         rolloverInPence: rolloverInPence.toString(),
         jackpotPreDrawPence: jackpotPreDrawPence.toString(),
+        ...(rollDown ? { mustBeWonTier: rollDown.tier } : {}),
       },
     });
 
@@ -248,6 +250,57 @@ export async function settleDraw(pool: Pool, request: SettleDrawRequest): Promis
       winnersCount,
       jackpotPaidPence: outcome.jackpotPaidPence.toString(),
       rolloverOutPence: outcome.rolloverOutPence.toString(),
+      ...(rollDown ? { mustBeWonTier: rollDown.tier } : {}),
     };
   });
+}
+
+/**
+ * Pay a won jackpot out of the prize fund: one prize row and member-balance
+ * leg per share, and any indivisible remainder to wherever the policy sends
+ * it. The same postings whether the jackpot was won outright or rolled down
+ * under GAP-24.
+ */
+async function payShares(
+  client: PoolClient,
+  args: { txnId: string; prizeFundId: string; drawId: string; jackpotPaidPence: Pence; shared: SharedJackpot },
+): Promise<void> {
+  const { txnId, prizeFundId, drawId, shared } = args;
+  await postLeg(client, {
+    txnId,
+    accountId: prizeFundId,
+    amountPence: pence(-args.jackpotPaidPence),
+    drawId,
+    description: `Jackpot paid out — draw ${drawId}`,
+  });
+
+  for (const share of shared.shares) {
+    const memberAccountId = await getOrCreateMemberBalanceAccount(client, share.memberId);
+    await postLeg(client, {
+      txnId,
+      accountId: memberAccountId,
+      amountPence: share.amountPence,
+      drawId,
+      entryId: share.entryId,
+      description: `Prize share — draw ${drawId}`,
+    });
+    await client.query(
+      `INSERT INTO prize (draw_id, entry_id, member_id, amount_pence, status)
+       VALUES ($1, $2, $3, $4, 'pending_notification')`,
+      [drawId, share.entryId, share.memberId, share.amountPence],
+    );
+  }
+
+  if (shared.remainderPence > 0n) {
+    const destKind = shared.remainderDestination === 'good_cause' ? 'good_cause' : 'rollover';
+    const destName = destKind === 'good_cause' ? 'Good cause' : 'Rollover';
+    const destAccountId = await getOrCreateSingletonAccount(client, destKind, destName);
+    await postLeg(client, {
+      txnId,
+      accountId: destAccountId,
+      amountPence: shared.remainderPence,
+      drawId,
+      description: `Indivisible remainder to ${destKind} — draw ${drawId}`,
+    });
+  }
 }
