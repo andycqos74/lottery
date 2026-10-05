@@ -22,7 +22,10 @@ RUN rm -rf ./tmp-manifests && pnpm install --frozen-lockfile
 
 # ── build ────────────────────────────────────────────────────────────────────
 FROM deps AS build
-RUN pnpm typecheck && pnpm -r --filter './packages/**' --filter './apps/**' --filter './services/**' run build
+# One `tsc -b` over the root project references builds every package in a single
+# process. `pnpm -r run build` ran up to four tsc processes at once over
+# overlapping graphs and ran the 4 GB dev host out of memory.
+RUN pnpm build
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM node:22.22-bookworm-slim AS runtime
