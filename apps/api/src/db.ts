@@ -384,3 +384,39 @@ export async function listSettledDraws(pool: Pool, limit = 20): Promise<SettledD
     winnersCount: r.winners_count,
   }));
 }
+
+export interface LifetimeTotals {
+  /** Every jackpot actually paid to winners, across all settled draws. */
+  readonly prizePaidPence: bigint;
+}
+
+/**
+ * The landing page's running totals. Only prize money is counted: what has
+ * gone to the good cause is not recorded anywhere yet — entry-purchase-time
+ * revenue recognition (the good-cause and admin shares) is unbuilt, gated on
+ * GAP-09/10/27 — so the page shows no charity figure rather than an invented one.
+ */
+export async function getLifetimeTotals(pool: Pool): Promise<LifetimeTotals> {
+  const { rows } = await pool.query<{ paid: string }>(
+    `SELECT COALESCE(SUM(jackpot_paid_pence), 0)::text AS paid FROM draw WHERE status = 'settled'`,
+  );
+  return { prizePaidPence: BigInt(rows[0]!.paid) };
+}
+
+export interface RevenueSplit {
+  readonly prizeBp: number;
+  readonly goodCauseBp: number;
+  readonly adminBp: number;
+}
+
+/** How each £1 is divided, from the active config (T-2.2: the three always sum to 10,000). */
+export async function getRevenueSplit(pool: Pool): Promise<RevenueSplit> {
+  const { rows } = await pool.query<{ split_prize_bp: number; split_good_cause_bp: number; split_admin_bp: number }>(
+    `SELECT split_prize_bp, split_good_cause_bp, split_admin_bp FROM config_version WHERE is_active = true`,
+  );
+  const row = rows[0];
+  // The schema defaults, for a database with no active config row yet.
+  return row
+    ? { prizeBp: row.split_prize_bp, goodCauseBp: row.split_good_cause_bp, adminBp: row.split_admin_bp }
+    : { prizeBp: 5000, goodCauseBp: 4000, adminBp: 1000 };
+}

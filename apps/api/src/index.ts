@@ -22,8 +22,10 @@ import {
   createPasswordReset,
   findMemberByEmail,
   getDrawStats,
+  getLifetimeTotals,
   getMemberDetails,
   getOpenDraw,
+  getRevenueSplit,
   listLines,
   listMyEntries,
   listSettledDraws,
@@ -35,12 +37,14 @@ import { cancelDirectDebit, completeDirectDebitSetup, listActiveDirectDebits, st
 import { completeEntryPurchase, MAX_LINES_PER_PURCHASE, normaliseLines, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
 import { buildBacsBureau, buildNotifier, buildPaymentGateway } from './providers.js';
 import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
+import { registerAssets } from './assets.js';
 import {
   accountPage,
   detailsPage,
   directDebitReturnPage,
   drawPage,
   forgotPasswordPage,
+  landingPage,
   loginPage,
   pastDrawsPage,
   paymentPage,
@@ -114,6 +118,7 @@ const app = Fastify({
 });
 
 await app.register(cookie, { secret: sessionSecret });
+registerAssets(app);
 
 // The browser-facing pages below post regular HTML forms; the routes they
 // share with the JSON API (register/login/logout) tell the two apart by
@@ -140,6 +145,17 @@ function isFormRequest(request: FastifyRequest): boolean {
   return (request.headers['content-type'] ?? '').includes('application/x-www-form-urlencoded');
 }
 
+/**
+ * Where to go after logging in or signing up: back into the entry flow with the
+ * numbers picked before being asked to log in (the landing page's Easy entry).
+ * Only the draw pages are allowed — anything else, including another origin,
+ * falls back to the default, so this can never be an open redirect.
+ */
+function safeNext(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw.length > 512) return undefined;
+  return /^\/draw(\/pay)?(\?[\w=&%.-]*)?$/.test(raw) ? raw : undefined;
+}
+
 async function viewMember(request: FastifyRequest): Promise<{ auth: NonNullable<Awaited<ReturnType<typeof currentMember>>>; view: ViewMember } | undefined> {
   const auth = await currentMember(pool, request);
   if (!auth) return undefined;
@@ -155,6 +171,28 @@ app.get('/readyz', async (_request, reply) => {
   } catch {
     return reply.code(503).send({ ok: false, reason: 'database unavailable' });
   }
+});
+
+/** The public landing page (design handoff, screen 1). */
+app.get('/', async (request, reply) => {
+  const [found, openDraw, [lastDraw], totals, split] = await Promise.all([
+    viewMember(request),
+    getOpenDraw(pool),
+    listSettledDraws(pool, 1),
+    getLifetimeTotals(pool),
+    getRevenueSplit(pool),
+  ]);
+  const stats = openDraw ? await getDrawStats(pool, openDraw.id) : undefined;
+  reply.type('text/html').send(
+    landingPage({
+      ...(found ? { member: found.view } : {}),
+      ...(openDraw ? { openDraw } : {}),
+      ...(stats ? { stats } : {}),
+      ...(lastDraw ? { lastDraw } : {}),
+      totals,
+      split,
+    }),
+  );
 });
 
 /**
@@ -182,23 +220,25 @@ app.get('/results', async () => {
 // future-phase work, not attempted here.
 
 app.get('/register', async (request, reply) => {
+  const next = safeNext((request.query as { next?: unknown }).next);
   const found = await viewMember(request);
-  if (found) return reply.redirect('/account');
-  const openDraw = await getOpenDraw(pool);
-  reply.type('text/html').send(registerPage({ ...(openDraw ? { openDraw } : {}) }));
+  if (found) return reply.redirect(next ?? '/account');
+  const split = await getRevenueSplit(pool);
+  reply.type('text/html').send(registerPage({ next, split }));
 });
 
 app.post('/register', async (request, reply) => {
   const form = isFormRequest(request);
-  const body = request.body as { forename?: string; surname?: string; email?: string; password?: string };
+  const body = request.body as { forename?: string; surname?: string; email?: string; password?: string; next?: string };
+  const next = safeNext(body.next);
   const forename = (body.forename ?? '').trim();
   const surname = (body.surname ?? '').trim();
   const email = (body.email ?? '').trim().toLowerCase();
   const password = body.password ?? '';
 
-  const reject = (message: string) =>
+  const reject = async (message: string) =>
     form
-      ? reply.type('text/html').code(400).send(registerPage({ error: message }))
+      ? reply.type('text/html').code(400).send(registerPage({ error: message, next, split: await getRevenueSplit(pool) }))
       : reply.code(400).send({ error: message });
 
   if (!forename || !surname || !email || password.length < 10) {
@@ -231,24 +271,25 @@ app.post('/register', async (request, reply) => {
   const csrf = randomBytes(16).toString('hex');
   const payload: SessionPayload = { mid: outcome.memberId, csrf };
   reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(nodeEnv));
-  return reply.redirect('/draw');
+  return reply.redirect(next ?? '/draw');
 });
 
 app.get('/login', async (request, reply) => {
+  const next = safeNext((request.query as { next?: unknown }).next);
   const found = await viewMember(request);
-  if (found) return reply.redirect('/account');
-  const openDraw = await getOpenDraw(pool);
-  reply.type('text/html').send(loginPage({ ...(openDraw ? { openDraw } : {}) }));
+  if (found) return reply.redirect(next ?? '/account');
+  reply.type('text/html').send(loginPage({ next }));
 });
 
 app.post('/login', async (request, reply) => {
   const form = isFormRequest(request);
-  const body = request.body as { email?: string; password?: string };
+  const body = request.body as { email?: string; password?: string; next?: string };
+  const next = safeNext(body.next);
   const email = (body.email ?? '').trim().toLowerCase();
   const password = body.password ?? '';
   const invalid = () =>
     form
-      ? reply.type('text/html').code(401).send(loginPage({ error: 'Invalid email or password.' }))
+      ? reply.type('text/html').code(401).send(loginPage({ error: 'Invalid email or password.', next }))
       : reply.code(401).send({ error: 'Invalid email or password.' });
   if (!email || !password) return invalid();
 
@@ -261,7 +302,7 @@ app.post('/login', async (request, reply) => {
   const csrf = randomBytes(16).toString('hex');
   const payload: SessionPayload = { mid: member.id, csrf };
   reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(nodeEnv));
-  if (form) return reply.redirect('/draw');
+  if (form) return reply.redirect(next ?? '/draw');
   return { memberId: member.id, csrf };
 });
 
@@ -341,7 +382,7 @@ app.post('/reset-password', async (request, reply) => {
 
 app.post('/logout', async (request, reply) => {
   reply.clearCookie(SESSION_COOKIE, { path: '/' });
-  if (isFormRequest(request)) return reply.redirect('/login');
+  if (isFormRequest(request)) return reply.redirect('/');
   return { ok: true };
 });
 
@@ -431,7 +472,10 @@ app.get('/draw', async (request, reply) => {
 
 app.get('/draw/pay', async (request, reply) => {
   const found = await viewMember(request);
-  if (!found) return reply.redirect('/login');
+  if (!found) {
+    const next = safeNext(request.url);
+    return reply.redirect(next ? `/register?next=${encodeURIComponent(next)}` : '/register');
+  }
   const openDraw = await getOpenDraw(pool);
   if (!openDraw) return reply.redirect('/draw');
 
