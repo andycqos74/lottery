@@ -117,6 +117,12 @@ export {
   type EscalateTaskResult,
 } from './tasks/escalation.js';
 export {
+  changeLineNumbers,
+  describeNumbersChange,
+  type ChangeLineNumbersRequest,
+  type ChangeLineNumbersResult,
+} from './entries/change-numbers.js';
+export {
   allocateRandomSelections,
   RANDOM_ALLOCATION_GRACE_DAYS,
   type AllocateRandomSelectionsRequest,

@@ -748,8 +748,17 @@ export interface MemberUpcomingEntry extends EntryFundingDetail {
   readonly drawDate: Date;
 }
 
+/** One of a member's current lines (db/migrations/0018): its numbers, and how they were chosen. */
+export interface MemberLine {
+  readonly prizeDrawNo: number;
+  readonly slot: number;
+  readonly selection: number[];
+  readonly source: string;
+}
+
 export interface MemberPage {
   readonly profile: MemberProfile;
+  readonly lines: readonly MemberLine[];
   readonly payments: readonly MemberPayment[];
   readonly upcoming: readonly MemberUpcomingEntry[];
 }
@@ -785,7 +794,14 @@ export async function getMemberPage(pool: Pool, memberId: string): Promise<Membe
 
   // Not yet drawn: still open, or closed and waiting to be run.
   const upcomingWhere = `e.member_id = $1 AND d.status IN ('open', 'closed')`;
-  const [{ rows: paymentRows }, funding, { rows: upcomingRows }] = await Promise.all([
+  const [{ rows: lineRows }, { rows: paymentRows }, funding, { rows: upcomingRows }] = await Promise.all([
+    pool.query<{ prize_draw_no: number; slot: number; selection: number[]; source: string }>(
+      `SELECT ss.prize_draw_no, ss.slot, ss.selection, ss.source::text
+         FROM selection_standing ss JOIN member_number mn ON mn.prize_draw_no = ss.prize_draw_no
+        WHERE mn.member_id = $1 AND mn.row_type = 'member' AND ss.effective_to IS NULL
+        ORDER BY ss.prize_draw_no, ss.slot`,
+      [memberId],
+    ),
     pool.query<{
       id: string;
       received_date: Date;
@@ -832,6 +848,7 @@ export async function getMemberPage(pool: Pool, memberId: string): Promise<Membe
       prizeDrawNumbers: m.numbers ?? [],
       createdAt: m.created_at,
     },
+    lines: lineRows.map((l) => ({ prizeDrawNo: l.prize_draw_no, slot: l.slot, selection: l.selection, source: l.source })),
     payments: paymentRows.map((p) => ({
       id: p.id,
       receivedDate: p.received_date,

@@ -164,6 +164,8 @@ async function notifyAllocations(pool: Pool, notifier: Notifier): Promise<{ emai
        JOIN member_number mn ON mn.prize_draw_no = ss.prize_draw_no AND mn.row_type = 'member'
        JOIN member m ON m.id = mn.member_id
       WHERE ss.source = 'randomly_allocated' AND ss.allocation_notified_at IS NULL
+        -- Changed by the member before we told them: nothing left to tell.
+        AND ss.effective_to IS NULL
       ORDER BY m.id, ss.prize_draw_no`,
   );
 

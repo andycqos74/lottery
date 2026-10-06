@@ -1,5 +1,5 @@
 import { formatPence, pence } from '@qosfc/domain';
-import type { DrawStats, MemberDetails, MyEntry, OpenDraw, SettledDraw } from './db.js';
+import type { DrawStats, MemberDetails, MemberLine, MyEntry, OpenDraw, SettledDraw } from './db.js';
 import { MAX_LINES_PER_PURCHASE, PURCHASE_BLOCK_SIZES } from './entries.js';
 import type { DirectDebitStatus } from './direct-debit.js';
 
@@ -768,16 +768,59 @@ function entryHistoryRow(e: MyEntry): string {
   return `<tr><td class="num">${e.drawNumber}</td><td>${escapeHtml(e.drawDate)}</td><td><div class="ball-row">${balls}</div></td><td>${result}</td></tr>`;
 }
 
+/**
+ * One line on "My numbers", with a picker to change its numbers. The line
+ * keeps its paid draws and any Direct Debit; draws already closed to entries
+ * keep the old numbers.
+ */
+function lineWithChange(csrf: string, line: MemberLine, balls: (s: readonly number[]) => string): string {
+  return `<div class="stack" style="gap:.5rem">
+    ${balls(line.selection)}
+    ${line.randomlyAllocated ? '<p class="hint">Picked for you at random, as no numbers were chosen.</p>' : ''}
+    <details class="change-numbers">
+      <summary class="linkbtn">Change numbers</summary>
+      <form method="post" action="/numbers/change" class="stack" style="gap:.6rem;margin-top:.6rem">
+        ${csrfField(csrf)}
+        <input type="hidden" name="prizeDrawNo" value="${line.prizeDrawNo}" />
+        <input type="hidden" name="slot" value="${line.slot}" />
+        <span class="hint tabular pick-count" style="margin:0">4 of 4 selected</span>
+        ${ballGrid('numbers', line.selection)}
+        <p class="hint">Your paid draws and any Direct Debit stay with these numbers. Draws already closed to entries are drawn with your old numbers.</p>
+        <button class="btn btn-primary" type="submit">Save new numbers</button>
+      </form>
+    </details>
+  </div>`;
+}
+
+/** Caps each change-numbers picker at four, and keeps its count current. */
+const CHANGE_NUMBERS_SCRIPT = `<script>
+(function(){
+  document.querySelectorAll('details.change-numbers form').forEach(function(form){
+    var count = form.querySelector('.pick-count');
+    var boxes = form.querySelectorAll('input[type=checkbox]');
+    function update(){ count.textContent = form.querySelectorAll('input:checked').length + ' of 4 selected'; }
+    boxes.forEach(function(b){
+      b.addEventListener('change', function(){
+        if (form.querySelectorAll('input:checked').length > 4) b.checked = false;
+        update();
+      });
+    });
+    update();
+  });
+})();
+</script>`;
+
 export function accountPage(opts: {
   member: ViewMember;
   openDraw?: OpenDraw | undefined;
   /** Every set of numbers the member holds — each is entered separately. */
-  standingSelections: readonly (readonly number[])[];
+  lines: readonly MemberLine[];
   entries: MyEntry[];
   directDebits: readonly DirectDebitStatus[];
   flash?: string;
+  error?: string;
 }): string {
-  const { entries, standingSelections, directDebits } = opts;
+  const { entries, lines, directDebits } = opts;
   const balls = (s: readonly number[]) => `<div class="ball-row">${s.map((n) => `<span class="ball picked">${n}</span>`).join('')}</div>`;
   const ddCard =
     directDebits.length > 0
@@ -811,13 +854,14 @@ export function accountPage(opts: {
     body: `
       <div class="page-head"><h1>My numbers</h1><p>Your numbers, upcoming entries and how they've fared.</p></div>
       ${opts.flash ? `<div class="flash" style="margin-bottom:1rem">${escapeHtml(opts.flash)}</div>` : ''}
+      ${opts.error ? `<div class="error" style="margin-bottom:1rem">${escapeHtml(opts.error)}</div>` : ''}
       <div class="grid2">
         <div class="card stack">
           <div style="display:flex;justify-content:space-between;align-items:baseline">
             <h3 style="font-size:.95rem;text-transform:none;letter-spacing:0">Currently entered</h3>
-            ${standingSelections.length > 0 ? `<span class="pill pill-open">Entered ✓</span>` : ''}
+            ${lines.length > 0 ? `<span class="pill pill-open">Entered ✓</span>` : ''}
           </div>
-          ${standingSelections.length > 0 ? standingSelections.map(balls).join('') : `<p class="muted">No standing numbers yet.</p>`}
+          ${lines.length > 0 ? lines.map((line) => lineWithChange(opts.member.csrf, line, balls)).join('<hr class="divider">') : `<p class="muted">No standing numbers yet.</p>`}
           <a class="btn btn-ghost" href="/draw">Add draws or numbers</a>
         </div>
         ${ddCard}
@@ -830,6 +874,7 @@ export function accountPage(opts: {
           }
         </div>
       </div>
+      ${CHANGE_NUMBERS_SCRIPT}
     `,
   });
 }

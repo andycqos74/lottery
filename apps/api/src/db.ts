@@ -202,17 +202,30 @@ export async function getDrawStats(pool: Pool, drawId: string): Promise<DrawStat
   return { entriesCount, jackpotEstimatePence: position.jackpotPreDrawPence };
 }
 
+export interface MemberLine {
+  readonly prizeDrawNo: number;
+  readonly slot: number;
+  readonly selection: number[];
+  /** True when the numbers were picked at random because none were chosen (GAP-13). */
+  readonly randomlyAllocated: boolean;
+}
+
 /** Every set of numbers the member currently holds — one per line (db/migrations/0018). */
-export async function listStandingSelections(pool: Pool, memberId: string): Promise<number[][]> {
-  const { rows } = await pool.query<{ selection: number[] }>(
-    `SELECT ss.selection
+export async function listLines(pool: Pool, memberId: string): Promise<MemberLine[]> {
+  const { rows } = await pool.query<{ prize_draw_no: number; slot: number; selection: number[]; source: string }>(
+    `SELECT ss.prize_draw_no, ss.slot, ss.selection, ss.source::text
        FROM selection_standing ss
        JOIN member_number mn ON mn.prize_draw_no = ss.prize_draw_no
       WHERE mn.member_id = $1 AND ss.effective_to IS NULL
       ORDER BY ss.prize_draw_no, ss.slot`,
     [memberId],
   );
-  return rows.map((r) => r.selection);
+  return rows.map((r) => ({
+    prizeDrawNo: r.prize_draw_no,
+    slot: r.slot,
+    selection: r.selection,
+    randomlyAllocated: r.source === 'randomly_allocated',
+  }));
 }
 
 export interface MemberDetails {

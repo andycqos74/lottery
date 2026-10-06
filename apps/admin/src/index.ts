@@ -21,6 +21,8 @@ import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import {
   acceptBankTransactionMatchTx,
   allocateUpcomingEntries,
+  changeLineNumbers,
+  describeNumbersChange,
   generateDueEntries,
   ingestNewStatements,
   recordManualTicket,
@@ -695,6 +697,28 @@ app.get('/members/:id', async (request, reply) => {
   const member = await getMemberPage(pool, id);
   if (!member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
   return reply.type('text/html').send(memberDetailPage({ user: viewUser(request), member }));
+});
+
+app.post('/members/:id/numbers', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const { id } = request.params as { id: string };
+  const body = request.body as { prizeDrawNo?: string; slot?: string; numbers?: string };
+  const member = await getMemberPage(pool, id);
+  if (!member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
+  const result = await changeLineNumbers(pool, {
+    memberId: id,
+    prizeDrawNo: Number.parseInt(body.prizeDrawNo ?? '', 10),
+    slot: Number.parseInt(body.slot ?? '', 10),
+    selection: (body.numbers ?? '').match(/\d+/g)?.map(Number) ?? [],
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+  });
+  const refreshed = (await getMemberPage(pool, id))!;
+  const outcome =
+    result.kind === 'rejected'
+      ? { error: result.reason }
+      : { flash: result.kind === 'unchanged' ? 'Those are already the numbers on that line.' : describeNumbersChange(result) };
+  return reply.type('text/html').send(memberDetailPage({ user: viewUser(request), member: refreshed, ...outcome }));
 });
 
 app.post('/members/:id/contact', async (request, reply) => {

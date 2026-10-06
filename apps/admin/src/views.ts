@@ -761,6 +761,30 @@ function contactForm(csrf: string, p: MemberPage['profile']): string {
     </details>`;
 }
 
+const SELECTION_SOURCE_LABELS: Record<string, string> = {
+  member_chosen: 'Member',
+  quick_pick: 'Quick pick',
+  randomly_allocated: 'Random (none chosen, GAP-13)',
+};
+
+function lineRow(csrf: string, memberId: string, line: MemberPage['lines'][number]): string {
+  return `<tr>
+    <td>${line.prizeDrawNo}</td>
+    <td>${line.slot}</td>
+    <td>${escapeHtml(numbersLabel(line.selection))}</td>
+    <td>${escapeHtml(SELECTION_SOURCE_LABELS[line.source] ?? line.source)}</td>
+    <td>
+      <form method="post" action="/members/${memberId}/numbers" style="display:flex;gap:.4rem;align-items:center;margin:0">
+        ${csrfField(csrf)}
+        <input type="hidden" name="prizeDrawNo" value="${line.prizeDrawNo}" />
+        <input type="hidden" name="slot" value="${line.slot}" />
+        <input type="text" name="numbers" required placeholder="e.g. 3 7 12 18" aria-label="New numbers" style="width:9rem;margin:0" />
+        <button type="submit">Change</button>
+      </form>
+    </td>
+  </tr>`;
+}
+
 export function memberDetailPage(opts: {
   user: { displayName: string; csrf: string };
   member: MemberPage;
@@ -792,6 +816,18 @@ export function memberDetailPage(opts: {
         ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
         <dl class="kv">${details}</dl>
         ${contactForm(opts.user.csrf, profile)}
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Numbers</h2>
+        ${
+          opts.member.lines.length === 0
+            ? '<p class="muted">No numbers on any line.</p>'
+            : `<table>
+                 <thead><tr><th>Prize draw no.</th><th>Line</th><th>Numbers</th><th>Chosen by</th><th>Change to</th></tr></thead>
+                 <tbody>${opts.member.lines.map((l) => lineRow(opts.user.csrf, profile.id, l)).join('\n')}</tbody>
+               </table>
+               <p class="muted">The line keeps its paid draws and any Direct Debit. Draws already closed to entries are drawn with the old numbers.</p>`
+        }
       </div>
       <div class="card">
         <h2 style="font-size:1.05rem;margin-top:0">Payments</h2>
