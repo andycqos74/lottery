@@ -866,8 +866,9 @@ export function detailsPage(opts: {
             <div class="field"><label for="address2">Address line 2</label><input id="address2" name="address2" type="text" value="${escapeHtml(details.address2 ?? '')}" /></div>
             <div class="row2">
               <div class="field"><label for="address3">Town</label><input id="address3" name="address3" type="text" value="${escapeHtml(details.address3 ?? '')}" /></div>
-              <div class="field"><label for="postCode">Postcode</label><input id="postCode" name="postCode" type="text" value="${escapeHtml(details.postCode ?? '')}" /></div>
+              <div class="field"><label for="county">County</label><input id="county" name="county" type="text" value="${escapeHtml(details.county ?? '')}" /></div>
             </div>
+            <div class="field"><label for="postCode">Postcode</label><input id="postCode" name="postCode" type="text" value="${escapeHtml(details.postCode ?? '')}" /></div>
             <span class="sep-label">Notify me by</span>
             <div style="display:flex;gap:1.2rem">
               ${contactOption('email', 'Email')}

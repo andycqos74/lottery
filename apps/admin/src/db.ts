@@ -220,7 +220,10 @@ export async function listTasksByStatus(
 ): Promise<HumanTask[]> {
   if (status === 'open') {
     const { rows } = await pool.query(
-      `SELECT ${TASK_COLUMNS} FROM human_task WHERE status = 'open' ORDER BY escalation_level DESC, due_at NULLS LAST, opened_at LIMIT $1`,
+      // GAP-05 contact follow-ups can number in the hundreds after the data
+      // load; they sort after everything else so they never bury a blocked draw.
+      `SELECT ${TASK_COLUMNS} FROM human_task WHERE status = 'open'
+        ORDER BY (kind = 'member_missing_email'), escalation_level DESC, due_at NULLS LAST, opened_at LIMIT $1`,
       [limit],
     );
     return rows.map(mapTaskRow);
@@ -715,6 +718,13 @@ export interface MemberProfile {
   readonly surname: string | null;
   readonly email: string | null;
   readonly telephone: string | null;
+  readonly address1: string | null;
+  readonly address2: string | null;
+  /** Town. */
+  readonly address3: string | null;
+  readonly county: string | null;
+  readonly postCode: string | null;
+  readonly preferredContact: string;
   readonly status: string;
   readonly memberType: string;
   readonly prizeDrawNumbers: readonly number[];
@@ -756,12 +766,19 @@ export async function getMemberPage(pool: Pool, memberId: string): Promise<Membe
     surname: string | null;
     email: string | null;
     telephone: string | null;
+    address_1: string | null;
+    address_2: string | null;
+    address_3: string | null;
+    county: string | null;
+    post_code: string | null;
+    preferred_contact: string;
     status: string;
     member_type: string;
     created_at: Date;
     numbers: number[] | null;
   }>(
-    `SELECT m.id, m.forename, m.surname, m.email, m.telephone, m.status, m.member_type, m.created_at,
+    `SELECT m.id, m.forename, m.surname, m.email, m.telephone, m.address_1, m.address_2, m.address_3, m.county,
+            m.post_code, m.preferred_contact, m.status, m.member_type, m.created_at,
             (SELECT array_agg(prize_draw_no ORDER BY prize_draw_no) FROM member_number WHERE member_id = m.id) AS numbers
        FROM member m WHERE m.id = $1`,
     [memberId],
@@ -807,6 +824,12 @@ export async function getMemberPage(pool: Pool, memberId: string): Promise<Membe
       surname: m.surname,
       email: m.email,
       telephone: m.telephone,
+      address1: m.address_1,
+      address2: m.address_2,
+      address3: m.address_3,
+      county: m.county,
+      postCode: m.post_code,
+      preferredContact: m.preferred_contact,
       status: m.status,
       memberType: m.member_type,
       prizeDrawNumbers: m.numbers ?? [],
@@ -890,6 +913,87 @@ export async function addEntry(
     );
 
     return { kind: 'added', entryId: entryRows[0]!.id };
+  });
+}
+
+export const CONTACT_CHANNELS = ['post', 'email', 'phone', 'via_agent'] as const;
+export type ContactChannel = (typeof CONTACT_CHANNELS)[number];
+
+export interface MemberContactInput {
+  readonly email: string;
+  readonly telephone: string;
+  readonly address1: string;
+  readonly address2: string;
+  readonly address3: string;
+  readonly county: string;
+  readonly postCode: string;
+  readonly preferredContact: ContactChannel;
+}
+
+export type UpdateMemberContactOutcome = { kind: 'updated' } | { kind: 'rejected'; reason: string } | { kind: 'not_found' };
+
+/**
+ * Email, telephone and postal address (GAP-05), all optional — blank clears
+ * the field. Adding an email address is what closes a member's
+ * `member_missing_email` follow-up task, on the next contact follow-up sweep.
+ */
+export async function updateMemberContact(
+  pool: Pool,
+  memberId: string,
+  input: MemberContactInput,
+  actor: { id: string; label: string },
+): Promise<UpdateMemberContactOutcome> {
+  if (!UUID.test(memberId)) return { kind: 'not_found' };
+  const email = input.email.trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { kind: 'rejected', reason: 'That email address does not look right.' };
+  }
+  if (input.preferredContact === 'email' && !email) {
+    return { kind: 'rejected', reason: 'Preferred contact is email, but no email address is given.' };
+  }
+
+  return withTransaction(pool, async (client) => {
+    const { rows: beforeRows } = await client.query<Record<string, string | null>>(
+      `SELECT email, telephone, address_1, address_2, address_3, county, post_code, preferred_contact
+         FROM member WHERE id = $1 FOR UPDATE`,
+      [memberId],
+    );
+    const before = beforeRows[0];
+    if (!before) return { kind: 'not_found' };
+
+    // The member portal signs in by email, so two members cannot share one.
+    if (email) {
+      const { rows: clash } = await client.query(`SELECT 1 FROM member WHERE email = $1 AND id <> $2 LIMIT 1`, [email, memberId]);
+      if (clash.length > 0) return { kind: 'rejected', reason: 'Another member already has that email address.' };
+    }
+
+    const blank = (v: string) => v.trim() || null;
+    const postCode = input.postCode.trim().toUpperCase() || null;
+    const { rows: afterRows } = await client.query<Record<string, string | null>>(
+      `UPDATE member
+          SET email = $2, telephone = $3, address_1 = $4, address_2 = $5, address_3 = $6, county = $7,
+              post_code = $8, post_code_valid = CASE WHEN post_code IS NOT DISTINCT FROM $8 THEN post_code_valid ELSE false END,
+              preferred_contact = $9, updated_at = now()
+        WHERE id = $1
+        RETURNING email, telephone, address_1, address_2, address_3, county, post_code, preferred_contact`,
+      [
+        memberId,
+        email || null,
+        blank(input.telephone),
+        blank(input.address1),
+        blank(input.address2),
+        blank(input.address3),
+        blank(input.county),
+        postCode,
+        input.preferredContact,
+      ],
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_id, actor_label, action, entity, entity_id, before, after)
+       VALUES ($1, $2, 'member_contact_updated', 'member', $3, $4, $5)`,
+      [actor.id, actor.label, memberId, JSON.stringify(before), JSON.stringify(afterRows[0])],
+    );
+    return { kind: 'updated' };
   });
 }
 

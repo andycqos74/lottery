@@ -725,12 +725,55 @@ function upcomingRow(e: MemberUpcomingEntry): string {
 }
 
 /** GitHub #17: one member — details, payments, and the draws not yet run that they are entered in. */
-export function memberDetailPage(opts: { user: { displayName: string; csrf: string }; member: MemberPage }): string {
+const CONTACT_LABELS: Record<string, string> = { post: 'Post', email: 'Email', phone: 'Phone', via_agent: 'Via their agent' };
+
+function postalAddress(p: MemberPage['profile']): string {
+  const parts = [p.address1, p.address2, p.address3, p.county, p.postCode].filter((v): v is string => Boolean(v));
+  return parts.length > 0 ? parts.join(', ') : '—';
+}
+
+/** GAP-05: email, telephone and postal address, all optional. */
+function contactForm(csrf: string, p: MemberPage['profile']): string {
+  const field = (name: string, label: string, value: string | null, type = 'text') =>
+    `<label for="${name}">${escapeHtml(label)}</label>
+     <input type="${type}" id="${name}" name="${name}" value="${escapeHtml(value ?? '')}" />`;
+  const options = Object.entries(CONTACT_LABELS)
+    .map(([v, l]) => `<option value="${v}"${p.preferredContact === v ? ' selected' : ''}>${escapeHtml(l)}</option>`)
+    .join('');
+  return `
+    <details${p.email ? '' : ' open'}>
+      <summary style="cursor:pointer;font-weight:600">Edit contact details</summary>
+      ${p.email ? '' : '<p class="muted">No email address on record, so a follow-up task is raised in the inbox (GAP-05). Adding one here closes it within the hour.</p>'}
+      <form method="post" action="/members/${p.id}/contact">
+        ${csrfField(csrf)}
+        ${field('email', 'Email', p.email, 'email')}
+        ${field('telephone', 'Telephone', p.telephone, 'tel')}
+        ${field('address1', 'Address line 1', p.address1)}
+        ${field('address2', 'Address line 2', p.address2)}
+        ${field('address3', 'Town', p.address3)}
+        ${field('county', 'County', p.county)}
+        ${field('postCode', 'Postcode', p.postCode)}
+        <label for="preferredContact">Preferred contact</label>
+        <select id="preferredContact" name="preferredContact">${options}</select>
+        <p class="muted" style="margin:0.2rem 0 0.6rem">Every field is optional; leave one blank to clear it.</p>
+        <button type="submit">Save contact details</button>
+      </form>
+    </details>`;
+}
+
+export function memberDetailPage(opts: {
+  user: { displayName: string; csrf: string };
+  member: MemberPage;
+  error?: string;
+  flash?: string;
+}): string {
   const { profile, payments, upcoming } = opts.member;
   const details = [
     ['Name', memberName(profile)],
     ['Email', profile.email ?? '—'],
     ['Telephone', profile.telephone ?? '—'],
+    ['Postal address', postalAddress(profile)],
+    ['Preferred contact', CONTACT_LABELS[profile.preferredContact] ?? profile.preferredContact],
     ['Status', profile.status],
     ['Type', profile.memberType],
     ['Prize draw no.', profile.prizeDrawNumbers.length > 0 ? profile.prizeDrawNumbers.join(', ') : '—'],
@@ -744,7 +787,12 @@ export function memberDetailPage(opts: { user: { displayName: string; csrf: stri
     body: `
       <p><a class="muted" href="/members">← Back to members</a></p>
       <h1>${escapeHtml(memberName(profile))}</h1>
-      <div class="card"><dl class="kv">${details}</dl></div>
+      <div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
+        <dl class="kv">${details}</dl>
+        ${contactForm(opts.user.csrf, profile)}
+      </div>
       <div class="card">
         <h2 style="font-size:1.05rem;margin-top:0">Payments</h2>
         ${
@@ -872,6 +920,7 @@ export function taskDetailPage(opts: {
       <h1>${escapeHtml(task.title)}</h1>
       <div class="card">
         <p>${escapeHtml(task.detail)}</p>
+        ${task.entityType === 'member' && task.entityId ? `<p><a href="/members/${escapeHtml(task.entityId)}">Open the member page →</a></p>` : ''}
         ${task.consequenceIfIgnored ? `<p class="muted"><strong>If nobody acts:</strong> ${escapeHtml(task.consequenceIfIgnored)}</p>` : ''}
         <dl class="kv">${meta}</dl>
       </div>

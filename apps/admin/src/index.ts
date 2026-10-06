@@ -41,6 +41,9 @@ import {
   getDrawFormDefaults,
   getJackpotInputs,
   getMemberPage,
+  updateMemberContact,
+  CONTACT_CHANNELS,
+  type ContactChannel,
   getTask,
   insertAuditLog,
   listBankStatements,
@@ -691,6 +694,41 @@ app.get('/members/:id', async (request, reply) => {
   const member = await getMemberPage(pool, id);
   if (!member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
   return reply.type('text/html').send(memberDetailPage({ user: viewUser(request), member }));
+});
+
+app.post('/members/:id/contact', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const { id } = request.params as { id: string };
+  const body = request.body as Partial<Record<'email' | 'telephone' | 'address1' | 'address2' | 'address3' | 'county' | 'postCode' | 'preferredContact', string>>;
+  const preferredContact = (CONTACT_CHANNELS as readonly string[]).includes(body.preferredContact ?? '')
+    ? (body.preferredContact as ContactChannel)
+    : 'post';
+  const outcome = await updateMemberContact(
+    pool,
+    id,
+    {
+      email: body.email ?? '',
+      telephone: body.telephone ?? '',
+      address1: body.address1 ?? '',
+      address2: body.address2 ?? '',
+      address3: body.address3 ?? '',
+      county: body.county ?? '',
+      postCode: body.postCode ?? '',
+      preferredContact,
+    },
+    { id: request.authUser!.id, label: request.authUser!.email },
+  );
+  const member = await getMemberPage(pool, id);
+  if (outcome.kind === 'not_found' || !member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
+  return reply
+    .type('text/html')
+    .send(
+      memberDetailPage({
+        user: viewUser(request),
+        member,
+        ...(outcome.kind === 'rejected' ? { error: outcome.reason } : { flash: 'Contact details saved.' }),
+      }),
+    );
 });
 
 app.get('/bank-statements', async (request, reply) => {

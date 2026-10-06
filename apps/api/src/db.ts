@@ -224,6 +224,7 @@ export interface MemberDetails {
   readonly address1: string | null;
   readonly address2: string | null;
   readonly address3: string | null;
+  readonly county: string | null;
   readonly postCode: string | null;
   readonly preferredContact: string;
 }
@@ -238,10 +239,11 @@ export async function getMemberDetails(pool: Pool, id: string): Promise<MemberDe
     address_1: string | null;
     address_2: string | null;
     address_3: string | null;
+    county: string | null;
     post_code: string | null;
     preferred_contact: string;
   }>(
-    `SELECT id, forename, surname, email, telephone, address_1, address_2, address_3, post_code, preferred_contact
+    `SELECT id, forename, surname, email, telephone, address_1, address_2, address_3, county, post_code, preferred_contact
        FROM member WHERE id = $1 AND status = 'active'`,
     [id],
   );
@@ -256,6 +258,7 @@ export async function getMemberDetails(pool: Pool, id: string): Promise<MemberDe
     address1: row.address_1,
     address2: row.address_2,
     address3: row.address_3,
+    county: row.county,
     postCode: row.post_code,
     preferredContact: row.preferred_contact,
   };
@@ -269,16 +272,26 @@ export async function updateMemberDetails(
     address1: string;
     address2: string;
     address3: string;
+    county: string;
     postCode: string;
     preferredContact: 'post' | 'email' | 'phone';
   },
 ): Promise<void> {
   await pool.query(
     `UPDATE member
-        SET telephone = $2, address_1 = $3, address_2 = $4, address_3 = $5,
-            post_code = $6, post_code_valid = false, preferred_contact = $7, updated_at = now()
+        SET telephone = $2, address_1 = $3, address_2 = $4, address_3 = $5, county = $6,
+            post_code = $7, post_code_valid = false, preferred_contact = $8, updated_at = now()
       WHERE id = $1`,
-    [id, input.telephone || null, input.address1 || null, input.address2 || null, input.address3 || null, input.postCode || null, input.preferredContact],
+    [
+      id,
+      input.telephone || null,
+      input.address1 || null,
+      input.address2 || null,
+      input.address3 || null,
+      input.county || null,
+      input.postCode || null,
+      input.preferredContact,
+    ],
   );
 }
 

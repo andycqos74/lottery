@@ -642,6 +642,7 @@ app.post('/details', async (request, reply) => {
     address1?: string;
     address2?: string;
     address3?: string;
+    county?: string;
     postCode?: string;
     preferredContact?: string;
   };
@@ -652,6 +653,7 @@ app.post('/details', async (request, reply) => {
     address1: (body.address1 ?? '').trim(),
     address2: (body.address2 ?? '').trim(),
     address3: (body.address3 ?? '').trim(),
+    county: (body.county ?? '').trim(),
     postCode: (body.postCode ?? '').trim(),
     preferredContact,
   });

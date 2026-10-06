@@ -40,6 +40,7 @@ import { getRolloverIn, type GetRolloverInRequest } from './draw/rollover.js';
 import { notifyWinners, type NotifyWinnersRequest } from './draw/notify-winners.js';
 import { ingestNewStatements, type IngestNewStatementsRequest } from './reconcile/ingest-statement.js';
 import { recordManualTicket, type RecordManualTicketRequest } from './entries/record-manual-ticket.js';
+import { syncMissingEmailTasks, type SyncMissingEmailTasksRequest } from './tasks/contact-follow-up.js';
 
 export function createActivities(ctx: ActivityContext) {
   return {
@@ -67,6 +68,8 @@ export function createActivities(ctx: ActivityContext) {
     getTaskEscalationState: (request: GetTaskEscalationStateRequest) => getTaskEscalationState(ctx.pool, request),
 
     escalateTask: (request: EscalateTaskRequest) => escalateTask(ctx.pool, request),
+
+    syncMissingEmailTasks: (request: SyncMissingEmailTasksRequest) => syncMissingEmailTasks(ctx.pool, request),
 
     getRolloverIn: (request: GetRolloverInRequest) => getRolloverIn(ctx.pool, request),
 
@@ -112,6 +115,13 @@ export {
   type EscalateTaskRequest,
   type EscalateTaskResult,
 } from './tasks/escalation.js';
+export {
+  syncMissingEmailTasks,
+  MISSING_EMAIL_TASK_KIND,
+  MISSING_EMAIL_FOLLOW_UP_DAYS,
+  type SyncMissingEmailTasksRequest,
+  type SyncMissingEmailTasksResult,
+} from './tasks/contact-follow-up.js';
 export type { SettleDrawRequest, SettleDrawResult } from './draw/settle.js';
 export { getRolloverIn, type GetRolloverInRequest, type GetRolloverInResult } from './draw/rollover.js';
 export type { NotifyWinnersRequest, NotifyWinnersResult } from './draw/notify-winners.js';
