@@ -1,0 +1,13 @@
+:root{
+/* 2024main.css utility scale (padding): 5 / 15 / 25 / 35 / 45 */
+--space-1:5px;--space-2:15px;--space-3:25px;--space-4:35px;--space-5:45px;
+/* margin scale differs: 5 / 10 / 15 / 25 / 35 */
+--gap-1:5px;--gap-2:10px;--gap-3:15px;--gap-4:25px;--gap-5:35px;
+--gutter:15px;               /* bootstrap column gutter */
+--nav-height:65px;           /* .nav-menu line-height */
+--nav-pad-y:20px;            /* unscrolled nav padding; 0 when .affix */
+--content-offset:110px;      /* .wp-content margin-top */
+--container-max:1140px;      /* bootstrap 4.6 .container @xl */
+--article-overlap:-112px;    /* article card pulled up over hero image */
+--crest-height:60px;
+}

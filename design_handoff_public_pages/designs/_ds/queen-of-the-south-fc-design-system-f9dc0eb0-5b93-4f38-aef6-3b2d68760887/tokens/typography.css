@@ -1,0 +1,24 @@
+:root{
+--font-display:"Merriweather Sans",sans-serif;   /* page titles, headings, nav (800 weight) */
+--font-body:"Open Sans",sans-serif;               /* 2024 body copy */
+--font-accent:"Play",sans-serif;                  /* loaded on every 2024 page; numeric/sport accents */
+--font-poster:"Adam",sans-serif;                  /* legacy h4 face (custom.css) */
+--font-condensed:"League Gothic","Bebas Neue",sans-serif;
+--fw-regular:400; /* @kind other */
+--fw-semibold:600; /* @kind other */
+--fw-bold:700; /* @kind other */
+--fw-black:800; /* @kind other */
+--fs-xs:12px;     /* footer links, overlay small */
+--fs-sm:14px;     /* overlay links (<1000px tall), body small */
+--fs-base:16px;   /* body, overlay links */
+--fs-lg:20px;
+--fs-page-title:22px; /* h3.page-title */
+--fs-h3:28px;     /* bootstrap 4 h3 — article headline */
+--fs-h2:32px;     /* bootstrap 4 h2 — team names in score summary */
+--fs-h1:40px;     /* bootstrap 4 h1 — score digits */
+--fs-score-divider:48px; /* 3rem "|" */
+--fs-menu-close:60px;
+--lh-tight:1.2; /* @kind other */
+--lh-body:1.5; /* @kind other */
+--tracking-ui:.5px;
+}

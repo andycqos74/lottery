@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/colors.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/typography.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/effects.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/tokens/base.css">
+<link rel="stylesheet" href="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<script src="_ds/queen-of-the-south-fc-design-system-f9dc0eb0-5b93-4f38-aef6-3b2d68760887/_ds_bundle.js"></script>
+<style>body{margin:0;background:#fff;font-family:var(--font-body);color:var(--grey-800)} *{box-sizing:border-box} a{color:var(--qos-navy)} a:hover{color:var(--qos-mid)} input{font-family:var(--font-body)}</style>
+</helmet>
+<div style="min-height:100vh;display:flex;flex-direction:column">
+  <div style="background:#e1e8f9;border-bottom:1px solid var(--qos-ice-line);padding:8px 24px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px">
+    <span style="color:var(--grey-500);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-right:6px">Page</span>
+    <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="7">
+      <button type="button" onClick="{{ t.go }}" style="height:28px;white-space:nowrap;padding:0 12px;border:1px solid var(--qos-steel-line);background:{{ t.bg }};color:{{ t.fg }};font-weight:700;font-size:12px;cursor:pointer">{{ t.label }}</button>
+    </sc-for>
+  </div>
+
+  <nav style="position:relative;z-index:5;height:76px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 clamp(16px,4vw,48px);background:var(--qos-sky)">
+    <a href="Landing Page v2.dc.html" style="display:flex;align-items:center;gap:clamp(8px,2vw,14px);text-decoration:none;min-width:0">
+      <img src="assets/qos-crest.png" alt="Queen of the South FC" style="height:clamp(40px,10vw,52px);width:clamp(40px,10vw,52px);flex:none">
+      <span style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-family:var(--font-body);font-size:clamp(9px,2.6vw,11px);font-weight:700;letter-spacing:clamp(1px,.5vw,2px);text-transform:uppercase;color:var(--qos-ice-2);white-space:nowrap">Queen of the South FC</span>
+        <span style="font-family:var(--font-display);font-weight:800;font-size:clamp(15px,4.2vw,20px);color:var(--qos-ice);white-space:nowrap">The Doonhamers Draw</span>
+      </span>
+    </a>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button type="button" onClick="{{ toggleMenu }}" style="display:flex;align-items:center;gap:10px;height:44px;min-width:44px;justify-content:center;padding:0 clamp(6px,2vw,16px);background:transparent;border:0;color:var(--qos-ice);font-weight:700;font-size:15px;letter-spacing:1px;text-transform:uppercase;cursor:pointer" style-hover="color:var(--qos-navy)"><sc-if value="{{ wide }}" hint-placeholder-val="{{ true }}"><span>Menu</span></sc-if><span style="font-size:22px">{{ menuGlyph }}</span></button>
+      <a href="#" onClick="{{ goLogin }}" title="My account" style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:var(--qos-navy);color:#fff;text-decoration:none" style-hover="opacity:.7"><i class="fa fa-user" aria-hidden="true" style="font-size:20px"></i></a>
+    </div>
+    <sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;top:76px;right:clamp(0px,4vw,48px);width:min(300px,100%);background:var(--qos-navy);padding:12px 0;display:flex;flex-direction:column">
+        <sc-for list="{{ menuItems }}" as="m" hint-placeholder-count="6">
+          <a href="#" onClick="{{ m.go }}" style="padding:12px 24px;color:#fff;text-decoration:none;font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase" style-hover="background:var(--qos-sky)">{{ m.label }}</a>
+        </sc-for>
+      </div>
+    </sc-if>
+  </nav>
+
+  <header style="position:relative;background:var(--qos-ice);display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));overflow:hidden">
+    <div style="display:flex;flex-direction:column;justify-content:center;gap:12px;padding:clamp(32px,7vw,56px) clamp(16px,4vw,32px) clamp(36px,8vw,72px) clamp(16px,4vw,48px);position:relative;z-index:2;min-width:0" data-reveal="left">
+      <span style="font-family:var(--font-accent);font-size:15px;letter-spacing:1.5px;text-transform:uppercase;color:var(--qos-mid);font-weight:700">{{ eyebrow }}</span>
+      <h1 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:clamp(34px,4.5vw,56px);line-height:1.1;color:var(--qos-navy)">{{ title }}</h1>
+      <p style="margin:0;color:var(--grey-600);font-size:17px;line-height:1.6;max-width:56ch;text-wrap:pretty">{{ lede }}</p>
+    </div>
+    <div style="position:relative;min-height:clamp(56px,22vw,240px)">
+      <div style="position:absolute;inset:0;background:var(--qos-sky);clip-path:polygon(14% 0,100% 0,100% 100%,0 100%,9% 70%,4% 46%,12% 22%)"></div>
+      <div style="position:absolute;inset:0;background:var(--qos-navy);clip-path:polygon(19% 0,100% 0,100% 100%,5% 100%,14% 70%,9% 46%,17% 22%)" data-reveal="right"></div>
+      <div style="position:absolute;inset:0;background:var(--qos-mid);clip-path:polygon(62% 0,100% 0,100% 100%,44% 100%,55% 58%,50% 34%)" data-reveal="right" data-delay="120"></div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;top:0;left:0;width:100%;height:100%;display:block"><polyline points="70,0 58,34 63,58 52,100" fill="none" stroke="#009fff" stroke-width="3" vector-effect="non-scaling-stroke"></polyline></svg>
+    </div>
+  </header>
+  <div style="position:relative;height:28px;margin-top:-14px;z-index:3">
+    <div style="position:absolute;inset:0 0 10px 0;background:var(--qos-sky);transform:skewY(-1deg)"></div>
+    <div style="position:absolute;inset:10px 0 0 0;background:var(--qos-navy);transform:skewY(-1deg)"></div>
+  </div>
+
+  <main style="flex:1;width:100%;max-width:1140px;margin:0 auto;padding:clamp(32px,6vw,64px) clamp(16px,3vw,24px) clamp(64px,10vw,96px);position:relative">
+
+    <sc-if value="{{ isSignup }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:24px;align-items:start">
+        <div style="background:var(--qos-ice);border:1px solid var(--qos-steel-line);padding:clamp(20px,5vw,32px);display:flex;flex-direction:column;gap:18px" data-reveal="left">
+          <h2 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:24px;color:var(--qos-navy)">Create your account</h2>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Forename<input type="text" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"></label>
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Surname<input type="text" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"></label>
+          </div>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Email address<input type="email" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"></label>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Password<input type="password" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"><span style="font-weight:400;font-size:12px;color:var(--grey-500)">At least 10 characters.</span></label>
+          <button type="button" style="height:54px;border:0;background:var(--qos-navy);color:#fff;font-weight:700;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:0 22px" style-hover="background:#3068a7">Create my account <i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+          <p style="margin:0;text-align:center;font-size:14px;color:var(--grey-600)">Already a member? <a href="#" onClick="{{ goLogin }}" style="font-weight:700">Log in</a></p>
+        </div>
+        <div style="background:var(--qos-navy);color:#fff;padding:clamp(20px,5vw,32px);display:flex;flex-direction:column;gap:22px;clip-path:polygon(0 0,100% 2%,98% 100%,1% 98%)" data-reveal="right" data-delay="120">
+          <h2 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:24px">Why join the Draw</h2>
+          <sc-for list="{{ whyJoin }}" as="w" hint-placeholder-count="3">
+            <div style="display:flex;gap:16px;align-items:flex-start">
+              <span style="flex:none;width:44px;height:44px;background:var(--qos-sky);display:flex;align-items:center;justify-content:center;clip-path:polygon(0 6%,100% 0,94% 100%,4% 94%)"><i class="fa {{ w.icon }}" aria-hidden="true" style="font-size:18px;color:var(--qos-midnight)"></i></span>
+              <span style="font-size:15px;line-height:1.6;color:#e6f0fa">{{ w.text }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isAuth }}" hint-placeholder-val="{{ false }}">
+      <div style="max-width:460px;background:var(--qos-ice);border:1px solid var(--qos-steel-line);padding:clamp(20px,5vw,32px);display:flex;flex-direction:column;gap:18px" data-reveal="left">
+        <sc-if value="{{ isLogin }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Email address<input type="email" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"></label>
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Password<input type="password" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"></label>
+            <button type="button" style="height:54px;border:0;background:var(--qos-navy);color:#fff;font-weight:700;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:0 22px" style-hover="background:#3068a7">Log in <i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+            <a href="#" onClick="{{ goForgot }}" style="text-align:center;font-size:14px;font-weight:600">Forgotten your password?</a>
+            <svg width="100%" height="10" viewBox="0 0 400 10" preserveAspectRatio="none" style="display:block"><polyline points="0,5 50,2 110,8 170,3 240,7 300,2 360,7 400,4" fill="none" stroke="#c9d7e4" stroke-width="2" vector-effect="non-scaling-stroke"></polyline></svg>
+            <p style="margin:0;text-align:center;font-size:14px;color:var(--grey-600)">New to the Draw? <a href="#" onClick="{{ goSignup }}" style="font-weight:700">Create an account</a></p>
+          </div>
+        </sc-if>
+        <sc-if value="{{ isForgot }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <sc-if value="{{ sent }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;gap:12px;background:var(--qos-ice);border:1px solid var(--qos-ice-line);padding:14px 16px;font-size:14px;line-height:1.5;color:var(--qos-navy)"><i class="fa fa-envelope" aria-hidden="true" style="margin-top:3px"></i><span>If that email address is registered, a reset link is on its way — it expires in an hour.</span></div>
+            </sc-if>
+            <sc-if value="{{ notSent }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;flex-direction:column;gap:18px">
+                <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Email address<input type="email" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"></label>
+                <button type="button" onClick="{{ send }}" style="height:54px;border:0;background:var(--qos-navy);color:#fff;font-weight:700;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:0 22px" style-hover="background:#3068a7">Send reset link <i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+              </div>
+            </sc-if>
+            <a href="#" onClick="{{ goLogin }}" style="text-align:center;font-size:14px;font-weight:600">Back to log in</a>
+          </div>
+        </sc-if>
+        <sc-if value="{{ isReset }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">New password<input type="password" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"><span style="font-weight:400;font-size:12px;color:var(--grey-500)">At least 10 characters.</span></label>
+            <button type="button" style="height:54px;border:0;background:var(--qos-navy);color:#fff;font-weight:700;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:0 22px" style-hover="background:#3068a7">Reset password <i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isPast }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:24px">
+        <div style="background:#fff;border:1px solid var(--qos-steel-line);padding:clamp(18px,4.5vw,28px) clamp(18px,5vw,32px);display:flex;flex-wrap:wrap;align-items:center;gap:20px clamp(20px,5vw,32px)" data-reveal="left">
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <span style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grey-500)">Latest · Draw No. 142 · Sat 3 Oct</span>
+            <div style="display:flex;gap:12px">
+              <sc-for list="{{ latestNumbers }}" as="n" hint-placeholder-count="4">
+                <span data-ball="1" style="width:clamp(52px,14vw,68px);height:clamp(52px,14vw,68px);border-radius:50%;background:var(--qos-navy);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--font-accent);font-weight:700;font-size:30px">{{ n }}</span>
+              </sc-for>
+            </div>
+          </div>
+          <div style="width:3px;align-self:stretch;background:var(--qos-sky);transform:skewX(-16deg)"></div>
+          <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grey-500)">Jackpot</span><span data-pulse="1" style="font-family:var(--font-display);font-weight:800;font-size:clamp(32px,9vw,44px);color:var(--qos-navy);line-height:1;transform-origin:left center">£1,240</span></div>
+          <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grey-500)">Winners</span><span style="font-family:var(--font-display);font-weight:800;font-size:clamp(32px,9vw,44px);color:var(--qos-navy);line-height:1">2</span></div>
+        </div>
+        <sc-if value="{{ narrow }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px" data-reveal="up" data-delay="120">
+            <sc-for list="{{ pastDraws }}" as="d" hint-placeholder-count="6">
+              <div style="background:#fff;border:1px solid var(--qos-steel-line);padding:16px;display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><span style="font-family:var(--font-accent);font-weight:700;color:var(--qos-navy);font-size:16px">Draw {{ d.no }}</span><span style="font-size:14px;color:var(--grey-600)">{{ d.date }}</span></div>
+                <div style="display:flex;gap:8px"><sc-for list="{{ d.nums }}" as="n" hint-placeholder-count="4"><span style="width:40px;height:40px;border-radius:50%;border:2px solid var(--qos-navy);color:var(--qos-navy);display:flex;align-items:center;justify-content:center;font-family:var(--font-accent);font-weight:700;font-size:16px">{{ n }}</span></sc-for></div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:13px;border-top:1px solid var(--grey-150);padding-top:12px">
+                  <span style="display:flex;flex-direction:column;gap:2px;color:var(--grey-500)">Jackpot<b style="color:var(--grey-800);font-size:15px">{{ d.jackpot }}</b></span>
+                  <span style="display:flex;flex-direction:column;gap:2px;color:var(--grey-500)">Winners<b style="color:var(--grey-800);font-size:15px">{{ d.winners }}</b></span>
+                  <span style="display:flex;flex-direction:column;gap:2px;color:var(--grey-500)">Rollover<b style="color:var(--qos-mid);font-size:15px">{{ d.rollover }}</b></span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ wideTable }}" hint-placeholder-val="{{ true }}">
+        <div style="background:#fff;border:1px solid var(--qos-steel-line);overflow-x:auto;overflow-y:hidden" data-reveal="up" data-delay="120">
+          <div style="min-width:720px;display:grid;grid-template-columns:90px 140px minmax(220px,1fr) 120px 100px 120px">
+            <div style="display:contents;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#fff">
+              <span style="background:var(--qos-navy);padding:14px 20px">Draw</span><span style="background:var(--qos-navy);padding:14px 12px">Date</span><span style="background:var(--qos-navy);padding:14px 12px">Winning numbers</span><span style="background:var(--qos-navy);padding:14px 12px">Jackpot</span><span style="background:var(--qos-navy);padding:14px 12px">Winners</span><span style="background:var(--qos-navy);padding:14px 20px 14px 12px">Rollover</span>
+            </div>
+            <sc-for list="{{ pastDraws }}" as="d" hint-placeholder-count="6">
+              <div style="display:contents;font-size:15px">
+                <span style="padding:14px 20px;border-bottom:1px solid var(--grey-150);font-family:var(--font-accent);font-weight:700;color:var(--qos-navy)">{{ d.no }}</span>
+                <span style="padding:14px 12px;border-bottom:1px solid var(--grey-150)">{{ d.date }}</span>
+                <span style="padding:10px 12px;border-bottom:1px solid var(--grey-150);display:flex;gap:6px">
+                  <sc-for list="{{ d.nums }}" as="n" hint-placeholder-count="4"><span style="width:34px;height:34px;border-radius:50%;border:2px solid var(--qos-navy);color:var(--qos-navy);display:flex;align-items:center;justify-content:center;font-family:var(--font-accent);font-weight:700;font-size:14px">{{ n }}</span></sc-for>
+                </span>
+                <span style="padding:14px 12px;border-bottom:1px solid var(--grey-150);font-weight:700">{{ d.jackpot }}</span>
+                <span style="padding:14px 12px;border-bottom:1px solid var(--grey-150)">{{ d.winners }}</span>
+                <span style="padding:14px 20px 14px 12px;border-bottom:1px solid var(--grey-150);color:var(--qos-mid);font-weight:600">{{ d.rollover }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isDraw }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
+        <div style="flex:2 1 min(100%,540px);min-width:0;background:var(--qos-ice);border:1px solid var(--qos-steel-line);padding:clamp(18px,4.5vw,28px);display:flex;flex-direction:column;gap:22px" data-reveal="left">
+          <h2 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:22px;color:var(--qos-navy)">Your numbers for Draw 143</h2>
+          <sc-for list="{{ lines }}" as="l" hint-placeholder-count="1">
+            <div style="display:flex;flex-direction:column;gap:12px;padding-bottom:20px;border-bottom:1px solid var(--grey-150)">
+              <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px">
+                <b style="font-size:15px;color:var(--qos-navy)">{{ l.label }}</b>
+                <div style="display:flex;align-items:center;gap:8px;font-size:13px">
+                  <span style="color:var(--grey-600);font-family:var(--font-accent)">{{ l.count }}</span>
+                  <button type="button" onClick="{{ l.lucky }}" style="height:34px;white-space:nowrap;padding:0 12px;background:#fff;border:1px solid var(--qos-steel-line);color:var(--qos-navy);font-weight:700;font-size:13px;cursor:pointer"><i class="fa fa-random" aria-hidden="true"></i> Pick for me</button>
+                  <sc-if value="{{ l.removable }}" hint-placeholder-val="{{ false }}"><button type="button" onClick="{{ l.remove }}" style="height:34px;padding:0 12px;background:transparent;border:1px solid var(--qos-steel-line);color:var(--grey-600);font-size:13px;cursor:pointer">Remove</button></sc-if>
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat({{ ballCols }},minmax(0,48px));gap:8px">
+                <sc-for list="{{ l.balls }}" as="b" hint-placeholder-count="20">
+                  <button type="button" onClick="{{ b.toggle }}" style="aspect-ratio:1;width:100%;border-radius:50%;border:2px solid {{ b.bd }};background:{{ b.bg }};color:{{ b.fg }};font-family:var(--font-accent);font-weight:700;font-size:17px;cursor:pointer;padding:0;transition:all .2s ease">{{ b.n }}</button>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+          <div style="display:flex;flex-wrap:wrap;gap:10px">
+            <sc-if value="{{ canAddLine }}" hint-placeholder-val="{{ true }}"><button type="button" onClick="{{ addLine }}" style="height:50px;padding:0 20px;background:#fff;border:2px solid var(--qos-navy);color:var(--qos-navy);font-weight:700;font-size:15px;cursor:pointer">+ Add another line</button></sc-if>
+            <button type="button" onClick="{{ goPay }}" style="height:50px;padding:0 22px;border:0;background:var(--qos-navy);color:#fff;font-weight:700;font-size:15px;cursor:pointer;display:flex;align-items:center;gap:10px" style-hover="background:#3068a7">Continue to payment <i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+          </div>
+          <p style="margin:0;font-size:13px;line-height:1.6;color:var(--grey-500)">Each line is a separate entry in every draw it's paid for. Use different numbers on each line — up to 5 lines in one payment.</p>
+        </div>
+        <div style="flex:1 1 280px;display:flex;flex-direction:column;gap:24px" data-reveal="right" data-delay="120">
+          <div style="background:var(--qos-navy);color:#fff;padding:clamp(18px,4.5vw,28px);display:flex;flex-direction:column;gap:8px;clip-path:polygon(0 0,100% 3%,98% 100%,2% 97%)">
+            <span style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9cc9f0">Estimated jackpot</span>
+            <span data-pulse="1" style="font-family:var(--font-display);font-weight:800;font-size:64px;line-height:1;transform-origin:left center">£1,860</span>
+            <svg width="200" height="12" viewBox="0 0 200 12" style="display:block"><polyline points="0,8 40,3 80,10 120,2 160,9 200,4" fill="none" stroke="#009fff" stroke-width="4"></polyline></svg>
+          </div>
+          <div style="background:#fff;border:1px solid var(--qos-steel-line);padding:24px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--grey-500)">Ticket price</span><span style="font-family:var(--font-display);font-weight:800;font-size:28px;color:var(--qos-navy)">£2.00</span></div>
+            <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--grey-500)">Entries this week</span><span style="font-family:var(--font-display);font-weight:800;font-size:28px;color:var(--qos-navy)">612</span></div>
+            <p style="grid-column:1 / -1;margin:0;font-size:13px;line-height:1.6;color:var(--grey-500)">Pay by Direct Debit, or buy 4 or 12 draws by card, and your numbers stay entered automatically — no need to pick again next week.</p>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isPay }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
+        <div style="flex:2 1 min(100%,540px);min-width:0;background:var(--qos-ice);border:1px solid var(--qos-steel-line);padding:clamp(18px,4.5vw,28px);display:flex;flex-direction:column;gap:22px" data-reveal="left">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <h2 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:20px;color:var(--qos-navy)">Your numbers for Draw 143</h2>
+            <sc-for list="{{ payLines }}" as="l" hint-placeholder-count="1">
+              <div style="display:flex;align-items:center;gap:12px"><sc-if value="{{ l.hasLabel }}" hint-placeholder-val="{{ false }}"><span style="font-size:13px;color:var(--grey-500);min-width:52px">{{ l.label }}</span></sc-if><div style="display:flex;gap:8px"><sc-for list="{{ l.nums }}" as="n" hint-placeholder-count="4"><span style="width:44px;height:44px;border-radius:50%;background:var(--qos-navy);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--font-accent);font-weight:700;font-size:18px">{{ n }}</span></sc-for></div></div>
+            </sc-for>
+            <a href="#" onClick="{{ goDraw }}" style="font-size:14px;font-weight:600">Change numbers or add another line</a>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <span style="font-size:13px;font-weight:700;color:var(--grey-600)">How would you like to pay?</span>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+              <sc-for list="{{ methods }}" as="m" hint-placeholder-count="2">
+                <button type="button" onClick="{{ m.pick }}" style="text-align:left;padding:16px;border:2px solid {{ m.bd }};background:{{ m.bg }};cursor:pointer;display:flex;gap:12px;align-items:flex-start;font-family:var(--font-body)">
+                  <i class="fa {{ m.icon }}" aria-hidden="true" style="font-size:20px;color:var(--qos-navy);margin-top:2px"></i>
+                  <span style="display:flex;flex-direction:column;gap:4px"><b style="font-size:15px;color:var(--qos-navy)">{{ m.title }}</b><span style="font-size:13px;color:var(--grey-600);line-height:1.5">{{ m.detail }}</span></span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+          <sc-if value="{{ isCard }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;gap:18px">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <span style="font-size:13px;font-weight:700;color:var(--grey-600)">How many draws?</span>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--qos-steel-line)">
+                  <sc-for list="{{ blocks }}" as="p" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ p.pick }}" style="height:56px;border:0;background:{{ p.bg }};color:{{ p.fg }};cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-family:var(--font-body)"><b style="font-size:14px">{{ p.label }}</b><span style="font-size:13px;font-family:var(--font-accent)">{{ p.price }}</span></button>
+                  </sc-for>
+                </div>
+              </div>
+              <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Name on card<input type="text" placeholder="Full name" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"></label>
+              <div style="display:flex;flex-wrap:wrap;gap:12px">
+                <label style="flex:2 1 220px;display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Card number<input type="text" placeholder="4242 4242 4242 4242" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff;min-width:0"></label>
+                <label style="flex:1 1 100px;display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Expiry<input type="text" placeholder="MM/YY" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff;min-width:0"></label>
+                <label style="flex:1 1 100px;display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">CVC<input type="text" placeholder="123" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff;min-width:0"></label>
+              </div>
+              <div style="display:flex;gap:12px;background:var(--qos-ice);border:1px solid var(--qos-ice-line);padding:14px 16px;font-size:14px;line-height:1.5;color:var(--qos-navy)"><i class="fa fa-flask" aria-hidden="true" style="margin-top:3px"></i><span><b>Sandbox payment</b> — any name, card number, expiry and CVC are accepted; this is a test transaction and no funds move.</span></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ isDD }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:18px">
+              <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Name of account holder<input type="text" placeholder="Full name" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff"></label>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:12px">
+                <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Sort code<input type="text" placeholder="00-00-00" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff;min-width:0"></label>
+                <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--grey-600)">Account number<input type="text" placeholder="12345678" style="height:48px;padding:0 14px;border:1px solid var(--qos-steel-line);border-radius:4px;font-size:15px;background:#fff;min-width:0"></label>
+              </div>
+              <div style="display:flex;gap:12px;background:var(--qos-ice);border:1px solid var(--qos-ice-line);padding:14px 16px;font-size:14px;line-height:1.5;color:var(--qos-navy)"><i class="fa fa-flask" aria-hidden="true" style="margin-top:3px"></i><span><b>Sandbox Direct Debit</b> — any name, sort code and account number are accepted; this is a test mandate and no funds move.</span></div>
+            </div>
+          </sc-if>
+          <button type="button" style="height:56px;border:0;background:var(--qos-navy);color:#fff;font-weight:700;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:0 22px" style-hover="background:#3068a7">{{ submitLabel }} <i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+        </div>
+        <div style="flex:1 1 280px;background:var(--qos-navy);color:#fff;padding:clamp(18px,4.5vw,28px);display:flex;flex-direction:column;gap:14px;clip-path:polygon(0 0,100% 2%,98% 100%,2% 98%)" data-reveal="right" data-delay="120">
+          <h3 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:20px">Order summary</h3>
+          <div style="display:flex;justify-content:space-between;gap:12px;font-size:14px;color:#d3e4f5"><span>{{ summaryLine }}</span><span style="font-family:var(--font-accent);font-weight:700;color:#fff">{{ summaryAmount }}</span></div>
+          <svg width="100%" height="10" viewBox="0 0 300 10" preserveAspectRatio="none" style="display:block"><polyline points="0,5 40,2 90,8 140,3 200,7 250,2 300,6" fill="none" stroke="#009fff" stroke-width="2" vector-effect="non-scaling-stroke"></polyline></svg>
+          <div style="display:flex;justify-content:space-between;font-weight:700;font-size:16px"><span>{{ dueLabel }}</span><span data-pulse="1" style="font-family:var(--font-display);font-weight:800;font-size:30px;transform-origin:right center">{{ dueAmount }}</span></div>
+          <p style="margin:0;font-size:13px;line-height:1.6;color:#d3e4f5">{{ summaryNote }}</p>
+        </div>
+      </div>
+    </sc-if>
+  </main>
+
+  <footer style="background:var(--qos-navy);color:#d3e4f5;padding:40px clamp(16px,4vw,48px) 32px;display:flex;flex-wrap:wrap;align-items:center;gap:20px;font-size:13px;clip-path:polygon(0 12px,30% 0,62% 14px,100% 2px,100% 100%,0 100%)">
+    <img src="assets/qos-crest.png" alt="" style="height:40px;width:40px">
+    <span>The Doonhamers Draw · Queen of the South FC · Palmerston Park, Dumfries</span>
+    <div style="margin-left:auto;display:flex;flex-wrap:wrap;gap:20px"><a href="#" style="color:#fff;text-decoration:none">Rules</a><a href="#" style="color:#fff;text-decoration:none">Privacy</a><a href="#" style="color:#fff;text-decoration:none">Play responsibly</a><a href="#" style="color:#fff;text-decoration:none">Contact</a></div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;startPage&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signup&quot;,&quot;login&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;past&quot;,&quot;draw&quot;,&quot;pay&quot;],&quot;default&quot;:&quot;signup&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  state = { page: this.props.startPage ?? 'signup', menu: false, sent: false, lines: [[]], method: 'card', blocks: 4, vw: window.innerWidth };
+  componentDidMount() { setTimeout(() => this.motion(), 60); this.onResize = () => this.setState({ vw: window.innerWidth }); window.addEventListener('resize', this.onResize); }
+  componentWillUnmount() { window.removeEventListener('resize', this.onResize); }
+  componentDidUpdate(_, prev) { if (prev.page !== this.state.page) setTimeout(() => this.motion(), 30); }
+  motion() {
+    const off = { left: 'translateX(-70px)', right: 'translateX(70px)', up: 'translateY(40px)' };
+    document.querySelectorAll('[data-reveal]').forEach((el) => el.animate(
+      [{ opacity: 0, transform: off[el.dataset.reveal] || off.up }, { opacity: 1, transform: 'none' }],
+      { duration: 800, delay: +(el.dataset.delay || 0), easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'backwards' }));
+    document.querySelectorAll('[data-ball]').forEach((b, i) => b.animate(
+      [{ transform: 'scale(0) rotate(-120deg)', opacity: 0 }, { transform: 'scale(1.15)', opacity: 1, offset: .7 }, { transform: 'scale(1)' }],
+      { duration: 700, delay: 400 + i * 160, easing: 'ease-out', fill: 'backwards' }));
+    if (!this.pulsed) {
+      this.pulsed = true;
+      setInterval(() => document.querySelectorAll('[data-pulse]').forEach((el) => el.animate(
+        [{ transform: 'scale(1)' }, { transform: 'scale(1.04)' }, { transform: 'scale(1)' }], { duration: 1400, easing: 'ease-in-out' })), 3000);
+    }
+  }
+  go(page) { return (e) => { e && e.preventDefault && e.preventDefault(); this.setState({ page, menu: false, sent: false }); window.scrollTo(0, 0); }; }
+  setLine(i, fn) { this.setState((s) => ({ lines: s.lines.map((l, j) => (j === i ? fn(l) : l)) })); }
+  renderVals() {
+    const { page, lines, method, blocks } = this.state;
+    const meta = {
+      signup: ['Sign up', 'Join the draw', 'Pick 4 numbers from 1–20, every week, for £2. Every entry supports Queen of the South FC — match all four and share the jackpot.'],
+      login: ['Log in', 'Welcome back', "Log in to check this week's numbers, top up your entries, or see what you've won."],
+      forgot: ['Log in', 'Forgotten password', "Enter the email address on your account and we'll send you a link to reset your password."],
+      reset: ['Log in', 'Choose a new password', 'Use at least 10 characters.'],
+      past: ['Results', 'Past draws', 'Winning numbers, jackpots and winners from every settled draw.'],
+      draw: ['Draw No. 143 · Sat 10 Oct, 19:00', 'Current draw', 'Drawn Sat 10 Oct, 19:00 — entries close Fri 9 Oct, 18:00. Pick 4 numbers from 1 to 20, or let us pick for you.'],
+      pay: ['Draw No. 143', 'Pay for your entries', '£2.00 buys one entry into one draw. Pay by card for a set number of draws, or by Direct Debit to stay entered every draw.'],
+    }[page];
+    const tabDefs = [['signup', 'Sign up'], ['login', 'Log in'], ['forgot', 'Forgotten password'], ['reset', 'Reset password'], ['past', 'Past draws'], ['draw', 'Current draw'], ['pay', 'Payment']];
+    const filled = lines.filter((l) => l.length === 4);
+    const payLines = (filled.length ? filled : [[3, 9, 14, 18]]);
+    const n = payLines.length, several = n > 1;
+    const m = several && method === 'dd' ? 'card' : method;
+    const gbp = (p) => '£' + (p / 100).toFixed(2);
+    const ball = (on) => ({ bg: on ? '#094582' : '#fff', fg: on ? '#fff' : '#094582', bd: on ? '#094582' : '#c9d7e4' });
+    const past = [[142, 'Sat 3 Oct', [3, 9, 14, 18], '£1,240', '2', '—'], [141, 'Sat 26 Sep', [1, 7, 12, 20], '—', '0', '£1,120'], [140, 'Sat 19 Sep', [4, 5, 11, 16], '—', '0', '£980'], [139, 'Sat 12 Sep', [2, 8, 13, 19], '£1,460', '1', '—'], [138, 'Sat 5 Sep', [6, 10, 15, 17], '—', '0', '£1,310'], [137, 'Sat 29 Aug', [3, 4, 9, 20], '—', '0', '£1,150']];
+    return {
+      tabs: tabDefs.map(([k, label]) => ({ label, go: this.go(k), bg: page === k ? '#094582' : '#fff', fg: page === k ? '#fff' : '#094582' })),
+      menuOpen: this.state.menu, menuGlyph: this.state.menu ? '×' : '☰',
+      toggleMenu: () => this.setState((s) => ({ menu: !s.menu })),
+      menuItems: [['Home', null], ['Current draw', 'draw'], ['Results', 'past'], ['Log in', 'login'], ['Sign up', 'signup']].map(([label, k]) => ({ label, go: k ? this.go(k) : () => { window.location.href = 'Landing Page v2.dc.html'; } })),
+      wide: this.state.vw >= 560, narrow: this.state.vw < 700, wideTable: this.state.vw >= 700, ballCols: this.state.vw >= 720 ? 10 : 5,
+      eyebrow: meta[0], title: meta[1], lede: meta[2],
+      isSignup: page === 'signup', isAuth: ['login', 'forgot', 'reset'].includes(page), isLogin: page === 'login', isForgot: page === 'forgot', isReset: page === 'reset',
+      isPast: page === 'past', isDraw: page === 'draw', isPay: page === 'pay',
+      goLogin: this.go('login'), goSignup: this.go('signup'), goForgot: this.go('forgot'), goDraw: this.go('draw'), goPay: this.go('pay'),
+      sent: this.state.sent, notSent: !this.state.sent, send: () => this.setState({ sent: true }),
+      whyJoin: [
+        { icon: 'fa-heart', text: '40p in every £1 goes to the Queen of the South Community Trust.' },
+        { icon: 'fa-ticket', text: 'Entries are £2 each. Pay per draw, or in blocks of 4 or 12 to skip the top-up.' },
+        { icon: 'fa-trophy', text: "Match all 4 of 4 numbers to share that week's jackpot. No match, no worries — it rolls into next week's." }],
+      latestNumbers: [3, 9, 14, 18],
+      pastDraws: past.map(([no, date, nums, jackpot, winners, rollover]) => ({ no, date, nums, jackpot, winners, rollover })),
+      lines: lines.map((l, i) => ({
+        label: 'Line ' + (i + 1), count: l.length + ' of 4 selected', removable: i > 0,
+        remove: () => this.setState((s) => ({ lines: s.lines.filter((_, j) => j !== i) })),
+        lucky: () => { const pool = Array.from({ length: 20 }, (_, k) => k + 1), out = []; while (out.length < 4) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]); this.setLine(i, () => out.sort((a, b) => a - b)); },
+        balls: Array.from({ length: 20 }, (_, k) => { const v = k + 1, on = l.includes(v); return { n: v, ...ball(on), toggle: () => this.setLine(i, (x) => (x.includes(v) ? x.filter((y) => y !== v) : x.length >= 4 ? x : [...x, v])) }; }),
+      })),
+      canAddLine: lines.length < 5, addLine: () => this.setState((s) => ({ lines: [...s.lines, []] })),
+      payLines: payLines.map((nums, i) => ({ label: several ? 'Line ' + (i + 1) : '', hasLabel: several, nums })),
+      methods: [
+        { k: 'card', icon: 'fa-credit-card', title: 'Debit / credit card', detail: several ? 'Pay now for all ' + n + ' lines, 1, 4 or 12 draws each' : 'Pay now for 1, 4 or 12 draws' },
+        { k: 'dd', icon: 'fa-university', title: 'Direct Debit', detail: several ? 'One line of numbers per Direct Debit — pay for several lines by card' : 'Entered every draw until you cancel — £2.00 a draw' },
+      ].map((x) => ({ ...x, bd: m === x.k ? '#094582' : '#c9d7e4', bg: m === x.k ? '#f2f8fe' : '#fff', pick: () => (x.k === 'dd' && several ? null : this.setState({ method: x.k })) })),
+      isCard: m === 'card', isDD: m === 'dd',
+      blocks: [1, 4, 12].map((d) => ({ label: d === 1 ? '1 draw' : d + ' draws', price: gbp(200 * d * n), bg: blocks === d ? '#094582' : '#fff', fg: blocks === d ? '#fff' : '#094582', pick: () => this.setState({ blocks: d }) })),
+      submitLabel: m === 'card' ? 'Pay ' + gbp(200 * blocks * n) + ' & enter' : 'Set up Direct Debit',
+      summaryLine: m === 'card' ? (several ? n + ' lines × ' + blocks + ' draws (from Draw 143)' : blocks + ' × entry (from Draw 143)') : 'Each draw, from Draw 143',
+      summaryAmount: m === 'card' ? gbp(200 * blocks * n) : '£2.00',
+      dueLabel: m === 'card' ? 'Total due today' : 'Due today', dueAmount: m === 'card' ? gbp(200 * blocks * n) : '£0.00',
+      summaryNote: m === 'card' ? "Your numbers go into this draw now and each following draw automatically until the draws you've paid for run out." : 'Your numbers are entered into every draw until you cancel the Direct Debit from "My numbers".',
+    };
+  }
+}
+</script>
+</body>
+</html>
