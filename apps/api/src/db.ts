@@ -202,17 +202,30 @@ export async function getDrawStats(pool: Pool, drawId: string): Promise<DrawStat
   return { entriesCount, jackpotEstimatePence: position.jackpotPreDrawPence };
 }
 
+export interface MemberLine {
+  readonly prizeDrawNo: number;
+  readonly slot: number;
+  readonly selection: number[];
+  /** True when the numbers were picked at random because none were chosen (GAP-13). */
+  readonly randomlyAllocated: boolean;
+}
+
 /** Every set of numbers the member currently holds — one per line (db/migrations/0018). */
-export async function listStandingSelections(pool: Pool, memberId: string): Promise<number[][]> {
-  const { rows } = await pool.query<{ selection: number[] }>(
-    `SELECT ss.selection
+export async function listLines(pool: Pool, memberId: string): Promise<MemberLine[]> {
+  const { rows } = await pool.query<{ prize_draw_no: number; slot: number; selection: number[]; source: string }>(
+    `SELECT ss.prize_draw_no, ss.slot, ss.selection, ss.source::text
        FROM selection_standing ss
        JOIN member_number mn ON mn.prize_draw_no = ss.prize_draw_no
       WHERE mn.member_id = $1 AND ss.effective_to IS NULL
       ORDER BY ss.prize_draw_no, ss.slot`,
     [memberId],
   );
-  return rows.map((r) => r.selection);
+  return rows.map((r) => ({
+    prizeDrawNo: r.prize_draw_no,
+    slot: r.slot,
+    selection: r.selection,
+    randomlyAllocated: r.source === 'randomly_allocated',
+  }));
 }
 
 export interface MemberDetails {
@@ -224,6 +237,7 @@ export interface MemberDetails {
   readonly address1: string | null;
   readonly address2: string | null;
   readonly address3: string | null;
+  readonly county: string | null;
   readonly postCode: string | null;
   readonly preferredContact: string;
 }
@@ -238,10 +252,11 @@ export async function getMemberDetails(pool: Pool, id: string): Promise<MemberDe
     address_1: string | null;
     address_2: string | null;
     address_3: string | null;
+    county: string | null;
     post_code: string | null;
     preferred_contact: string;
   }>(
-    `SELECT id, forename, surname, email, telephone, address_1, address_2, address_3, post_code, preferred_contact
+    `SELECT id, forename, surname, email, telephone, address_1, address_2, address_3, county, post_code, preferred_contact
        FROM member WHERE id = $1 AND status = 'active'`,
     [id],
   );
@@ -256,6 +271,7 @@ export async function getMemberDetails(pool: Pool, id: string): Promise<MemberDe
     address1: row.address_1,
     address2: row.address_2,
     address3: row.address_3,
+    county: row.county,
     postCode: row.post_code,
     preferredContact: row.preferred_contact,
   };
@@ -269,16 +285,26 @@ export async function updateMemberDetails(
     address1: string;
     address2: string;
     address3: string;
+    county: string;
     postCode: string;
     preferredContact: 'post' | 'email' | 'phone';
   },
 ): Promise<void> {
   await pool.query(
     `UPDATE member
-        SET telephone = $2, address_1 = $3, address_2 = $4, address_3 = $5,
-            post_code = $6, post_code_valid = false, preferred_contact = $7, updated_at = now()
+        SET telephone = $2, address_1 = $3, address_2 = $4, address_3 = $5, county = $6,
+            post_code = $7, post_code_valid = false, preferred_contact = $8, updated_at = now()
       WHERE id = $1`,
-    [id, input.telephone || null, input.address1 || null, input.address2 || null, input.address3 || null, input.postCode || null, input.preferredContact],
+    [
+      id,
+      input.telephone || null,
+      input.address1 || null,
+      input.address2 || null,
+      input.address3 || null,
+      input.county || null,
+      input.postCode || null,
+      input.preferredContact,
+    ],
   );
 }
 

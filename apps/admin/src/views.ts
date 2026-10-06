@@ -725,12 +725,79 @@ function upcomingRow(e: MemberUpcomingEntry): string {
 }
 
 /** GitHub #17: one member — details, payments, and the draws not yet run that they are entered in. */
-export function memberDetailPage(opts: { user: { displayName: string; csrf: string }; member: MemberPage }): string {
+const CONTACT_LABELS: Record<string, string> = { post: 'Post', email: 'Email', phone: 'Phone', via_agent: 'Via their agent' };
+
+function postalAddress(p: MemberPage['profile']): string {
+  const parts = [p.address1, p.address2, p.address3, p.county, p.postCode].filter((v): v is string => Boolean(v));
+  return parts.length > 0 ? parts.join(', ') : '—';
+}
+
+/** GAP-05: email, telephone and postal address, all optional. */
+function contactForm(csrf: string, p: MemberPage['profile']): string {
+  const field = (name: string, label: string, value: string | null, type = 'text') =>
+    `<label for="${name}">${escapeHtml(label)}</label>
+     <input type="${type}" id="${name}" name="${name}" value="${escapeHtml(value ?? '')}" />`;
+  const options = Object.entries(CONTACT_LABELS)
+    .map(([v, l]) => `<option value="${v}"${p.preferredContact === v ? ' selected' : ''}>${escapeHtml(l)}</option>`)
+    .join('');
+  return `
+    <details${p.email ? '' : ' open'}>
+      <summary style="cursor:pointer;font-weight:600">Edit contact details</summary>
+      ${p.email ? '' : '<p class="muted">No email address on record. If this member wins, a task is raised to contact them by post (GAP-05).</p>'}
+      <form method="post" action="/members/${p.id}/contact">
+        ${csrfField(csrf)}
+        ${field('email', 'Email', p.email, 'email')}
+        ${field('telephone', 'Telephone', p.telephone, 'tel')}
+        ${field('address1', 'Address line 1', p.address1)}
+        ${field('address2', 'Address line 2', p.address2)}
+        ${field('address3', 'Town', p.address3)}
+        ${field('county', 'County', p.county)}
+        ${field('postCode', 'Postcode', p.postCode)}
+        <label for="preferredContact">Preferred contact</label>
+        <select id="preferredContact" name="preferredContact">${options}</select>
+        <p class="muted" style="margin:0.2rem 0 0.6rem">Every field is optional; leave one blank to clear it.</p>
+        <button type="submit">Save contact details</button>
+      </form>
+    </details>`;
+}
+
+const SELECTION_SOURCE_LABELS: Record<string, string> = {
+  member_chosen: 'Member',
+  quick_pick: 'Quick pick',
+  randomly_allocated: 'Random (none chosen, GAP-13)',
+};
+
+function lineRow(csrf: string, memberId: string, line: MemberPage['lines'][number]): string {
+  return `<tr>
+    <td>${line.prizeDrawNo}</td>
+    <td>${line.slot}</td>
+    <td>${escapeHtml(numbersLabel(line.selection))}</td>
+    <td>${escapeHtml(SELECTION_SOURCE_LABELS[line.source] ?? line.source)}</td>
+    <td>
+      <form method="post" action="/members/${memberId}/numbers" style="display:flex;gap:.4rem;align-items:center;margin:0">
+        ${csrfField(csrf)}
+        <input type="hidden" name="prizeDrawNo" value="${line.prizeDrawNo}" />
+        <input type="hidden" name="slot" value="${line.slot}" />
+        <input type="text" name="numbers" required placeholder="e.g. 3 7 12 18" aria-label="New numbers" style="width:9rem;margin:0" />
+        <button type="submit">Change</button>
+      </form>
+    </td>
+  </tr>`;
+}
+
+export function memberDetailPage(opts: {
+  user: { displayName: string; csrf: string };
+  member: MemberPage;
+  error?: string;
+  flash?: string;
+}): string {
   const { profile, payments, upcoming } = opts.member;
   const details = [
     ['Name', memberName(profile)],
     ['Email', profile.email ?? '—'],
     ['Telephone', profile.telephone ?? '—'],
+    ['Postal address', postalAddress(profile)],
+    ['Preferred contact', CONTACT_LABELS[profile.preferredContact] ?? profile.preferredContact],
     ['Status', profile.status],
     ['Type', profile.memberType],
     ['Prize draw no.', profile.prizeDrawNumbers.length > 0 ? profile.prizeDrawNumbers.join(', ') : '—'],
@@ -744,7 +811,24 @@ export function memberDetailPage(opts: { user: { displayName: string; csrf: stri
     body: `
       <p><a class="muted" href="/members">← Back to members</a></p>
       <h1>${escapeHtml(memberName(profile))}</h1>
-      <div class="card"><dl class="kv">${details}</dl></div>
+      <div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
+        <dl class="kv">${details}</dl>
+        ${contactForm(opts.user.csrf, profile)}
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Numbers</h2>
+        ${
+          opts.member.lines.length === 0
+            ? '<p class="muted">No numbers on any line.</p>'
+            : `<table>
+                 <thead><tr><th>Prize draw no.</th><th>Line</th><th>Numbers</th><th>Chosen by</th><th>Change to</th></tr></thead>
+                 <tbody>${opts.member.lines.map((l) => lineRow(opts.user.csrf, profile.id, l)).join('\n')}</tbody>
+               </table>
+               <p class="muted">The line keeps its paid draws and any Direct Debit. Draws already closed to entries are drawn with the old numbers.</p>`
+        }
+      </div>
       <div class="card">
         <h2 style="font-size:1.05rem;margin-top:0">Payments</h2>
         ${
@@ -872,6 +956,7 @@ export function taskDetailPage(opts: {
       <h1>${escapeHtml(task.title)}</h1>
       <div class="card">
         <p>${escapeHtml(task.detail)}</p>
+        ${task.entityType === 'member' && task.entityId ? `<p><a href="/members/${escapeHtml(task.entityId)}">Open the member page →</a></p>` : ''}
         ${task.consequenceIfIgnored ? `<p class="muted"><strong>If nobody acts:</strong> ${escapeHtml(task.consequenceIfIgnored)}</p>` : ''}
         <dl class="kv">${meta}</dl>
       </div>

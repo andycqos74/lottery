@@ -21,6 +21,8 @@ import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import {
   acceptBankTransactionMatchTx,
   allocateUpcomingEntries,
+  changeLineNumbers,
+  describeNumbersChange,
   generateDueEntries,
   ingestNewStatements,
   recordManualTicket,
@@ -41,6 +43,10 @@ import {
   getDrawFormDefaults,
   getJackpotInputs,
   getMemberPage,
+  updateMemberContact,
+  markPrizesNotifiedByPost,
+  CONTACT_CHANNELS,
+  type ContactChannel,
   getTask,
   insertAuditLog,
   listBankStatements,
@@ -693,6 +699,63 @@ app.get('/members/:id', async (request, reply) => {
   return reply.type('text/html').send(memberDetailPage({ user: viewUser(request), member }));
 });
 
+app.post('/members/:id/numbers', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const { id } = request.params as { id: string };
+  const body = request.body as { prizeDrawNo?: string; slot?: string; numbers?: string };
+  const member = await getMemberPage(pool, id);
+  if (!member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
+  const result = await changeLineNumbers(pool, {
+    memberId: id,
+    prizeDrawNo: Number.parseInt(body.prizeDrawNo ?? '', 10),
+    slot: Number.parseInt(body.slot ?? '', 10),
+    selection: (body.numbers ?? '').match(/\d+/g)?.map(Number) ?? [],
+    actorId: request.authUser!.id,
+    actorLabel: request.authUser!.email,
+  });
+  const refreshed = (await getMemberPage(pool, id))!;
+  const outcome =
+    result.kind === 'rejected'
+      ? { error: result.reason }
+      : { flash: result.kind === 'unchanged' ? 'Those are already the numbers on that line.' : describeNumbersChange(result) };
+  return reply.type('text/html').send(memberDetailPage({ user: viewUser(request), member: refreshed, ...outcome }));
+});
+
+app.post('/members/:id/contact', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const { id } = request.params as { id: string };
+  const body = request.body as Partial<Record<'email' | 'telephone' | 'address1' | 'address2' | 'address3' | 'county' | 'postCode' | 'preferredContact', string>>;
+  const preferredContact = (CONTACT_CHANNELS as readonly string[]).includes(body.preferredContact ?? '')
+    ? (body.preferredContact as ContactChannel)
+    : 'post';
+  const outcome = await updateMemberContact(
+    pool,
+    id,
+    {
+      email: body.email ?? '',
+      telephone: body.telephone ?? '',
+      address1: body.address1 ?? '',
+      address2: body.address2 ?? '',
+      address3: body.address3 ?? '',
+      county: body.county ?? '',
+      postCode: body.postCode ?? '',
+      preferredContact,
+    },
+    { id: request.authUser!.id, label: request.authUser!.email },
+  );
+  const member = await getMemberPage(pool, id);
+  if (outcome.kind === 'not_found' || !member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
+  return reply
+    .type('text/html')
+    .send(
+      memberDetailPage({
+        user: viewUser(request),
+        member,
+        ...(outcome.kind === 'rejected' ? { error: outcome.reason } : { flash: 'Contact details saved.' }),
+      }),
+    );
+});
+
 app.get('/bank-statements', async (request, reply) => {
   const statements = await listBankStatements(pool);
   reply.type('text/html').send(bankStatementsPage({ user: viewUser(request), statements }));
@@ -844,6 +907,11 @@ app.post('/tasks/:id/resolve', async (request, reply) => {
   // once accepted, can't be rolled back, so the human decision stays recorded
   // regardless of what happens next.
   let flash = `Task resolved.${paymentFlash}`;
+  // GAP-05: resolving the post follow-up is the record that the winner was told.
+  if (task.kind === 'winner_missing_email' && task.entityId) {
+    const told = await markPrizesNotifiedByPost(pool, task.entityId, { id: request.authUser!.id, label: request.authUser!.email });
+    flash += ` ${told} prize${told === 1 ? '' : 's'} marked as notified.`;
+  }
   await notifyEscalationTaskClosed(id).catch((error: unknown) =>
     request.log.warn({ err: error }, 'could not tell the escalation workflow its task closed; it will notice on its next check'),
   );

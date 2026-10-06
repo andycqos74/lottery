@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { createPool, migrate, type Pool } from '@qosfc/db';
 import { allocateUpcomingEntries } from '@qosfc/activities';
-import { getDraw, getMemberPage, listDrawEntrants } from './db.js';
+import { getDraw, getMemberPage, listDrawEntrants, updateMemberContact } from './db.js';
 
 const url = process.env['TEST_APP_DB_URL'];
 const describeDb = url ? describe : describe.skip;
@@ -148,5 +148,46 @@ describeDb('draw entrants and member pages (GitHub #16, #17)', () => {
     expect(await getMemberPage(pool, 'not-a-uuid')).toBeUndefined();
     expect(await getMemberPage(pool, '00000000-0000-0000-0000-000000000000')).toBeUndefined();
     expect(await getDraw(pool, 'not-a-uuid')).toBeUndefined();
+  });
+  it('saves contact details and postal address, refusing an email another member has (GAP-05)', async () => {
+    const actorId = (
+      await pool.query(`INSERT INTO app_user (email, display_name, password_hash) VALUES ('ops@example.com', 'Ops', 'x') RETURNING id`)
+    ).rows[0].id;
+    const actor = { id: actorId, label: 'ops@example.com' };
+    const carol = (await pool.query(`INSERT INTO member (forename, surname) VALUES ('Carol', 'Post') RETURNING id`)).rows[0].id;
+    const contact = {
+      email: '',
+      telephone: '01234 567890',
+      address1: '1 High Street',
+      address2: '',
+      address3: 'Glasgow',
+      county: 'Lanarkshire',
+      postCode: 'g1 1aa',
+      preferredContact: 'post' as const,
+    };
+
+    expect(await updateMemberContact(pool, carol, contact, actor)).toEqual({ kind: 'updated' });
+    const page = await getMemberPage(pool, carol);
+    expect(page!.profile).toMatchObject({
+      email: null,
+      address1: '1 High Street',
+      address2: null,
+      address3: 'Glasgow',
+      county: 'Lanarkshire',
+      postCode: 'G1 1AA',
+      preferredContact: 'post',
+    });
+
+    const alicesEmail = (await getMemberPage(pool, alice))!.profile.email!;
+    expect(await updateMemberContact(pool, carol, { ...contact, email: alicesEmail }, actor)).toMatchObject({ kind: 'rejected' });
+    expect(await updateMemberContact(pool, carol, { ...contact, preferredContact: 'email' }, actor)).toMatchObject({ kind: 'rejected' });
+
+    expect(await updateMemberContact(pool, carol, { ...contact, email: 'carol@example.com' }, actor)).toEqual({ kind: 'updated' });
+    const { rows } = await pool.query(
+      `SELECT before->>'email' AS before, after->>'email' AS after FROM audit_log
+        WHERE action = 'member_contact_updated' AND entity_id = $1 ORDER BY id`,
+      [carol],
+    );
+    expect(rows.at(-1)).toEqual({ before: null, after: 'carol@example.com' });
   });
 });

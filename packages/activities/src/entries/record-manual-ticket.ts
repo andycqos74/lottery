@@ -1,9 +1,10 @@
 /**
  * Recording a physical/agent-collected ticket, keyed in by admin staff.
  *
- * Distinct from GAP-19 (still ⛔): GAP-19 is a bulk agent lodgement with no
- * per-member breakdown at all. This is the opposite case — a specific,
- * identified member's physical ticket, with a known purchase date and amount,
+ * Also the entry route for GAP-19's agent-collected players (client decision,
+ * 2026-10-06, option c): they are not entered in their own right; their agent
+ * pays in weekly and each player's ticket is keyed in here, attributed to the
+ * agent. A specific physical ticket, with a known purchase date and amount,
  * handed to a member of staff to key in. Client decision: treat it exactly
  * like an online ticket — the money buys whole prepaid blocks (GAP-17,
  * resolved), consumed one per open draw via the same `entriesDue()` /

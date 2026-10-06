@@ -16,6 +16,7 @@ import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import { formatPence, pence } from '@qosfc/domain';
 import { idempotencyKey, isSandbox } from '@qosfc/ports';
+import { changeLineNumbers, describeNumbersChange } from '@qosfc/activities';
 import {
   consumePasswordReset,
   createPasswordReset,
@@ -23,7 +24,7 @@ import {
   getDrawStats,
   getMemberDetails,
   getOpenDraw,
-  listStandingSelections,
+  listLines,
   listMyEntries,
   listSettledDraws,
   registerMember,
@@ -600,10 +601,15 @@ app.post('/direct-debit/cancel', async (request, reply) => {
   );
 });
 
-async function sendAccountPage(found: NonNullable<Awaited<ReturnType<typeof viewMember>>>, reply: FastifyReply, flash?: string) {
-  const [openDraw, standingSelections, entries, directDebits] = await Promise.all([
+async function sendAccountPage(
+  found: NonNullable<Awaited<ReturnType<typeof viewMember>>>,
+  reply: FastifyReply,
+  flash?: string,
+  error?: string,
+) {
+  const [openDraw, lines, entries, directDebits] = await Promise.all([
     getOpenDraw(pool),
-    listStandingSelections(pool, found.auth.member.id),
+    listLines(pool, found.auth.member.id),
     listMyEntries(pool, found.auth.member.id),
     listActiveDirectDebits(pool, found.auth.member.id),
   ]);
@@ -611,13 +617,32 @@ async function sendAccountPage(found: NonNullable<Awaited<ReturnType<typeof view
     accountPage({
       member: found.view,
       ...(openDraw ? { openDraw } : {}),
-      standingSelections,
+      lines,
       entries,
       directDebits,
       ...(flash ? { flash } : {}),
+      ...(error ? { error } : {}),
     }),
   );
 }
+
+/** Change the numbers on one of the member's lines. Paid weeks and any Direct Debit stay with the line. */
+app.post('/numbers/change', async (request, reply) => {
+  const found = await viewMember(request);
+  if (!found) return reply.redirect('/login');
+  if (!requireCsrf(request, reply, found.auth.session.csrf)) return;
+
+  const body = request.body as { prizeDrawNo?: string; slot?: string; numbers?: string | string[] };
+  const result = await changeLineNumbers(pool, {
+    memberId: found.auth.member.id,
+    prizeDrawNo: Number.parseInt(body.prizeDrawNo ?? '', 10),
+    slot: Number.parseInt(body.slot ?? '', 10),
+    selection: parseSelectionInput(body.numbers),
+    actorLabel: 'portal:change-numbers',
+  });
+  if (result.kind === 'rejected') return sendAccountPage(found, reply, undefined, result.reason);
+  return sendAccountPage(found, reply, result.kind === 'unchanged' ? 'Those are already your numbers.' : describeNumbersChange(result));
+});
 
 app.get('/account', async (request, reply) => {
   const found = await viewMember(request);
@@ -642,6 +667,7 @@ app.post('/details', async (request, reply) => {
     address1?: string;
     address2?: string;
     address3?: string;
+    county?: string;
     postCode?: string;
     preferredContact?: string;
   };
@@ -652,6 +678,7 @@ app.post('/details', async (request, reply) => {
     address1: (body.address1 ?? '').trim(),
     address2: (body.address2 ?? '').trim(),
     address3: (body.address3 ?? '').trim(),
+    county: (body.county ?? '').trim(),
     postCode: (body.postCode ?? '').trim(),
     preferredContact,
   });

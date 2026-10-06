@@ -110,8 +110,9 @@ export function countMatches(selection: Selection, winningNumbers: Selection): n
  * replay-safe as everything else in `packages/domain` — the caller (an
  * activity, never workflow code) supplies the actual entropy.
  *
- * Distinct from GAP-13's 'randomly_allocated': that is the system silently
- * defaulting a non-responder's selection. This is the member's own choice to
+ * Distinct from GAP-13's 'randomly_allocated': that is RANDOM.ORG numbers for
+ * a line nobody chose numbers for within a week (activities'
+ * random-allocation.ts). This is the member's own choice to
  * have the system pick for them, recorded as `selection_source = 'quick_pick'`.
  */
 export function randomSelection(random: () => number): Selection {

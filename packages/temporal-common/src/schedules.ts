@@ -1,7 +1,7 @@
 /**
  * Temporal Schedules — the system's only clock-driven starts.
  *
- * Both are sweeps that ask the database what is due, rather than schedules
+ * All are sweeps that ask the database what is due, rather than schedules
  * that encode the calendar themselves: draws are materialised one row each
  * with an exact `draw_at` (GAP-16, migration 0015), and tasks carry their own
  * `opened_at`/`due_at`. So a missed or late tick only delays work by one
@@ -38,6 +38,13 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     taskQueue: TASK_QUEUES.comms,
     every: '15 minutes',
     note: 'Starts an EscalationWorkflow for every open human task that has none (FR-5.6, GAP-42).',
+  },
+  {
+    scheduleId: 'selection-random-allocation',
+    workflowType: 'RandomAllocationSweepWorkflow',
+    taskQueue: TASK_QUEUES.comms,
+    every: '1 hour',
+    note: 'Gives RANDOM.ORG numbers to lines still without any a week after they were issued, and tells the member (GAP-13).',
   },
 ];
 
