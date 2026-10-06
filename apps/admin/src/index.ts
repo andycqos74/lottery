@@ -42,6 +42,7 @@ import {
   getJackpotInputs,
   getMemberPage,
   updateMemberContact,
+  markPrizesNotifiedByPost,
   CONTACT_CHANNELS,
   type ContactChannel,
   getTask,
@@ -882,6 +883,11 @@ app.post('/tasks/:id/resolve', async (request, reply) => {
   // once accepted, can't be rolled back, so the human decision stays recorded
   // regardless of what happens next.
   let flash = `Task resolved.${paymentFlash}`;
+  // GAP-05: resolving the post follow-up is the record that the winner was told.
+  if (task.kind === 'winner_missing_email' && task.entityId) {
+    const told = await markPrizesNotifiedByPost(pool, task.entityId, { id: request.authUser!.id, label: request.authUser!.email });
+    flash += ` ${told} prize${told === 1 ? '' : 's'} marked as notified.`;
+  }
   await notifyEscalationTaskClosed(id).catch((error: unknown) =>
     request.log.warn({ err: error }, 'could not tell the escalation workflow its task closed; it will notice on its next check'),
   );

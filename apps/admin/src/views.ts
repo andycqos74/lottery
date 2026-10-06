@@ -743,7 +743,7 @@ function contactForm(csrf: string, p: MemberPage['profile']): string {
   return `
     <details${p.email ? '' : ' open'}>
       <summary style="cursor:pointer;font-weight:600">Edit contact details</summary>
-      ${p.email ? '' : '<p class="muted">No email address on record, so a follow-up task is raised in the inbox (GAP-05). Adding one here closes it within the hour.</p>'}
+      ${p.email ? '' : '<p class="muted">No email address on record. If this member wins, a task is raised to contact them by post (GAP-05).</p>'}
       <form method="post" action="/members/${p.id}/contact">
         ${csrfField(csrf)}
         ${field('email', 'Email', p.email, 'email')}

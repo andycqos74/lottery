@@ -108,6 +108,24 @@ QOSFC`,
         `<p>Good luck!<br>QOSFC</p>`,
     };
   },
+  // GAP-13: numbers picked at random for a member who chose none within a week.
+  numbers_allocated: (m) => {
+    const forename = m['forename']?.trim() || 'there';
+    const lines = m['lines'] ?? '';
+    return {
+      subject: 'Your QOSFC Lottery numbers',
+      text:
+        `Hi ${forename},\n\n` +
+        `You hadn't chosen your lottery numbers, so we've picked them for you at random using RANDOM.ORG: ${lines}.\n\n` +
+        `These stay the same in every draw you're entered in. If you'd like different numbers, just get in touch with us.\n\n` +
+        `Good luck!\nQOSFC`,
+      html:
+        `<p>Hi ${escapeHtml(forename)},</p>` +
+        `<p>You hadn't chosen your lottery numbers, so we've picked them for you at random using RANDOM.ORG: <b>${escapeHtml(lines)}</b>.</p>` +
+        `<p>These stay the same in every draw you're entered in. If you'd like different numbers, just get in touch with us.</p>` +
+        `<p>Good luck!<br>QOSFC</p>`,
+    };
+  },
   draw_winner: (m) => {
     const forename = m['forename']?.trim() || 'there';
     const drawNumber = m['drawNumber'] ?? '';

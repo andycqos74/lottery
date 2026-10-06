@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pence } from './money.js';
+import { pence, ZERO } from './money.js';
 import { convertAnnualBasis, entriesDue, type EntryGenerationConfig, type MemberEntryState } from './entry-generation.js';
 import { TICKET_PRICE_PENCE } from './allocation.js';
 import { UnresolvedGapError } from './gaps.js';
@@ -25,14 +25,14 @@ describe('GAP-17 — no strategy may be selected by default', () => {
   });
 });
 
-describe('GAP-19 — agent-collected members have no entry model at all', () => {
-  it('halts for the 49% of the register behind an agent, whatever the strategy', () => {
+describe('GAP-19 (c) — agent-collected members are entered only on their agent\'s tickets', () => {
+  it('owes them nothing in their own right, whatever the strategy, and leaves their balance alone', () => {
     const cfg: EntryGenerationConfig = {
       strategy: 'balance_ledger',
       ticketPricePence: TICKET_PRICE_PENCE,
       confirmedBy: 'test-fixture',
     };
-    expect(() => entriesDue({ ...member, isAgentCollected: true }, cfg)).toThrow(/GAP-19/);
+    expect(entriesDue({ ...member, isAgentCollected: true }, cfg)).toEqual({ count: 0, costPence: ZERO, balanceAfterPence: member.balancePence });
   });
 });
 

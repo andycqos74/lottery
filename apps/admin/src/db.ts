@@ -220,10 +220,7 @@ export async function listTasksByStatus(
 ): Promise<HumanTask[]> {
   if (status === 'open') {
     const { rows } = await pool.query(
-      // GAP-05 contact follow-ups can number in the hundreds after the data
-      // load; they sort after everything else so they never bury a blocked draw.
-      `SELECT ${TASK_COLUMNS} FROM human_task WHERE status = 'open'
-        ORDER BY (kind = 'member_missing_email'), escalation_level DESC, due_at NULLS LAST, opened_at LIMIT $1`,
+      `SELECT ${TASK_COLUMNS} FROM human_task WHERE status = 'open' ORDER BY escalation_level DESC, due_at NULLS LAST, opened_at LIMIT $1`,
       [limit],
     );
     return rows.map(mapTaskRow);
@@ -934,8 +931,7 @@ export type UpdateMemberContactOutcome = { kind: 'updated' } | { kind: 'rejected
 
 /**
  * Email, telephone and postal address (GAP-05), all optional — blank clears
- * the field. Adding an email address is what closes a member's
- * `member_missing_email` follow-up task, on the next contact follow-up sweep.
+ * the field. The address is what a `winner_missing_email` task works from.
  */
 export async function updateMemberContact(
   pool: Pool,
@@ -994,6 +990,25 @@ export async function updateMemberContact(
       [actor.id, actor.label, memberId, JSON.stringify(before), JSON.stringify(afterRows[0])],
     );
     return { kind: 'updated' };
+  });
+}
+
+/** GAP-05: a winner with no email was told by post — their untold prizes are now notified. */
+export async function markPrizesNotifiedByPost(pool: Pool, memberId: string, actor: { id: string; label: string }): Promise<number> {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ id: string }>(
+      `UPDATE prize SET status = 'notified', notified_at = now()
+        WHERE member_id = $1 AND status = 'pending_notification' RETURNING id`,
+      [memberId],
+    );
+    if (rows.length > 0) {
+      await client.query(
+        `INSERT INTO audit_log (actor_id, actor_label, action, entity, entity_id, after)
+         VALUES ($1, $2, 'prize_notified_by_post', 'member', $3, $4)`,
+        [actor.id, actor.label, memberId, JSON.stringify({ prizeIds: rows.map((r) => r.id) })],
+      );
+    }
+    return rows.length;
   });
 }
 

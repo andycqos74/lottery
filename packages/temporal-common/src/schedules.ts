@@ -40,11 +40,11 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     note: 'Starts an EscalationWorkflow for every open human task that has none (FR-5.6, GAP-42).',
   },
   {
-    scheduleId: 'member-contact-follow-up',
-    workflowType: 'ContactFollowUpSweepWorkflow',
+    scheduleId: 'selection-random-allocation',
+    workflowType: 'RandomAllocationSweepWorkflow',
     taskQueue: TASK_QUEUES.comms,
     every: '1 hour',
-    note: 'Opens a follow-up task for each live member with no email address, and closes it once one is added (GAP-05).',
+    note: 'Gives RANDOM.ORG numbers to lines still without any a week after they were issued, and tells the member (GAP-13).',
   },
 ];
 

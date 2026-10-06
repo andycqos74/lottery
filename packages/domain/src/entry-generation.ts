@@ -26,7 +26,7 @@ export interface MemberEntryState {
   readonly prepaidEntriesRemaining: number;
   /** Whole entries per week under the fixed-schedule model, derived from annual basis. */
   readonly scheduledEntriesPerDraw: number;
-  /** True when the member is agent-collected — GAP-19, no entry model exists at all. */
+  /** True when the member is agent-collected — GAP-19 (c): entered only on their agent's tickets. */
   readonly isAgentCollected: boolean;
 }
 
@@ -53,18 +53,13 @@ export interface EntryGenerationConfig {
  */
 export function entriesDue(state: MemberEntryState, cfg: EntryGenerationConfig): EntriesDue {
   if (state.isAgentCollected) {
-    // GAP-19 ⛔ — 782 of 1,591 members, 49% of the register, with no functional
-    // design at all. The write-up defers it: conversion "will need to be based on
-    // the agent's bulk collection total divided across their members". Until that
-    // exists these members generate nothing and surface as a task; they are never
-    // silently given zero entries while their money is banked.
-    unresolvedGap(
-      'GAP-19',
-      'the entry model for agent-collected members — 782 of 1,591 (49% of the register) have no ' +
-        'functional design. Their cash arrives as one bulk branch lodgement with no per-member ' +
-        'breakdown in the bank, so there is no evidenced rule for how many entries each is due',
-      'the client, and it should be scoped before the schema is frozen',
-    );
+    // GAP-19, resolved (client decision, 2026-10-06): option (c). An
+    // agent-collected player is not entered in their own right — their agent
+    // pays in weekly and records each player's ticket as a physical ticket
+    // attributed to the agent (B-12/B-13, recordManualTicket), and the player
+    // is reached only through that agent. So nothing is due here: the entries
+    // are the agent's, and money for them is recorded against the agent.
+    return { count: 0, costPence: ZERO, balanceAfterPence: state.balancePence };
   }
 
   if (!cfg.strategy || !cfg.confirmedBy) {

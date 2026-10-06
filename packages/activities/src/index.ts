@@ -40,7 +40,7 @@ import { getRolloverIn, type GetRolloverInRequest } from './draw/rollover.js';
 import { notifyWinners, type NotifyWinnersRequest } from './draw/notify-winners.js';
 import { ingestNewStatements, type IngestNewStatementsRequest } from './reconcile/ingest-statement.js';
 import { recordManualTicket, type RecordManualTicketRequest } from './entries/record-manual-ticket.js';
-import { syncMissingEmailTasks, type SyncMissingEmailTasksRequest } from './tasks/contact-follow-up.js';
+import { allocateRandomSelections, type AllocateRandomSelectionsRequest } from './entries/random-allocation.js';
 
 export function createActivities(ctx: ActivityContext) {
   return {
@@ -69,7 +69,8 @@ export function createActivities(ctx: ActivityContext) {
 
     escalateTask: (request: EscalateTaskRequest) => escalateTask(ctx.pool, request),
 
-    syncMissingEmailTasks: (request: SyncMissingEmailTasksRequest) => syncMissingEmailTasks(ctx.pool, request),
+    allocateRandomSelections: (request: AllocateRandomSelectionsRequest) =>
+      allocateRandomSelections(ctx.pool, ctx.providers.randomness, ctx.providers.notifier, request),
 
     getRolloverIn: (request: GetRolloverInRequest) => getRolloverIn(ctx.pool, request),
 
@@ -116,12 +117,11 @@ export {
   type EscalateTaskResult,
 } from './tasks/escalation.js';
 export {
-  syncMissingEmailTasks,
-  MISSING_EMAIL_TASK_KIND,
-  MISSING_EMAIL_FOLLOW_UP_DAYS,
-  type SyncMissingEmailTasksRequest,
-  type SyncMissingEmailTasksResult,
-} from './tasks/contact-follow-up.js';
+  allocateRandomSelections,
+  RANDOM_ALLOCATION_GRACE_DAYS,
+  type AllocateRandomSelectionsRequest,
+  type AllocateRandomSelectionsResult,
+} from './entries/random-allocation.js';
 export type { SettleDrawRequest, SettleDrawResult } from './draw/settle.js';
 export { getRolloverIn, type GetRolloverInRequest, type GetRolloverInResult } from './draw/rollover.js';
 export type { NotifyWinnersRequest, NotifyWinnersResult } from './draw/notify-winners.js';
