@@ -59,8 +59,26 @@ const workflowDeterminismRules = {
 };
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/*.d.ts'] },
+  // design_handoff_public_pages/ is the designer's reference bundle (mockups and
+  // their tooling), not code this repo runs or maintains.
+  { ignores: ['**/dist/**', '**/node_modules/**', '**/*.d.ts', 'design_handoff_public_pages/**'] },
   js.configs.recommended,
+  {
+    // The portal's one browser script, served as-is under script-src 'self'.
+    files: ['apps/api/public/**/*.js'],
+    languageOptions: {
+      sourceType: 'script',
+      globals: {
+        window: 'readonly',
+        document: 'readonly',
+        performance: 'readonly',
+        requestAnimationFrame: 'readonly',
+        IntersectionObserver: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+      },
+    },
+  },
   ...tseslint.configs.recommended,
   {
     files: ['**/*.ts'],
