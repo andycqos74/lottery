@@ -39,9 +39,20 @@ export interface SubmissionReceipt {
   readonly resultsExpectedAt: string;
 }
 
+/**
+ * Keyed by mandate as well as member: a member with a Direct Debit on two
+ * lines has two instructions in one submission, and an ARUDD return names the
+ * payer's reference (the mandate), not the member.
+ */
 export type CollectionResult =
-  | { readonly memberRef: string; readonly status: 'collected'; readonly amountPence: PenceString }
-  | { readonly memberRef: string; readonly status: 'failed'; readonly reasonCode: string; readonly reason: string };
+  | { readonly memberRef: string; readonly mandateRef: string; readonly status: 'collected'; readonly amountPence: PenceString }
+  | {
+      readonly memberRef: string;
+      readonly mandateRef: string;
+      readonly status: 'failed';
+      readonly reasonCode: string;
+      readonly reason: string;
+    };
 
 /** AUDDIS/ADDACS-shaped lifecycle messages, which arrive whenever they arrive. */
 export interface MandateEvent {
@@ -62,6 +73,12 @@ export interface BacsBureau {
 
   createMandate(request: MandateRequest): Promise<Mandate>;
   getMandate(mandateRef: string): Promise<Mandate>;
+  /**
+   * Stop the mandate at the bank (an ADDACS-style cancellation from the
+   * originator's side), so nothing more is collected. Idempotent: cancelling
+   * a mandate already cancelled or unknown to the bureau is not an error.
+   */
+  cancelMandate(request: { readonly idempotencyKey: IdempotencyKey; readonly mandateRef: string }): Promise<void>;
 
   /**
    * T-5.6: carries the cycle key as its idempotency key, so a retry after a

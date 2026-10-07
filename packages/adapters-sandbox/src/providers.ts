@@ -114,6 +114,14 @@ export class SandboxBacsBureau implements BacsBureau {
     return sandboxRequest(this.http, `/bacs/mandates/${encodeURIComponent(mandateRef)}`, { method: 'GET' });
   }
 
+  async cancelMandate(request: { idempotencyKey: IdempotencyKey; mandateRef: string }): Promise<void> {
+    await sandboxRequest(this.http, `/bacs/mandates/${encodeURIComponent(request.mandateRef)}/cancel`, {
+      method: 'POST',
+      body: {},
+      idempotencyKey: request.idempotencyKey,
+    });
+  }
+
   submitCollections(request: {
     idempotencyKey: IdempotencyKey;
     cycleKey: string;

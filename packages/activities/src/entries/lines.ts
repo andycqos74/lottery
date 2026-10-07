@@ -130,7 +130,7 @@ export async function describeLineOutcome(
     line: ResolvedLine;
     selection: readonly number[];
     /** `ofSeveral`: one of several lines bought in the same payment (GitHub #19) — the caller says what the payment was. */
-    event: { kind: 'card'; weeks: number; ofSeveral?: boolean } | { kind: 'direct_debit' };
+    event: { kind: 'card'; weeks: number; ofSeveral?: boolean } | { kind: 'direct_debit'; pending?: boolean };
   },
 ): Promise<string> {
   const { line, event } = input;
@@ -176,6 +176,11 @@ export async function describeLineOutcome(
     } else {
       parts.push(`Your Direct Debit is set up: your numbers ${numbers(input.selection)} are entered into every draw until you cancel.`);
     }
+    if (event.pending) {
+      parts.push(
+        'Your bank has to confirm the Direct Debit first; you will be entered by Direct Debit in every draw still taking entries once it has, usually within a few days.',
+      );
+    }
     if (paidDraws.length > 0) {
       parts.push(
         `You've already paid for ${listDraws(paidDraws)}${weeksWaiting > 0 ? ` and ${weeksWaiting} more draw${weeksWaiting === 1 ? '' : 's'}` : ''}, so those are used first` +
@@ -183,9 +188,12 @@ export async function describeLineOutcome(
       );
     } else if (firstDd) {
       parts.push(`Entered by Direct Debit from ${label(firstDd)}${ddDraws.length > 1 ? `, and every draw after it` : ''}.`);
-    } else {
+    } else if (!event.pending) {
       parts.push('You will be entered by Direct Debit as each new draw is scheduled.');
     }
+    parts.push(
+      `We collect ${formatPence(pence(TICKET_PRICE_PENCE))} a draw monthly in advance, early each month, and tell you the amount before each collection.`,
+    );
   }
   return parts.join(' ');
 }

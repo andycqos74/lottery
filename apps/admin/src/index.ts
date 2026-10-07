@@ -22,6 +22,7 @@ import {
   acceptBankTransactionMatchTx,
   allocateUpcomingEntries,
   changeLineNumbers,
+  endDirectDebit,
   describeNumbersChange,
   generateDueEntries,
   ingestNewStatements,
@@ -44,6 +45,8 @@ import {
   getJackpotInputs,
   getMemberPage,
   updateMemberContact,
+  listDirectDebits,
+  listDirectDebitCollections,
   markPrizesNotifiedByPost,
   CONTACT_CHANNELS,
   type ContactChannel,
@@ -70,6 +73,7 @@ import {
   drawsPage,
   loginPage,
   memberDetailPage,
+  directDebitsPage,
   membersPage,
   mfaPage,
   newDrawPage,
@@ -697,6 +701,40 @@ app.get('/members/:id', async (request, reply) => {
   const member = await getMemberPage(pool, id);
   if (!member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
   return reply.type('text/html').send(memberDetailPage({ user: viewUser(request), member }));
+});
+
+app.get('/direct-debits', async (request, reply) => {
+  const [mandates, collections] = await Promise.all([listDirectDebits(pool), listDirectDebitCollections(pool, { limit: 200 })]);
+  reply.type('text/html').send(directDebitsPage({ user: viewUser(request), mandates, collections }));
+});
+
+/** Staff cancel a member's Direct Debit; the Direct Debit workflow then cancels it with the bank. */
+app.post('/members/:id/direct-debits/:pmId/cancel', async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const { id, pmId } = request.params as { id: string; pmId: string };
+  const member = await getMemberPage(pool, id);
+  if (!member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
+  const ended = member.directDebits.some((dd) => dd.id === pmId && dd.active)
+    ? await endDirectDebit(pool, {
+        paymentMethodId: pmId,
+        memberId: id,
+        reason: 'admin_cancelled',
+        actorId: request.authUser!.id,
+        actorLabel: request.authUser!.email,
+      })
+    : { ended: false, entriesWithdrawn: 0 };
+  const refreshed = (await getMemberPage(pool, id))!;
+  return reply.type('text/html').send(
+    memberDetailPage({
+      user: viewUser(request),
+      member: refreshed,
+      ...(ended.ended
+        ? {
+            flash: `Direct Debit cancelled. ${ended.entriesWithdrawn} unpaid entr${ended.entriesWithdrawn === 1 ? 'y was' : 'ies were'} withdrawn from draws still taking entries; it will be cancelled with the bank on the next Direct Debit run.`,
+          }
+        : { error: 'That Direct Debit is not active.' }),
+    }),
+  );
 });
 
 app.post('/members/:id/numbers', async (request, reply) => {

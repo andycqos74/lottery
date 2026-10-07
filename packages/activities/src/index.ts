@@ -41,6 +41,14 @@ import { notifyWinners, type NotifyWinnersRequest } from './draw/notify-winners.
 import { ingestNewStatements, type IngestNewStatementsRequest } from './reconcile/ingest-statement.js';
 import { recordManualTicket, type RecordManualTicketRequest } from './entries/record-manual-ticket.js';
 import { allocateRandomSelections, type AllocateRandomSelectionsRequest } from './entries/random-allocation.js';
+import {
+  prepareCollections,
+  processCollectionResults,
+  submitDueCollections,
+  type DirectDebitStepRequest,
+} from './direct-debit/collections.js';
+import { cancelMandatesAtBureau } from './direct-debit/mandates.js';
+import { processMandateEvents } from './direct-debit/mandate-events.js';
 
 export function createActivities(ctx: ActivityContext) {
   return {
@@ -82,6 +90,14 @@ export function createActivities(ctx: ActivityContext) {
 
     recordManualTicket: (request: RecordManualTicketRequest) => recordManualTicket(ctx.pool, request),
 
+    // Direct Debit (GAP-10 shape): DirectDebitWorkflow's steps.
+    ddProcessMandateEvents: () => processMandateEvents(ctx.pool, ctx.providers.bacsBureau),
+    ddCancelMandatesAtBureau: () => cancelMandatesAtBureau(ctx.pool, ctx.providers.bacsBureau),
+    ddPrepareCollections: (request: DirectDebitStepRequest) => prepareCollections(ctx.pool, ctx.providers.notifier, request),
+    ddSubmitDueCollections: (request: DirectDebitStepRequest) => submitDueCollections(ctx.pool, ctx.providers.bacsBureau, request),
+    ddProcessCollectionResults: (request: DirectDebitStepRequest) =>
+      processCollectionResults(ctx.pool, ctx.providers.bacsBureau, ctx.providers.notifier, request),
+
     /** Which providers this worker is actually talking to — used by the Phase 1 gate. */
     describeProviders: async () => ({
       randomness: ctx.providers.randomness.kind,
@@ -116,6 +132,24 @@ export {
   type EscalateTaskRequest,
   type EscalateTaskResult,
 } from './tasks/escalation.js';
+export {
+  endDirectDebit,
+  activateMandate,
+  type DirectDebitEndReason,
+  type EndDirectDebitRequest,
+  type EndDirectDebitResult,
+} from './direct-debit/mandates.js';
+export {
+  prepareCollections,
+  submitDueCollections,
+  processCollectionResults,
+  type DirectDebitStepRequest,
+  type PrepareCollectionsResult,
+  type SubmitDueCollectionsResult,
+  type ProcessCollectionResultsResult,
+} from './direct-debit/collections.js';
+export { processMandateEvents, type ProcessMandateEventsResult } from './direct-debit/mandate-events.js';
+export * as ddDates from './direct-debit/dates.js';
 export {
   changeLineNumbers,
   describeNumbersChange,

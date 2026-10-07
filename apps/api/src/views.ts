@@ -837,16 +837,37 @@ export function accountPage(opts: {
 }): string {
   const { entries, lines, directDebits } = opts;
   const balls44 = (s: readonly number[]) => `<div class="balls">${s.map((n) => `<span class="ball ball-44">${n}</span>`).join('')}</div>`;
+  const ddResult: Record<string, string> = {
+    submitted: 'Sent to your bank',
+    collected: 'Collected',
+    failed: 'Not collected',
+    rejected: 'Refused by your bank',
+    refunded: 'Refunded',
+  };
+  const ddCollection = (c: DirectDebitStatus['history'][number]) =>
+    `<tr><td>${escapeHtml(formatDrawDate(c.collectionDate))}${c.attempt > 1 ? ' (retry)' : ''}</td><td>${formatPence(pence(c.amountPence))}</td><td>${c.draws}</td><td>${escapeHtml(ddResult[c.status] ?? c.status)}</td></tr>`;
   const ddPanel =
     directDebits.length > 0
       ? `<div class="panel">
-        <div class="panel-head"><h3>Direct Debit</h3><span class="badge">Active</span></div>
-        <p class="small-hint">${formatPence(pence(200n))} a draw for each set of numbers below. Draws you have paid for by card are used first; the Direct Debit pauses for those and resumes after.</p>
+        <div class="panel-head"><h3>Direct Debit</h3><span class="badge">${directDebits.every((dd) => dd.confirmed) ? 'Active' : 'Awaiting your bank'}</span></div>
+        <p class="small-hint">${formatPence(pence(200n))} a draw for each set of numbers below, collected monthly in advance early each month. We tell you the amount before each collection. Draws you have paid for by card are used first; the Direct Debit pauses for those and resumes after.</p>
         ${directDebits
           .map(
             (dd) => `<div class="stack-10">
           ${dd.selection ? balls44(dd.selection) : ''}
-          <p class="small-hint">Set up ${escapeHtml(formatLondon(dd.since))}.</p>
+          <p class="small-hint">Set up ${escapeHtml(formatLondon(dd.since))}.${
+            dd.confirmed ? '' : ' Waiting for your bank to confirm it &mdash; these numbers are entered by Direct Debit once it has.'
+          }</p>
+          ${
+            dd.next
+              ? `<p class="small-hint"><b>Next collection:</b> ${formatPence(pence(dd.next.amountPence))} on or just after ${escapeHtml(formatDrawDate(dd.next.collectionDate))}, for ${dd.next.draws} draw${dd.next.draws === 1 ? '' : 's'}${dd.next.attempt > 1 ? ' (a second try after the last one failed)' : ''}.</p>`
+              : ''
+          }
+          ${
+            dd.history.length > 0
+              ? `<div class="table-wrap"><table class="history"><thead><tr><th>Collection</th><th>Amount</th><th>Draws</th><th>Result</th></tr></thead><tbody>${dd.history.slice(0, 6).map(ddCollection).join('')}</tbody></table></div>`
+              : ''
+          }
           <form method="post" action="/direct-debit/cancel" data-confirm="Cancel this Direct Debit? These numbers will no longer be entered by Direct Debit.">
             ${csrfField(opts.member.csrf)}
             <input type="hidden" name="paymentMethodId" value="${escapeHtml(dd.id)}" />

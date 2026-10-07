@@ -758,6 +758,7 @@ export interface MemberLine {
 
 export interface MemberPage {
   readonly profile: MemberProfile;
+  readonly directDebits: readonly DirectDebitMandateRow[];
   readonly lines: readonly MemberLine[];
   readonly payments: readonly MemberPayment[];
   readonly upcoming: readonly MemberUpcomingEntry[];
@@ -848,6 +849,7 @@ export async function getMemberPage(pool: Pool, memberId: string): Promise<Membe
       prizeDrawNumbers: m.numbers ?? [],
       createdAt: m.created_at,
     },
+    directDebits: await listDirectDebits(pool, memberId),
     lines: lineRows.map((l) => ({ prizeDrawNo: l.prize_draw_no, slot: l.slot, selection: l.selection, source: l.source })),
     payments: paymentRows.map((p) => ({
       id: p.id,
@@ -1027,6 +1029,124 @@ export async function markPrizesNotifiedByPost(pool: Pool, memberId: string, act
     }
     return rows.length;
   });
+}
+
+// ── Direct Debit (GAP-10 shape; monthly in advance) ───────────────────────
+
+export interface DirectDebitCollectionRow {
+  readonly id: string;
+  readonly memberId: string;
+  readonly memberName: string;
+  /** YYYY-MM-DD. */
+  readonly collectionDate: string;
+  readonly amountPence: bigint;
+  readonly draws: number;
+  readonly attempt: number;
+  readonly status: string;
+  readonly failureReason: string | null;
+}
+
+export interface DirectDebitMandateRow {
+  readonly id: string;
+  readonly memberId: string;
+  readonly memberName: string;
+  readonly mandateRef: string | null;
+  readonly selection: number[] | null;
+  /** pending | active | cancelled | failed */
+  readonly mandateStatus: string;
+  readonly active: boolean;
+  readonly createdAt: Date;
+  readonly confirmedAt: Date | null;
+  readonly endedAt: Date | null;
+  readonly endReason: string | null;
+  readonly bureauCancelPending: boolean;
+  readonly collections: readonly DirectDebitCollectionRow[];
+}
+
+const DD_NAME = `COALESCE(NULLIF(trim(concat_ws(' ', m.forename, m.surname)), ''), '(no name)')`;
+
+/** Every Direct Debit, live ones first, each with its collections (newest first). Optionally one member's. */
+export async function listDirectDebits(pool: Pool, memberId?: string): Promise<DirectDebitMandateRow[]> {
+  if (memberId !== undefined && !UUID.test(memberId)) return [];
+  const { rows } = await pool.query<{
+    id: string;
+    member_id: string;
+    member_name: string;
+    mandate_ref: string | null;
+    selection: number[] | null;
+    mandate_status: string | null;
+    active: boolean;
+    created_at: Date;
+    mandate_active_at: Date | null;
+    ended_at: Date | null;
+    end_reason: string | null;
+    bureau_cancel_pending: boolean;
+  }>(
+    `SELECT pm.id, pm.member_id, ${DD_NAME} AS member_name, pm.mandate_ref,
+            (SELECT ss.selection FROM selection_standing ss
+              WHERE ss.prize_draw_no = pm.line_prize_draw_no AND ss.slot = pm.line_slot
+              ORDER BY ss.effective_to IS NULL DESC, ss.effective_from DESC LIMIT 1) AS selection,
+            pm.mandate_status, pm.active, pm.created_at, pm.mandate_active_at, pm.ended_at, pm.end_reason, pm.bureau_cancel_pending
+       FROM payment_method pm JOIN member m ON m.id = pm.member_id
+      WHERE pm.type = 'direct_debit' AND ($1::uuid IS NULL OR pm.member_id = $1)
+      ORDER BY pm.active DESC, pm.created_at DESC
+      LIMIT 500`,
+    [memberId ?? null],
+  );
+  const collections = await listDirectDebitCollections(pool, { paymentMethodIds: rows.map((r) => r.id) });
+  return rows.map((r) => ({
+    id: r.id,
+    memberId: r.member_id,
+    memberName: r.member_name,
+    mandateRef: r.mandate_ref,
+    selection: r.selection,
+    mandateStatus: r.mandate_status ?? 'pending',
+    active: r.active,
+    createdAt: r.created_at,
+    confirmedAt: r.mandate_active_at,
+    endedAt: r.ended_at,
+    endReason: r.end_reason,
+    bureauCancelPending: r.bureau_cancel_pending,
+    collections: collections.filter((c) => c.paymentMethodId === r.id),
+  }));
+}
+
+export async function listDirectDebitCollections(
+  pool: Pool,
+  filter: { paymentMethodIds?: readonly string[]; limit?: number },
+): Promise<(DirectDebitCollectionRow & { paymentMethodId: string })[]> {
+  const { rows } = await pool.query<{
+    id: string;
+    payment_method_id: string;
+    member_id: string;
+    member_name: string;
+    collection_date: string;
+    amount_pence: string;
+    draws_covered: number;
+    attempt: number;
+    status: string;
+    failure_reason: string | null;
+  }>(
+    `SELECT c.id, c.payment_method_id, c.member_id, ${DD_NAME} AS member_name, to_char(c.collection_date, 'YYYY-MM-DD') AS collection_date,
+            c.amount_pence::text, c.draws_covered, c.attempt, c.status, c.failure_reason
+       FROM dd_collection c JOIN member m ON m.id = c.member_id
+      WHERE ($1::uuid[] IS NULL OR c.payment_method_id = ANY($1::uuid[]))
+      ORDER BY c.collection_date DESC, c.attempt DESC, member_name
+      LIMIT $2`,
+    [filter.paymentMethodIds ?? null, filter.limit ?? 2000],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    paymentMethodId: r.payment_method_id,
+    memberId: r.member_id,
+    memberName: r.member_name,
+    collectionDate: r.collection_date,
+    amountPence: BigInt(r.amount_pence),
+    draws: r.draws_covered,
+    attempt: r.attempt,
+    status: r.status,
+    failureReason: r.failure_reason,
+  }));
 }
 
 // ── Bank reconciliation (GAP-33) ────────────────────────────────────────────
