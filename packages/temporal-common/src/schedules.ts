@@ -53,6 +53,13 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     every: '15 minutes',
     note: 'Applies bank mandate messages, cancels ended mandates with the bureau, and runs the monthly Direct Debit collections (GAP-10/11/12).',
   },
+  {
+    scheduleId: 'run-log',
+    workflowType: 'RunLogSweepWorkflow',
+    taskQueue: TASK_QUEUES.comms,
+    every: '1 minute',
+    note: 'Writes a plain-language line for every finished workflow run, for the admin Log page.',
+  },
 ];
 
 export interface EnsureSchedulesResult {

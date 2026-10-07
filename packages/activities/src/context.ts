@@ -7,8 +7,11 @@
  */
 import type { Pool } from '@qosfc/db';
 import type { ProviderRegistry } from '@qosfc/ports';
+import type { RunHistory } from './run-log/run-log.js';
 
 export interface ActivityContext {
   readonly pool: Pool;
   readonly providers: ProviderRegistry;
+  /** Temporal's record of finished runs, for the run log. The worker supplies it; tests may omit it. */
+  readonly runHistory?: RunHistory;
 }

@@ -1031,6 +1031,54 @@ export async function markPrizesNotifiedByPost(pool: Pool, memberId: string, act
   });
 }
 
+// ── Run log (db/migrations/0023) ───────────────────────────────────────────
+
+export type RunLogCategory = 'success' | 'info' | 'error';
+
+export interface RunLogEntry {
+  readonly id: string;
+  readonly closedAt: Date;
+  readonly category: RunLogCategory;
+  readonly message: string;
+  readonly quiet: boolean;
+  readonly workflowId: string;
+}
+
+export interface RunLogCounts {
+  readonly success: number;
+  readonly info: number;
+  readonly error: number;
+  readonly quiet: number;
+}
+
+/** Newest first. Quiet "nothing to do" runs only when asked for. */
+export async function listRunLog(
+  pool: Pool,
+  filter: { category?: RunLogCategory; includeQuiet: boolean; limit?: number },
+): Promise<RunLogEntry[]> {
+  const { rows } = await pool.query<{ id: string; closed_at: Date; category: RunLogCategory; message: string; quiet: boolean; workflow_id: string }>(
+    `SELECT id::text, closed_at, category, message, quiet, workflow_id FROM run_log
+      WHERE ($1::text IS NULL OR category = $1) AND ($2 OR NOT quiet)
+      ORDER BY closed_at DESC, id DESC
+      LIMIT $3`,
+    [filter.category ?? null, filter.includeQuiet, filter.limit ?? 300],
+  );
+  return rows.map((r) => ({ id: r.id, closedAt: r.closed_at, category: r.category, message: r.message, quiet: r.quiet, workflowId: r.workflow_id }));
+}
+
+/** The last 24 hours, by category — the Log page's summary line. */
+export async function runLogCounts(pool: Pool): Promise<RunLogCounts> {
+  const { rows } = await pool.query<{ success: string; info: string; error: string; quiet: string }>(
+    `SELECT count(*) FILTER (WHERE category = 'success' AND NOT quiet)::text AS success,
+            count(*) FILTER (WHERE category = 'info' AND NOT quiet)::text AS info,
+            count(*) FILTER (WHERE category = 'error')::text AS error,
+            count(*) FILTER (WHERE quiet)::text AS quiet
+       FROM run_log WHERE closed_at > now() - interval '24 hours'`,
+  );
+  const r = rows[0]!;
+  return { success: Number(r.success), info: Number(r.info), error: Number(r.error), quiet: Number(r.quiet) };
+}
+
 // ── Direct Debit (GAP-10 shape; monthly in advance) ───────────────────────
 
 export interface DirectDebitCollectionRow {
