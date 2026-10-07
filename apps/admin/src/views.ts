@@ -5,6 +5,8 @@ import type {
   BankTransactionForReview,
   BankTransactionRow,
   DashboardCounts,
+  DirectDebitCollectionRow,
+  DirectDebitMandateRow,
   DrawEntrant,
   DrawSummary,
   EntryFundingDetail,
@@ -91,6 +93,7 @@ function layout(opts: {
            <a href="/tasks">Tasks</a>
            <a href="/draws">Draws</a>
            <a href="/members">Members</a>
+           <a href="/direct-debits">Direct Debits</a>
            <a href="/bank-statements">Bank statements</a>
            <form method="post" action="/logout" style="display:inline">
              ${csrfField(opts.user.csrf)}
@@ -785,6 +788,140 @@ function lineRow(csrf: string, memberId: string, line: MemberPage['lines'][numbe
   </tr>`;
 }
 
+const DD_STATUS_LABELS: Record<string, string> = {
+  pending: 'Awaiting bank confirmation',
+  active: 'Active',
+  cancelled: 'Cancelled',
+  failed: 'Failed at the bank',
+};
+const DD_END_LABELS: Record<string, string> = {
+  member_cancelled: 'cancelled by the member',
+  admin_cancelled: 'cancelled by staff',
+  payer_cancelled_at_bank: 'cancelled at their bank',
+  mandate_failed: 'refused by their bank',
+  collection_failed: 'two failed collections',
+  refund_claim: 'refund claim',
+  replaced: 'replaced by a new Direct Debit',
+};
+const DD_COLLECTION_LABELS: Record<string, string> = {
+  scheduled: 'Scheduled',
+  submitted: 'Sent to bank',
+  collected: 'Collected',
+  failed: 'Failed',
+  rejected: 'Rejected by bank',
+  cancelled: 'Called off',
+  refunded: 'Refunded (claim)',
+};
+
+function ddCollectionRow(c: DirectDebitCollectionRow, withMember: boolean): string {
+  return `<tr>
+    ${withMember ? `<td><a class="row-link" href="/members/${c.memberId}">${escapeHtml(c.memberName)}</a></td>` : ''}
+    <td>${escapeHtml(c.collectionDate)}${c.attempt > 1 ? ' <span class="badge">retry</span>' : ''}</td>
+    <td>${formatPence(pence(c.amountPence))}</td>
+    <td>${c.draws}</td>
+    <td>${escapeHtml(DD_COLLECTION_LABELS[c.status] ?? c.status)}${c.failureReason ? ` <span class="muted">— ${escapeHtml(c.failureReason)}</span>` : ''}</td>
+  </tr>`;
+}
+
+function ddStatus(dd: DirectDebitMandateRow): string {
+  if (!dd.active) {
+    return `Ended ${escapeHtml(formatLondon(dd.endedAt))}${dd.endReason ? ` — ${escapeHtml(DD_END_LABELS[dd.endReason] ?? dd.endReason)}` : ''}${
+      dd.bureauCancelPending ? ' <span class="badge">bank cancellation pending</span>' : ''
+    }`;
+  }
+  return escapeHtml(DD_STATUS_LABELS[dd.mandateStatus] ?? dd.mandateStatus);
+}
+
+/** A member's Direct Debits on their page, with collections and a cancel button for live ones. */
+function memberDirectDebits(csrf: string, memberId: string, dds: readonly DirectDebitMandateRow[]): string {
+  if (dds.length === 0) return '<p class="muted">No Direct Debits.</p>';
+  return dds
+    .map(
+      (dd) => `<div style="margin-bottom:1rem">
+        <dl class="kv">
+          <dt>Numbers</dt><dd>${dd.selection ? escapeHtml(numbersLabel(dd.selection)) : '—'}</dd>
+          <dt>Mandate</dt><dd>${escapeHtml(dd.mandateRef ?? '—')}</dd>
+          <dt>Status</dt><dd>${ddStatus(dd)}</dd>
+          <dt>Set up</dt><dd>${escapeHtml(formatLondon(dd.createdAt))}${dd.confirmedAt ? ` · confirmed ${escapeHtml(formatLondon(dd.confirmedAt))}` : ''}</dd>
+        </dl>
+        ${
+          dd.collections.length > 0
+            ? `<table><thead><tr><th>Collection date</th><th>Amount</th><th>Draws</th><th>Result</th></tr></thead>
+                 <tbody>${dd.collections.map((c) => ddCollectionRow(c, false)).join('')}</tbody></table>`
+            : '<p class="muted">No collections yet.</p>'
+        }
+        ${
+          dd.active
+            ? `<form method="post" action="/members/${memberId}/direct-debits/${dd.id}/cancel" onsubmit="return confirm('Cancel this Direct Debit? Its entries in draws still taking entries are withdrawn, except any already paid for, and it is cancelled with the bank.');">
+                 ${csrfField(csrf)}
+                 <button type="submit">Cancel this Direct Debit</button>
+               </form>`
+            : ''
+        }
+      </div>`,
+    )
+    .join('<hr>');
+}
+
+/** Every Direct Debit and the latest collections. */
+export function directDebitsPage(opts: {
+  user: { displayName: string; csrf: string };
+  mandates: readonly DirectDebitMandateRow[];
+  collections: readonly DirectDebitCollectionRow[];
+}): string {
+  const live = opts.mandates.filter((m) => m.active);
+  const pending = live.filter((m) => m.mandateStatus !== 'active').length;
+  const failed = opts.collections.filter((c) => c.status === 'failed' || c.status === 'rejected');
+  const mandateRow = (dd: DirectDebitMandateRow) => {
+    const last = dd.collections[0];
+    return `<tr>
+      <td><a class="row-link" href="/members/${dd.memberId}">${escapeHtml(dd.memberName)}</a></td>
+      <td>${dd.selection ? escapeHtml(numbersLabel(dd.selection)) : '—'}</td>
+      <td>${ddStatus(dd)}</td>
+      <td>${escapeHtml(formatLondon(dd.createdAt))}</td>
+      <td>${last ? `${escapeHtml(last.collectionDate)} · ${formatPence(pence(last.amountPence))} · ${escapeHtml(DD_COLLECTION_LABELS[last.status] ?? last.status)}` : '—'}</td>
+    </tr>`;
+  };
+  return layout({
+    title: 'Direct Debits',
+    user: opts.user,
+    body: `
+      <h1>Direct Debits</h1>
+      <div class="card">
+        <p>${live.length} live Direct Debit${live.length === 1 ? '' : 's'}${pending > 0 ? `, ${pending} awaiting bank confirmation (not entered until confirmed)` : ''}.
+        Collected monthly in advance on the 1st (or next working day): each member is told the amount 10&ndash;14 days before.
+        A failed collection is tried once more a week later; a second failure stops the Direct Debit. A refund claim removes it.</p>
+        <p class="muted">GAP-10: the bank route is still undecided, so collections go through whichever Bacs bureau is configured (the sandbox, on dev).</p>
+      </div>
+      ${
+        failed.length > 0
+          ? `<div class="card"><h2 style="font-size:1.05rem;margin-top:0">Failed or rejected collections</h2>
+               <table><thead><tr><th>Member</th><th>Collection date</th><th>Amount</th><th>Draws</th><th>Result</th></tr></thead>
+               <tbody>${failed.map((c) => ddCollectionRow(c, true)).join('')}</tbody></table></div>`
+          : ''
+      }
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Mandates</h2>
+        ${
+          opts.mandates.length === 0
+            ? '<p class="muted">No Direct Debits yet.</p>'
+            : `<table><thead><tr><th>Member</th><th>Numbers</th><th>Status</th><th>Set up</th><th>Last collection</th></tr></thead>
+                 <tbody>${opts.mandates.map(mandateRow).join('')}</tbody></table>`
+        }
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Recent collections</h2>
+        ${
+          opts.collections.length === 0
+            ? '<p class="muted">No collections yet. The first month&rsquo;s are prepared 14 days before its collection date.</p>'
+            : `<table><thead><tr><th>Member</th><th>Collection date</th><th>Amount</th><th>Draws</th><th>Result</th></tr></thead>
+                 <tbody>${opts.collections.map((c) => ddCollectionRow(c, true)).join('')}</tbody></table>`
+        }
+      </div>
+    `,
+  });
+}
+
 export function memberDetailPage(opts: {
   user: { displayName: string; csrf: string };
   member: MemberPage;
@@ -828,6 +965,10 @@ export function memberDetailPage(opts: {
                </table>
                <p class="muted">The line keeps its paid draws and any Direct Debit. Draws already closed to entries are drawn with the old numbers.</p>`
         }
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Direct Debit</h2>
+        ${memberDirectDebits(opts.user.csrf, profile.id, opts.member.directDebits)}
       </div>
       <div class="card">
         <h2 style="font-size:1.05rem;margin-top:0">Payments</h2>

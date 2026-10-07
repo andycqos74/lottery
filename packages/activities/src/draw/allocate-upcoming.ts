@@ -188,14 +188,24 @@ export async function allocateUpcomingEntries(pool: Pool, request: AllocateUpcom
         );
         let weeksLeft = Math.max(0, paidWeeks - Number(usedRows[0]!.n));
 
-        const { rows: mandateRows } = await client.query<{ created_at: Date }>(
-          `SELECT created_at FROM payment_method
-            WHERE ${LINE_FILTER} AND type = 'direct_debit' AND active
-              AND COALESCE(mandate_status, '') NOT IN ('cancelled', 'failed')
-            ORDER BY created_at LIMIT 1`,
+        // Only a mandate the bank has confirmed enters anything, and only
+        // from when it was confirmed (client decision, 2026-10-07).
+        const { rows: mandateRows } = await client.query<{ active_since: Date }>(
+          `SELECT COALESCE(mandate_active_at, created_at) AS active_since FROM payment_method
+            WHERE ${LINE_FILTER} AND type = 'direct_debit' AND active AND mandate_status = 'active'
+            ORDER BY active_since LIMIT 1`,
           lineArgs,
         );
-        const mandateSince = mandateRows[0]?.created_at;
+        const mandateSince = mandateRows[0]?.active_since;
+
+        // Direct Debit entries a collection has paid for, or is collecting
+        // for: never withdrawn or switched to paid weeks (db/migrations/0022).
+        const { rows: protectedRows } = await client.query<{ entry_id: string }>(
+          `SELECT ce.entry_id FROM dd_collection_entry ce JOIN dd_collection c ON c.id = ce.collection_id
+            WHERE c.member_id = $1 AND c.status IN ('scheduled', 'submitted', 'collected')`,
+          [memberId],
+        );
+        const collectedFor = new Set(protectedRows.map((r) => r.entry_id));
 
         // The GAP-17 gate: halts if the entry strategy isn't confirmed.
         if (weeksLeft > 0) {
@@ -284,6 +294,10 @@ export async function allocateUpcomingEntries(pool: Pool, request: AllocateUpcom
             totals.selectionsUpdated++;
           }
 
+          if (keeper.funding === 'direct_debit' && collectedFor.has(keeper.id)) {
+            // Paid (or being collected) by Direct Debit: it stays, whatever else is going on.
+            continue;
+          }
           if (keeper.funding === 'card') {
             // Paid for at checkout: always a week, whatever else is going on.
             weeksLeft = Math.max(0, weeksLeft - 1);

@@ -36,7 +36,10 @@ function withIdempotency<T>(key: string | undefined, produce: () => T): T {
 }
 
 const sessions = new Map<string, { status: string; amountPence: string; providerRef: string }>();
-const submissions = new Map<string, { cycleKey: string; readyAt: number; instructions: { memberRef: string; amountPence: string }[] }>();
+const submissions = new Map<
+  string,
+  { cycleKey: string; readyAt: number; instructions: { memberRef: string; mandateRef: string; amountPence: string }[] }
+>();
 const mandates = new Map<string, { memberRef: string; status: string }>();
 const mandateEvents: unknown[] = [];
 
@@ -112,7 +115,32 @@ app.get<{ Params: { ref: string } }>('/bacs/mandates/:ref', async (request, repl
   return { mandateRef: request.params.ref, status: mandate.status };
 });
 
-app.post<{ Body: { cycleKey: string; instructions: { memberRef: string; amountPence: string }[] } }>(
+// Stops a mandate (originator-side cancellation). Unknown mandates are fine:
+// this sandbox forgets everything on restart, and a real bureau treats a
+// repeat cancellation as a no-op too.
+app.post<{ Params: { ref: string } }>('/bacs/mandates/:ref/cancel', async (request) => {
+  const mandate = mandates.get(request.params.ref);
+  if (mandate) mandates.set(request.params.ref, { ...mandate, status: 'cancelled' });
+  return { mandateRef: request.params.ref, status: 'cancelled' };
+});
+
+// DEV ONLY: raise an indemnity (refund) claim against a mandate, as the payer's
+// bank would under the Direct Debit Guarantee — there is no other way to make one.
+app.post<{ Params: { ref: string }; Body: { amountPence?: string } }>('/bacs/mandates/:ref/indemnity-claim', async (request) => {
+  const event = {
+    eventId: randomUUID(),
+    mandateRef: request.params.ref,
+    memberRef: mandates.get(request.params.ref)?.memberRef ?? '',
+    kind: 'indemnity_claim',
+    occurredAt: new Date().toISOString(),
+    detail: 'sandbox indemnity claim',
+    amountPence: request.body?.amountPence ?? '0',
+  };
+  mandateEvents.push(event);
+  return event;
+});
+
+app.post<{ Body: { cycleKey: string; instructions: { memberRef: string; mandateRef: string; amountPence: string }[] } }>(
   '/bacs/submissions',
   async (request) => {
     const key = request.headers['idempotency-key'] as string | undefined;
@@ -141,8 +169,8 @@ app.get<{ Params: { id: string } }>('/bacs/submissions/:id/results', async (requ
     ready: true,
     results: submission.instructions.map((i) =>
       Math.random() < declineRate
-        ? { memberRef: i.memberRef, status: 'failed', reasonCode: 'ARUDD-0', reason: 'Refer to payer' }
-        : { memberRef: i.memberRef, status: 'collected', amountPence: i.amountPence },
+        ? { memberRef: i.memberRef, mandateRef: i.mandateRef, status: 'failed', reasonCode: 'ARUDD-0', reason: 'Refer to payer' }
+        : { memberRef: i.memberRef, mandateRef: i.mandateRef, status: 'collected', amountPence: i.amountPence },
     ),
   };
 });

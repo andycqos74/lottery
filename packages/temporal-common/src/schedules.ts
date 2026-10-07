@@ -46,6 +46,13 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     every: '1 hour',
     note: 'Gives RANDOM.ORG numbers to lines still without any a week after they were issued, and tells the member (GAP-13).',
   },
+  {
+    scheduleId: 'direct-debit',
+    workflowType: 'DirectDebitWorkflow',
+    taskQueue: TASK_QUEUES.payments,
+    every: '15 minutes',
+    note: 'Applies bank mandate messages, cancels ended mandates with the bureau, and runs the monthly Direct Debit collections (GAP-10/11/12).',
+  },
 ];
 
 export interface EnsureSchedulesResult {

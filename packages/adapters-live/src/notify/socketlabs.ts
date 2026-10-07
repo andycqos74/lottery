@@ -126,6 +126,42 @@ QOSFC`,
         `<p>Good luck!<br>QOSFC</p>`,
     };
   },
+  // Direct Debit (monthly, in advance). The advance notice is what the Direct
+  // Debit Guarantee requires before each collection.
+  dd_advance_notice: (m) => {
+    const forename = m['forename']?.trim() || 'there';
+    const amount = m['amount'] ?? '';
+    const date = m['date'] ?? '';
+    const draws = m['draws'] ?? '';
+    const numbers = m['numbers'] ?? '';
+    const line = `We will collect ${amount} by Direct Debit on or just after ${date}, for ${draws} draw${draws === '1' ? '' : 's'} on your numbers ${numbers}.`;
+    return {
+      subject: `Your next Direct Debit: ${amount} on ${date}`,
+      text: `Hi ${forename},\n\n${line}\n\nNothing to do — if anything looks wrong, just get in touch before then.\n\nQOSFC`,
+      html: `<p>Hi ${escapeHtml(forename)},</p><p>${escapeHtml(line)}</p><p>Nothing to do &mdash; if anything looks wrong, just get in touch before then.</p><p>QOSFC</p>`,
+    };
+  },
+  dd_collection_failed: (m) => {
+    const forename = m['forename']?.trim() || 'there';
+    const amount = m['amount'] ?? '';
+    const retryDate = m['retryDate'] ?? '';
+    const line = `We couldn't collect your Direct Debit of ${amount}. We'll try once more on or just after ${retryDate} — please make sure the money is in your account. If it can't be collected then, your Direct Debit will stop.`;
+    return {
+      subject: 'Your Direct Debit could not be collected',
+      text: `Hi ${forename},\n\n${line}\n\nQOSFC`,
+      html: `<p>Hi ${escapeHtml(forename)},</p><p>${escapeHtml(line)}</p><p>QOSFC</p>`,
+    };
+  },
+  dd_stopped: (m) => {
+    const forename = m['forename']?.trim() || 'there';
+    const amount = m['amount'] ?? '';
+    const line = `We tried twice but couldn't collect your Direct Debit of ${amount}, so it has stopped and your numbers are no longer entered by Direct Debit. You can set it up again, or buy draws by card, any time from your account.`;
+    return {
+      subject: 'Your Direct Debit has stopped',
+      text: `Hi ${forename},\n\n${line}\n\nQOSFC`,
+      html: `<p>Hi ${escapeHtml(forename)},</p><p>${escapeHtml(line)}</p><p>QOSFC</p>`,
+    };
+  },
   draw_winner: (m) => {
     const forename = m['forename']?.trim() || 'there';
     const drawNumber = m['drawNumber'] ?? '';

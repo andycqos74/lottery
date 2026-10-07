@@ -14,17 +14,15 @@
  *
  * Completing setup only records the mandate and (like the card flow) sets
  * the member's standing selection — it does NOT fabricate a `payment` row.
- * No money has moved yet; that only happens on an actual collection cycle,
- * which this system does not yet run (BacsBureau.submitCollections has no
- * caller). Entries don't wait for it: an active mandate enters the member
- * into every draw until it is cancelled — entered into each upcoming draw as
- * soon as the draw exists (`allocateUpcomingEntries`, funding source
- * 'direct_debit') — the collection pipeline, once built, is
- * what reconciles the money against those entries.
+ * Nothing is entered until the bank confirms the mandate (client decision,
+ * 2026-10-07): that arrives as a mandate event, applied by the Direct Debit
+ * workflow. From then the line is entered into every draw until cancelled,
+ * and the money is collected monthly in advance
+ * (packages/activities/src/direct-debit/).
  */
 import { withTransaction, type Pool } from '@qosfc/db';
 import { idempotencyKey, type BacsBureau } from '@qosfc/ports';
-import { allocateUpcomingEntries, describeLineOutcome, ON_SALE_DRAWS_SQL, resolveLine } from '@qosfc/activities';
+import { allocateUpcomingEntries, describeLineOutcome, endDirectDebit, resolveLine } from '@qosfc/activities';
 
 export type StartDdSetupOutcome =
   | { readonly kind: 'started'; readonly redirectUrl: string; readonly mandateRef: string }
@@ -98,14 +96,19 @@ export async function completeDirectDebitSetup(pool: Pool, bacsBureau: BacsBurea
     const line = await resolveLine(client, pending.member_id, pending.selection);
     // One mandate per line: setting up again for the same numbers replaces
     // the earlier mandate rather than entering them twice a draw.
+    // The earlier mandate is cancelled with the bureau too (the Direct Debit workflow does that).
     await client.query(
-      `UPDATE payment_method SET active = false, mandate_status = 'cancelled'
+      `UPDATE payment_method SET active = false, mandate_status = 'cancelled', ended_at = now(), end_reason = 'replaced',
+              bureau_cancel_pending = mandate_ref IS NOT NULL
         WHERE member_id = $1 AND type = 'direct_debit' AND active AND line_prize_draw_no = $2 AND line_slot = $3`,
       [pending.member_id, line.prizeDrawNo, line.slot],
     );
+    // Client decision, 2026-10-07: a mandate the bank hasn't confirmed enters
+    // nothing. The bank's confirmation arrives as a mandate event, which the
+    // Direct Debit workflow applies (activateMandate).
     await client.query(
-      `INSERT INTO payment_method (member_id, type, mandate_ref, mandate_status, active, line_prize_draw_no, line_slot)
-       VALUES ($1, 'direct_debit', $2, $3, true, $4, $5)`,
+      `INSERT INTO payment_method (member_id, type, mandate_ref, mandate_status, mandate_active_at, active, line_prize_draw_no, line_slot)
+       VALUES ($1, 'direct_debit', $2, $3, CASE WHEN $3 = 'active' THEN now() END, true, $4, $5)`,
       [pending.member_id, mandateRef, mandate.status, line.prizeDrawNo, line.slot],
     );
     await client.query(`UPDATE pending_dd_setup SET status = 'completed' WHERE mandate_ref = $1`, [mandateRef]);
@@ -121,10 +124,20 @@ export async function completeDirectDebitSetup(pool: Pool, bacsBureau: BacsBurea
     memberId: pending.member_id,
     line: recorded.line,
     selection: pending.selection,
-    event: { kind: 'direct_debit' },
+    event: { kind: 'direct_debit', pending: mandate.status !== 'active' },
   });
   await pool.query(`UPDATE pending_dd_setup SET outcome_message = $2 WHERE mandate_ref = $1`, [mandateRef, message]);
   return { kind: 'active', memberId: pending.member_id, message };
+}
+
+export interface DirectDebitCollectionView {
+  /** YYYY-MM-DD, UK. */
+  readonly collectionDate: string;
+  readonly amountPence: bigint;
+  readonly draws: number;
+  readonly attempt: number;
+  /** scheduled | submitted | collected | failed | rejected | cancelled | refunded */
+  readonly status: string;
 }
 
 export interface DirectDebitStatus {
@@ -132,14 +145,26 @@ export interface DirectDebitStatus {
   readonly id: string;
   readonly mandateRef: string | null;
   readonly since: Date;
+  /** False while the bank has yet to confirm the mandate: nothing is entered until it does. */
+  readonly confirmed: boolean;
   /** The numbers this Direct Debit enters. */
   readonly selection: readonly number[] | null;
+  /** The next collection the member has been told about, if any. */
+  readonly next: DirectDebitCollectionView | null;
+  /** Past collections, newest first. */
+  readonly history: readonly DirectDebitCollectionView[];
 }
 
-/** The member's active Direct Debits, one per line — what keeps those numbers entered into every draw (GitHub #9). */
+/** The member's live Direct Debits, one per line — what keeps those numbers entered into every draw (GitHub #9). */
 export async function listActiveDirectDebits(pool: Pool, memberId: string): Promise<DirectDebitStatus[]> {
-  const { rows } = await pool.query<{ id: string; mandate_ref: string | null; created_at: Date; selection: number[] | null }>(
-    `SELECT pm.id, pm.mandate_ref, pm.created_at, ss.selection
+  const { rows } = await pool.query<{
+    id: string;
+    mandate_ref: string | null;
+    created_at: Date;
+    mandate_status: string | null;
+    selection: number[] | null;
+  }>(
+    `SELECT pm.id, pm.mandate_ref, pm.created_at, pm.mandate_status, ss.selection
        FROM payment_method pm
        LEFT JOIN selection_standing ss
          ON ss.prize_draw_no = pm.line_prize_draw_no AND ss.slot = pm.line_slot AND ss.effective_to IS NULL
@@ -148,37 +173,51 @@ export async function listActiveDirectDebits(pool: Pool, memberId: string): Prom
       ORDER BY pm.created_at`,
     [memberId],
   );
-  return rows.map((r) => ({ id: r.id, mandateRef: r.mandate_ref, since: r.created_at, selection: r.selection }));
+  if (rows.length === 0) return [];
+  const { rows: collections } = await pool.query<{
+    payment_method_id: string;
+    collection_date: string;
+    amount_pence: string;
+    draws_covered: number;
+    attempt: number;
+    status: string;
+    notified_at: Date | null;
+  }>(
+    `SELECT payment_method_id, to_char(collection_date, 'YYYY-MM-DD') AS collection_date, amount_pence::text, draws_covered, attempt, status, notified_at
+       FROM dd_collection WHERE payment_method_id = ANY($1::uuid[])
+      ORDER BY collection_date DESC, attempt DESC`,
+    [rows.map((r) => r.id)],
+  );
+  const view = (c: (typeof collections)[number]): DirectDebitCollectionView => ({
+    collectionDate: c.collection_date,
+    amountPence: BigInt(c.amount_pence),
+    draws: c.draws_covered,
+    attempt: c.attempt,
+    status: c.status,
+  });
+  return rows.map((r) => {
+    const mine = collections.filter((c) => c.payment_method_id === r.id);
+    const upcoming = mine.filter((c) => (c.status === 'scheduled' || c.status === 'submitted') && c.notified_at);
+    return {
+      id: r.id,
+      mandateRef: r.mandate_ref,
+      since: r.created_at,
+      confirmed: r.mandate_status === 'active',
+      selection: r.selection,
+      next: upcoming.length > 0 ? view(upcoming[upcoming.length - 1]!) : null,
+      history: mine.filter((c) => c.status !== 'scheduled' && c.status !== 'cancelled').map(view),
+    };
+  });
 }
 
 /**
  * Stops one Direct Debit entering its numbers into further draws (GitHub #9
- * — "until cancelled"). Its entries in draws still taking entries are
- * withdrawn; draws whose entries have already closed keep them. Any paid
- * weeks on the same numbers then take those places.
- *
- * GAP-10: the `BacsBureau` port has no cancellation call yet, so this is
- * recorded here only. Once a real bureau is chosen the mandate must also be
- * cancelled there, or collections would continue without entries.
+ * — "until cancelled"): `endDirectDebit` withdraws its entries from draws
+ * still taking entries, except any a collection has already paid for, calls
+ * off collections not yet sent, and has the Direct Debit workflow cancel the
+ * mandate with the bureau.
  */
 export async function cancelDirectDebit(pool: Pool, memberId: string, paymentMethodId: string): Promise<{ readonly cancelled: number }> {
-  const { rows } = await pool.query<{ line_prize_draw_no: number | null; line_slot: number | null }>(
-    `UPDATE payment_method SET active = false, mandate_status = 'cancelled'
-      WHERE id = $2 AND member_id = $1 AND type = 'direct_debit' AND active
-      RETURNING line_prize_draw_no, line_slot`,
-    [memberId, paymentMethodId],
-  );
-  const line = rows[0];
-  if (!line) return { cancelled: 0 };
-  // Withdrawn even if the allocation below can't run (e.g. GAP-17 not
-  // activated) — a cancelled Direct Debit must never stay entered.
-  await pool.query(
-    `UPDATE entry SET voided_at = now(), void_reason = 'Direct Debit cancelled'
-      WHERE member_id = $1 AND funding_source = 'direct_debit' AND voided_at IS NULL
-        AND ($2::int IS NULL OR (prize_draw_no = $2 AND selection_slot = $3))
-        AND draw_id IN (${ON_SALE_DRAWS_SQL})`,
-    [memberId, line.line_prize_draw_no, line.line_slot],
-  );
-  await allocateUpcomingEntries(pool, { memberId, actorLabel: 'portal:direct-debit-cancel' }).catch(() => undefined);
-  return { cancelled: 1 };
+  const { ended } = await endDirectDebit(pool, { paymentMethodId, memberId, reason: 'member_cancelled', actorLabel: 'portal:direct-debit-cancel' });
+  return { cancelled: ended ? 1 : 0 };
 }

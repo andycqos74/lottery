@@ -44,7 +44,7 @@ const connection = await NativeConnection.connect({ address: config.address });
 await assertSearchAttributesRegistered();
 
 /**
- * The draw-dispatch, task-escalation and random-allocation schedules (schedules.ts). Owned by the
+ * The Temporal Schedules (schedules.ts). Owned by the
  * draw worker alone so exactly one process creates them; idempotent, so every
  * restart is safe. TEMPORAL_SCHEDULES=off leaves them uncreated — for a dev
  * stack whose seeded draws should not start running on their own.

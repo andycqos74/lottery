@@ -50,6 +50,10 @@ export class OwnSunBacsBureau implements BacsBureau {
     notConfirmed('getMandate');
   }
 
+  async cancelMandate(_request: { readonly idempotencyKey: IdempotencyKey; readonly mandateRef: string }): Promise<void> {
+    notConfirmed('cancelMandate');
+  }
+
   async submitCollections(_request: {
     readonly idempotencyKey: IdempotencyKey;
     readonly cycleKey: string;
