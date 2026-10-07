@@ -7,6 +7,9 @@ import type {
   DashboardCounts,
   DirectDebitCollectionRow,
   DirectDebitMandateRow,
+  RunLogCategory,
+  RunLogCounts,
+  RunLogEntry,
   DrawEntrant,
   DrawSummary,
   EntryFundingDetail,
@@ -95,6 +98,7 @@ function layout(opts: {
            <a href="/members">Members</a>
            <a href="/direct-debits">Direct Debits</a>
            <a href="/bank-statements">Bank statements</a>
+           <a href="/log">Log</a>
            <form method="post" action="/logout" style="display:inline">
              ${csrfField(opts.user.csrf)}
              <button type="submit" class="secondary" style="margin:0 0 0 1.25rem;padding:0.25rem 0.7rem;font-size:0.85rem">Log out</button>
@@ -786,6 +790,56 @@ function lineRow(csrf: string, memberId: string, line: MemberPage['lines'][numbe
       </form>
     </td>
   </tr>`;
+}
+
+const LOG_STYLES: Record<RunLogCategory, { label: string; style: string }> = {
+  success: { label: 'Success', style: 'background:#eaf6ec;color:#1e6b34' },
+  info: { label: 'Info', style: 'background:#eef1f6;color:#3b4a66' },
+  error: { label: 'Error', style: 'background:#b3261e;color:#fff' },
+};
+
+/** One line per finished workflow run (db/migrations/0023), newest first. */
+export function runLogPage(opts: {
+  user: { displayName: string; csrf: string };
+  entries: readonly RunLogEntry[];
+  counts: RunLogCounts;
+  category?: RunLogCategory;
+  includeQuiet: boolean;
+}): string {
+  const href = (category: RunLogCategory | undefined, quiet: boolean) => {
+    const params = [category ? `category=${category}` : '', quiet ? 'quiet=1' : ''].filter(Boolean).join('&');
+    return `/log${params ? `?${params}` : ''}`;
+  };
+  const tab = (label: string, category: RunLogCategory | undefined) =>
+    `<a href="${href(category, opts.includeQuiet)}" style="margin-right:1.25rem;${opts.category === category ? 'font-weight:700;color:#16233f' : 'color:#5b6472'}">${label}</a>`;
+  const row = (e: RunLogEntry) => {
+    const c = LOG_STYLES[e.category];
+    return `<tr${e.quiet ? ' class="muted"' : ''}>
+      <td style="white-space:nowrap">${escapeHtml(formatLondon(e.closedAt))}</td>
+      <td><span class="badge" style="${c.style}">${c.label}</span></td>
+      <td title="${escapeHtml(e.workflowId)}">${escapeHtml(e.message)}</td>
+    </tr>`;
+  };
+  return layout({
+    title: 'Log',
+    user: opts.user,
+    body: `
+      <h1>Log</h1>
+      <div class="card">
+        <p>Every background job (Temporal workflow run), in a sentence, as it finishes. Last 24 hours:
+          <strong>${opts.counts.error}</strong> error${opts.counts.error === 1 ? '' : 's'},
+          ${opts.counts.success} success${opts.counts.success === 1 ? '' : 'es'}, ${opts.counts.info} info,
+          and ${opts.counts.quiet} routine check${opts.counts.quiet === 1 ? '' : 's'} with nothing to do.</p>
+        <p>${tab('All', undefined)}${tab('Errors', 'error')}${tab('Success', 'success')}${tab('Info', 'info')}
+          <a href="${href(opts.category, !opts.includeQuiet)}" style="color:#5b6472">${opts.includeQuiet ? 'Hide' : 'Show'} routine checks with nothing to do</a></p>
+        ${
+          opts.entries.length === 0
+            ? '<p class="muted">Nothing logged yet.</p>'
+            : `<table><thead><tr><th>Finished</th><th></th><th>What happened</th></tr></thead><tbody>${opts.entries.map(row).join('')}</tbody></table>`
+        }
+      </div>
+    `,
+  });
 }
 
 const DD_STATUS_LABELS: Record<string, string> = {

@@ -307,6 +307,14 @@ describeDb('database-enforced security guarantees', () => {
       expect(rows).toEqual([]);
     });
 
+    it('can take ids from every sequence — a new serial table without a grant cannot be inserted into', async () => {
+      const { rows } = await pool.query<{ sequence_name: string }>(
+        `SELECT sequence_name FROM information_schema.sequences
+          WHERE sequence_schema = 'public' AND NOT has_sequence_privilege('lottery_app', 'public.' || sequence_name, 'USAGE')`,
+      );
+      expect(rows).toEqual([]);
+    });
+
     it('retains INSERT and SELECT on those tables — append-only, not read-only', async () => {
       const { rows } = await pool.query<{ privilege_type: string }>(
         `SELECT DISTINCT privilege_type FROM information_schema.role_table_grants

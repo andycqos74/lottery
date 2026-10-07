@@ -4,3 +4,4 @@ export * from './draw-dispatch.js';
 export * from './escalation.js';
 export * from './random-allocation.js';
 export * from './direct-debit.js';
+export * from './run-log.js';

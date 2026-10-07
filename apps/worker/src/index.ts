@@ -17,6 +17,7 @@ import {
   connectionConfigFromEnv,
   createClient,
   ensureSchedules,
+  temporalRunHistory,
 } from '@qosfc/temporal-common';
 import { describeRegistry } from '@qosfc/ports';
 import { buildProviderRegistry } from './composition-root.js';
@@ -31,7 +32,9 @@ const pool = createPool({
 });
 
 const providers = buildProviderRegistry(process.env, pool);
-const activities = createActivities({ pool, providers });
+// The run log (admin Log page) reads Temporal's own record of finished runs.
+const runHistoryClient = await createClient(config);
+const activities = createActivities({ pool, providers, runHistory: temporalRunHistory(runHistoryClient) });
 
 const connection = await NativeConnection.connect({ address: config.address });
 

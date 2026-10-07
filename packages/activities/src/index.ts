@@ -49,6 +49,7 @@ import {
 } from './direct-debit/collections.js';
 import { cancelMandatesAtBureau } from './direct-debit/mandates.js';
 import { processMandateEvents } from './direct-debit/mandate-events.js';
+import { recordRunLog } from './run-log/run-log.js';
 
 export function createActivities(ctx: ActivityContext) {
   return {
@@ -97,6 +98,12 @@ export function createActivities(ctx: ActivityContext) {
     ddSubmitDueCollections: (request: DirectDebitStepRequest) => submitDueCollections(ctx.pool, ctx.providers.bacsBureau, request),
     ddProcessCollectionResults: (request: DirectDebitStepRequest) =>
       processCollectionResults(ctx.pool, ctx.providers.bacsBureau, ctx.providers.notifier, request),
+
+    /** The admin Log page's source: one plain-language line per finished workflow run. */
+    recordRunLog: (request: { readonly limit?: number }) => {
+      if (!ctx.runHistory) throw new Error('recordRunLog needs the worker\'s Temporal run history, which this process was not given.');
+      return recordRunLog(ctx.pool, ctx.runHistory, request);
+    },
 
     /** Which providers this worker is actually talking to — used by the Phase 1 gate. */
     describeProviders: async () => ({
@@ -150,6 +157,17 @@ export {
 } from './direct-debit/collections.js';
 export { processMandateEvents, type ProcessMandateEventsResult } from './direct-debit/mandate-events.js';
 export * as ddDates from './direct-debit/dates.js';
+export {
+  recordRunLog,
+  describeRun,
+  RUN_LOG_SWEEP_TYPE,
+  type FinishedRun,
+  type RunHistory,
+  type RunOutcome,
+  type RunLogLine,
+  type RunLogCategory,
+  type RecordRunLogResult,
+} from './run-log/run-log.js';
 export {
   changeLineNumbers,
   describeNumbersChange,

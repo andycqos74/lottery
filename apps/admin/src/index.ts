@@ -46,6 +46,9 @@ import {
   getMemberPage,
   updateMemberContact,
   listDirectDebits,
+  listRunLog,
+  runLogCounts,
+  type RunLogCategory,
   listDirectDebitCollections,
   markPrizesNotifiedByPost,
   CONTACT_CHANNELS,
@@ -74,6 +77,7 @@ import {
   loginPage,
   memberDetailPage,
   directDebitsPage,
+  runLogPage,
   membersPage,
   mfaPage,
   newDrawPage,
@@ -701,6 +705,17 @@ app.get('/members/:id', async (request, reply) => {
   const member = await getMemberPage(pool, id);
   if (!member) return reply.code(404).type('text/html').send('<p>Member not found.</p>');
   return reply.type('text/html').send(memberDetailPage({ user: viewUser(request), member }));
+});
+
+app.get('/log', async (request, reply) => {
+  const query = request.query as { category?: string; quiet?: string };
+  const category = (['success', 'info', 'error'] as const).find((c) => c === query.category) as RunLogCategory | undefined;
+  const includeQuiet = query.quiet === '1';
+  const [entries, counts] = await Promise.all([
+    listRunLog(pool, { ...(category ? { category } : {}), includeQuiet }),
+    runLogCounts(pool),
+  ]);
+  reply.type('text/html').send(runLogPage({ user: viewUser(request), entries, counts, ...(category ? { category } : {}), includeQuiet }));
 });
 
 app.get('/direct-debits', async (request, reply) => {
