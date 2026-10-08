@@ -19,7 +19,7 @@ to the plausible-looking one.
 
 | ID | Decision | Recorded in |
 |---|---|---|
-| GAP-06 | **Person-as-member.** One member holds many legacy prize draw numbers. | `db/migrations/0002_members.sql` |
+| GAP-06 | **Person-as-member.** One member holds many legacy prize draw numbers. | `db/migrations/0002_members.sql`. The register load (`tools/import-legacy-register.ts`) makes one person of numbers joined by an Info "Also NNNN" note, only when the surname and either the forename or postcode agree; otherwise it loads separate people and flags them (`also_number_not_merged`, `possible_same_person`) for staff to merge |
 | TG-01 / TG-09 | **TypeScript on Node 22, PostgreSQL 16.** | `package.json`, `tsconfig.base.json` |
 | TG-08 *(partly)* | **Self-hosted, single VPS, Docker Compose.** The "who operates it" half stays open — see TG-15. | `deploy/compose/`, `docs/SETUP.md` §3 |
 | TG-11 | **Identifier-only payloads AND an encryption codec.** Both, from day one. | `packages/temporal-common/src/codec/`, `pii-guard.ts` |
@@ -33,7 +33,7 @@ to the plausible-looking one.
 | GAP-33 | **CSV upload first; Open Banking left for future consideration.** OCR is not pursued either — confirmed by Andy Cowan. The `BankFeed` port was built to fit all three candidate shapes from day one, so this was a selection, not a rewrite. | `BANK_FEED=csv`; `packages/adapters-live/src/bank-feed/csv-bank-feed.ts`; reconciliation in `packages/activities/src/reconcile/` |
 | GAP-33 / B-10 | **Real column mapping done; FR-5.8.2 continuity dropped for this feed.** The bank's actual export is a "TransactionHistory" report, not a statement — it has no opening/closing balance column at all, so the continuity check that requires one cannot run against it. Andy Cowan's direction: drop the check for this feed rather than block on it, dedupe by transaction identity instead (`bank_transaction.external_id`, unique), and revisit continuity checking — a future-phase item — only if the bank ever offers a balance-bearing export. | `packages/adapters-live/src/bank-feed/real-export-csv-format.ts`; `db/migrations/0009_bank_transaction_no_balance_feed.sql`; `ingestNewStatements` in `packages/activities/src/reconcile/ingest-statement.ts` |
 | B-11 *(resolved)* | Resolving a `bank_transaction_review` task only closed the task — it never created the `payment` row or accepted a `match_candidate`, so a reviewed standing order was still never counted as money received (FR-5.8.3). | Admin's task detail page now shows the candidates for that transaction; picking one and resolving calls `acceptBankTransactionMatchTx()` (`packages/activities/src/reconcile/match-transactions.ts`), which allocates the payment before the task closes. Leaving none selected still resolves the task without allocating anything, for a transaction nobody can identify |
-| GAP-04 | **Legacy members will get logins.** Their existing standing orders continue running unchanged; translating them into the new payment/entry model (`payment_method`/`subscription`) is explicit **future-phase work**, not part of this build — confirmed by Andy Cowan. | `member_credential` (`db/migrations/0008_member_login.sql`); portal auth in `apps/api/src/auth.ts`. Legacy-standing-order translation: not started, deliberately |
+| GAP-04 | **Legacy members will get logins.** Their existing standing orders continue running unchanged; translating them into the new payment/entry model (`payment_method`/`subscription`) is explicit **future-phase work**, not part of this build — confirmed by Andy Cowan. | `member_credential` (`db/migrations/0008_member_login.sql`); portal auth in `apps/api/src/auth.ts`. Legacy register load (`tools/import-legacy-register.ts`; `planLegacyRegister()` in `packages/domain/src/legacy-register.ts`; `importLegacyRegister()` in `packages/activities/src/migration/`): each number whose Status is PAYING, paid direct to the bank, with an amount and frequency, is recorded as a `standing_order` `payment_method` (reference = the prize draw number) and a `subscription` (`basis_source = 'register'`). That only lets bank matching recognise its amount and the jackpot estimate count it — the standing order still runs at the bank, and its money still becomes entries only when a statement is matched. A person with no PAYING number loads as `lapsed` |
 
 ## Resolved by client decision (2026-08-30)
 
@@ -108,10 +108,10 @@ instructions on 2026-10-01.
 | ID | Undecided | Represented by |
 |---|---|---|
 | GAP-03 | Role permissions / segregation of duties. | `app_role.permissions` — data, not code; defaults to deny |
-| GAP-07 | Duplicate prize draw numbers 1253, 1515, 2498. | migration rejects to the exception report |
+| GAP-07 | Duplicate prize draw numbers 1253, 1515, 2498. | the register load rejects every copy of a repeated number to the exception report (`planLegacyRegister()`) |
 | GAP-08 | Deceased / estate handling. | `member_status.deceased` exists; policy does not |
 | GAP-18 | Prepaid vs credit timing. | Answered by the GAP-17 choice (prepaid blocks = prepaid, not credit) — not separately confirmed as its own decision |
-| GAP-20 | 806 members with no amount; 838 tiered Undetermined. | migration flags `amount_unknown`, excludes from entry generation |
+| GAP-20 | 806 members with no amount; 838 tiered Undetermined. | the register load flags `amount_unknown` in `member.verify_flags` and records no standing order for the number |
 | GAP-25 | Reserve funding for the £500 floor; behaviour when empty. | `draw.floor_topup_pence` recorded; funding rule absent |
 | GAP-26 | Per-person entry cap. Syndicate exposure is live from day one. | `perPersonEntryCap` honoured when set; unset is reported |
 | GAP-27 | Revenue recognition: cash received vs entry face value. | — |
@@ -120,12 +120,12 @@ instructions on 2026-10-01.
 | GAP-30 | Notification channel and prize payment mechanism. | `Notifier` / `PrintHandoff` ports |
 | GAP-32 | Good-cause disbursement authorisation. | `GoodCauseDisbursementWorkflow`, dual approval |
 | GAP-34 | Statements 563–589 never processed; payment status provisional. | migration exception report |
-| GAP-35 | Open member queries: Pattie #1304 / ref 0022; Alan Henry's ten rows. | quarantined on migration |
+| GAP-35 | Open member queries: Pattie #1304 / ref 0022; Alan Henry's ten rows. | the register load sets `member.status = 'quarantined'` for #1304 and Alan Henry's rows by default (`GAP_35_QUARANTINE`; `--quarantine`, `--quarantine-name`, `--no-gap-35`) and records no standing order |
 | GAP-37 | Age verification method. | `member.date_of_birth` + the 18-year CHECK |
 | GAP-38 | Statutory return content and format. | `StatutoryReturnWorkflow` |
 | GAP-39 | GDPR lawful basis and marketing consent. | required before any bulk mailing |
-| GAP-40 | Member counts do not reconcile. | migration reconciliation stage **fails** the run |
-| GAP-41 | £8.64 vs £8.68 Deluxe. | `legacy_payment_raw` kept verbatim; **not** normalised |
+| GAP-40 | Member counts do not reconcile. | the register load **refuses to commit** unless every row read is loaded or rejected, and the counts match any `--expect-rows`/`--expect-members`/`--expect-blank` given |
+| GAP-41 | £8.64 vs £8.68 Deluxe. | `legacy_payment_raw` kept verbatim; **not** normalised. The register's 12-month bank evidence is kept beside it (`member_number.legacy_payments_12m`, `legacy_total_12m_pence`, `legacy_observed_frequency`, `db/migrations/0025`), and a frequency that disagrees is flagged `observed_frequency_differs` |
 | GAP-43 | Task inbox design and owner. | `human_task` table + admin console, never the Temporal UI |
 | GAP-44 | Manual override authority, incl. the £20,000 decision. | quorum enforced by the workflow **and** `approvers_must_be_different` |
 | GAP-45 | Reply-by period. Answered for number selection — one week before random allocation (GAP-13, `RANDOM_ALLOCATION_GRACE_DAYS`); any other reply-by use is still open. | `config_version.reply_by_days` NULL |
@@ -143,7 +143,7 @@ instructions on 2026-10-01.
 
 | # | Blocker | Needed |
 |---|---|---|
-| B-1 | Source `.xlsx`/`.csv` files absent from the repository. | The files, or agreed synthetic fixtures matching their exact columns |
+| B-1 | Source `.xlsx`/`.csv` files absent from the repository. | Column layout now known (2026-10-08: Prize Draw No … Observed Freq — `LEGACY_REGISTER_COLUMNS`); tests use synthetic rows in that layout. The file itself is still needed to load |
 | B-2 | Real member data must be barred from dev and CI. | Confirmation as policy; synthetic register as the default fixture |
 | B-3 | VPS provider and region unchosen. | UK region, processor agreement, separate backup provider |
 | B-4 | Domain names and TLS ownership. | Relative to the existing Wix estate |

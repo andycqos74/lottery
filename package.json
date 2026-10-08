@@ -18,6 +18,7 @@
     "migrate": "tsx packages/db/src/cli/migrate.ts",
     "activate-config": "tsx packages/db/src/cli/activate-config.ts",
     "create:admin-user": "tsx apps/admin/src/cli/create-admin-user.ts",
+    "import:legacy-register": "tsx tools/import-legacy-register.ts",
     "test:db": "vitest run packages/db",
     "test:security": "vitest run packages/db packages/temporal-common tools apps/worker",
     "test:determinism": "vitest run tools",
