@@ -51,6 +51,8 @@ import { importLegacyRegister, LegacyRegisterAlreadyLoadedError } from '../packa
 import {
   formatPence,
   GAP_35_QUARANTINE,
+  legacyRegisterAnnualStandingOrders,
+  legacyRegisterExceptionReport,
   parseDelimited,
   planLegacyRegister,
   readLegacyRegister,
@@ -90,7 +92,7 @@ const plan = planLegacyRegister(readLegacyRegister(parseDelimited(bytes.toString
 
 printSummary(plan);
 const reportPath = values('--report')[0] ?? join(dirname(file), `${basename(file).replace(/\.[^.]+$/, '')}.exceptions.csv`);
-writeFileSync(reportPath, exceptionReport(plan));
+writeFileSync(reportPath, legacyRegisterExceptionReport(plan));
 console.log(`\nException report: ${reportPath} (${plan.rejected.length} rejected, ${plan.findings.length} to check)`);
 
 if (plan.reconciliationFailures.length > 0) {
@@ -124,14 +126,13 @@ try {
 
 function printSummary(p: LegacyRegisterPlan): void {
   const c = p.counts;
-  const annual = p.numbers.reduce((sum, n) => sum + (n.standingOrder?.annualBasisPence ?? 0n), 0n);
   console.log(`Register ${file} (sha256 ${sourceFileHash.slice(0, 12)}…)`);
   console.log(`  rows read             ${c.rowsRead}`);
   console.log(`  member numbers        ${c.memberRows}  (${c.agentCollectedNumbers} agent-collected)`);
   console.log(`  blank reserved        ${c.blankReservedRows}`);
   console.log(`  rejected              ${c.rejectedRows}`);
   console.log(`  people                ${c.people}  (${c.peopleActive} active, ${c.peopleLapsed} lapsed, ${c.peopleQuarantined} quarantined)`);
-  console.log(`  standing orders       ${c.standingOrders}  (${formatPence(annual as never)} a year)`);
+  console.log(`  standing orders       ${c.standingOrders}  (${formatPence(legacyRegisterAnnualStandingOrders(p))} a year)`);
 
   const byFlag: Record<string, number> = {};
   for (const f of p.findings) byFlag[f.flag] = (byFlag[f.flag] ?? 0) + 1;
@@ -147,15 +148,4 @@ function printSummary(p: LegacyRegisterPlan): void {
     const more = Object.keys(seen).length > 12 ? `, … ${Object.keys(seen).length - 12} more` : '';
     console.log(`  ${column.padEnd(18)} ${list}${more}`);
   }
-}
-
-function exceptionReport(p: LegacyRegisterPlan): string {
-  const cell = (v: string | number | null) => {
-    const s = v === null ? '' : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const lines = [['Spreadsheet row', 'Prize Draw No', 'Outcome', 'Issue', 'Detail'].join(',')];
-  for (const r of p.rejected) lines.push([r.sourceRow, r.prizeDrawNo, 'REJECTED — not loaded', 'rejected', r.reason].map(cell).join(','));
-  for (const f of p.findings) lines.push([f.sourceRow, f.prizeDrawNo, 'loaded — check', f.flag, f.detail].map(cell).join(','));
-  return `${lines.join('\n')}\n`;
 }

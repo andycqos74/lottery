@@ -1,4 +1,13 @@
-import { formatPence, jackpotPosition, pence, revenueFor, TICKET_PRICE_PENCE } from '@qosfc/domain';
+import {
+  formatPence,
+  jackpotPosition,
+  legacyRegisterAnnualStandingOrders,
+  legacyRegisterExceptionReport,
+  pence,
+  revenueFor,
+  TICKET_PRICE_PENCE,
+  type LegacyRegisterPlan,
+} from '@qosfc/domain';
 import type {
   BankStatementDetail,
   BankStatementSummary,
@@ -15,6 +24,7 @@ import type {
   EntryFundingDetail,
   HumanTask,
   JackpotInputs,
+  LegacyRegisterLoad,
   MemberPage,
   MemberPayment,
   MemberSummary,
@@ -606,6 +616,7 @@ export function membersPage(opts: {
     user: opts.user,
     body: `
       <h1>Members</h1>
+      <p class="muted"><a href="/legacy-register">Load the legacy register from the spreadsheet →</a></p>
       <div class="card">
         ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
         ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
@@ -1261,6 +1272,200 @@ export function bankStatementDetailPage(opts: {
                </table>
                <p class="muted">Ambiguous and unmatched transactions each opened a review task — see <a href="/tasks?status=open">Tasks</a>.</p>`
         }
+      </div>
+    `,
+  });
+}
+
+/** The expected counts typed on the upload form (GAP-40), carried through to the load. */
+export interface LegacyRegisterExpect {
+  readonly rows: string;
+  readonly memberRows: string;
+  readonly blankReservedRows: string;
+}
+
+function legacyRegisterExpectFields(expect: LegacyRegisterExpect, hidden: boolean): string {
+  const field = (name: keyof LegacyRegisterExpect, label: string) =>
+    hidden
+      ? `<input type="hidden" name="${name}" value="${escapeHtml(expect[name])}" />`
+      : `<label for="${name}">${label}</label><input type="number" min="0" id="${name}" name="${name}" value="${escapeHtml(expect[name])}" />`;
+  return [field('rows', 'Rows in the register'), field('memberRows', 'MEMBER rows'), field('blankReservedRows', 'BLANK RESERVED rows')].join('\n');
+}
+
+export function legacyRegisterPage(opts: {
+  user: { displayName: string; csrf: string };
+  loads: readonly LegacyRegisterLoad[];
+  expect: LegacyRegisterExpect;
+  error?: string;
+  flash?: string;
+}): string {
+  const loads = opts.loads
+    .map((l) => `<tr>
+      <td>${escapeHtml(formatLondon(l.at))}</td>
+      <td>${escapeHtml(l.actorLabel)}</td>
+      <td>${l.people}</td>
+      <td>${l.numbers}</td>
+      <td>${l.standingOrders}</td>
+      <td>${l.rejected}</td>
+      <td><code>${escapeHtml(l.sourceFileHash.slice(0, 12))}…</code></td>
+    </tr>`)
+    .join('\n');
+  return layout({
+    title: 'Legacy register',
+    user: opts.user,
+    body: `
+      <h1>Legacy register</h1>
+      <p class="muted">The one-off load of the member register from the spreadsheet (T-11). Upload it to see
+      what would be loaded — nothing is written until you confirm on the next page. The register holds
+      real people's details (B-2).</p>
+      <div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
+        <h2 style="font-size:1.05rem;margin-top:0">Check a register</h2>
+        <form method="post" action="/legacy-register/preview">
+          ${csrfField(opts.user.csrf)}
+          <label for="file">The register, saved from the spreadsheet as CSV (or Text, tab-delimited)</label>
+          <input type="file" id="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values" required onchange="
+            const f = this.files[0]; if (!f) return;
+            document.getElementById('fileName').value = f.name;
+            f.text().then(t => { document.getElementById('content').value = t; });
+          " />
+          <p class="muted" style="margin:0.2rem 0 0.6rem">Header row first: Prize Draw No, Title, Forename, Surname,
+          Address 1–3, Post Code, Telephone, Agent, Channel, Joining Date, Payment Type (raw), Amount (parsed),
+          Frequency (parsed), Info, Row Type, Status, Payments (12m), Total (12m), Observed Freq. An .xlsx must be
+          saved as CSV first.</p>
+          <input type="hidden" id="fileName" name="fileName" />
+          <textarea id="content" name="content" hidden></textarea>
+          <p class="muted" style="margin:0.6rem 0 0.2rem">GAP-40: the counts the register is known to hold. Leave blank
+          to skip a check; any that differ stop the load.</p>
+          ${legacyRegisterExpectFields(opts.expect, false)}
+          <button type="submit">Check register</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Loads</h2>
+        ${
+          opts.loads.length === 0
+            ? '<p class="muted">The register has not been loaded.</p>'
+            : `<table>
+                 <thead><tr><th>When</th><th>By</th><th>People</th><th>Numbers</th><th>Standing orders</th><th>Rejected</th><th>File (sha256)</th></tr></thead>
+                 <tbody>${loads}</tbody>
+               </table>`
+        }
+      </div>
+    `,
+  });
+}
+
+/** Rows of the exception report shown on the page; the download has them all. */
+const LEGACY_REGISTER_PREVIEW_ROWS = 500;
+
+export function legacyRegisterPreviewPage(opts: {
+  user: { displayName: string; csrf: string };
+  plan: LegacyRegisterPlan;
+  fileName: string;
+  content: string;
+  sourceFileHash: string;
+  expect: LegacyRegisterExpect;
+}): string {
+  const { plan } = opts;
+  const c = plan.counts;
+  const canLoad = plan.reconciliationFailures.length === 0;
+
+  const byFlag: Record<string, number> = {};
+  for (const f of plan.findings) byFlag[f.flag] = (byFlag[f.flag] ?? 0) + 1;
+  const flagRows = Object.entries(byFlag)
+    .sort((a, b) => b[1] - a[1])
+    .map(([flag, n]) => `<tr><td>${escapeHtml(flag)}</td><td>${n}</td></tr>`)
+    .join('');
+
+  const valuesSeen = Object.entries(plan.valuesSeen)
+    .map(([column, seen]) => {
+      const values = Object.entries(seen)
+        .sort((a, b) => b[1] - a[1])
+        .map(([v, n]) => `<span class="badge">${v === '' ? '(blank)' : escapeHtml(v)} × ${n}</span>`)
+        .join(' ');
+      return `<tr><td>${escapeHtml(column)}</td><td>${values}</td></tr>`;
+    })
+    .join('');
+
+  const exceptions = [
+    ...plan.rejected.map((r) => ({ row: r.sourceRow, no: r.prizeDrawNo, outcome: 'Rejected', issue: 'rejected', detail: r.reason })),
+    ...plan.findings.map((f) => ({ row: f.sourceRow, no: f.prizeDrawNo, outcome: 'Loaded — check', issue: f.flag as string, detail: f.detail })),
+  ];
+  const exceptionRows = exceptions
+    .slice(0, LEGACY_REGISTER_PREVIEW_ROWS)
+    .map((e) => `<tr class="${e.outcome === 'Rejected' ? 'overdue' : ''}">
+      <td>${e.row}</td><td>${e.no ?? '—'}</td><td>${e.outcome}</td><td>${escapeHtml(e.issue)}</td><td>${escapeHtml(e.detail)}</td>
+    </tr>`)
+    .join('');
+  const report = `data:text/csv;charset=utf-8,${encodeURIComponent(legacyRegisterExceptionReport(plan))}`;
+  const reportName = `${opts.fileName.replace(/\.[^.]+$/, '') || 'register'}.exceptions.csv`;
+
+  return layout({
+    title: 'Legacy register — check',
+    user: opts.user,
+    body: `
+      <h1>Legacy register — check</h1>
+      <p class="muted">${escapeHtml(opts.fileName || 'Uploaded register')} · sha256 <code>${escapeHtml(opts.sourceFileHash.slice(0, 12))}…</code>.
+      Nothing has been written yet.</p>
+      ${
+        canLoad
+          ? ''
+          : `<div class="error">GAP-40 — the counts do not reconcile, so this register cannot be loaded:<br />
+             ${plan.reconciliationFailures.map(escapeHtml).join('<br />')}</div>`
+      }
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">What would be loaded</h2>
+        <table>
+          <tbody>
+            <tr><td>Rows read</td><td>${c.rowsRead}</td></tr>
+            <tr><td>Member numbers</td><td>${c.memberRows} (${c.agentCollectedNumbers} agent-collected)</td></tr>
+            <tr><td>Blank reserved numbers</td><td>${c.blankReservedRows}</td></tr>
+            <tr><td>Rejected rows — not loaded</td><td>${c.rejectedRows}</td></tr>
+            <tr><td>People</td><td>${c.people} (${c.peopleActive} active, ${c.peopleLapsed} lapsed, ${c.peopleQuarantined} quarantined)</td></tr>
+            <tr><td>Standing orders recorded</td><td>${c.standingOrders} (${formatPence(legacyRegisterAnnualStandingOrders(plan))} a year)</td></tr>
+          </tbody>
+        </table>
+        <p class="muted">A week after loading (GAP-13), every active player number with no numbers chosen is given
+        random numbers, and — as the register has no email addresses — a task to post them.</p>
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Values seen</h2>
+        <p class="muted">Check each is read the way you expect. A person with any PAYING number is active, otherwise
+        lapsed. A Channel starting "Direct" is paid to the bank; one naming an agent is agent-collected.</p>
+        <table><tbody>${valuesSeen}</tbody></table>
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Exceptions</h2>
+        ${
+          exceptions.length === 0
+            ? '<p class="muted">None.</p>'
+            : `<p><a href="${report}" download="${escapeHtml(reportName)}">Download the exception report</a> (CSV, ${exceptions.length} rows)</p>
+               ${flagRows ? `<table><thead><tr><th>Flagged (still loaded)</th><th>Count</th></tr></thead><tbody>${flagRows}</tbody></table>` : ''}
+               <table style="margin-top:1rem">
+                 <thead><tr><th>Row</th><th>Prize Draw No</th><th>Outcome</th><th>Issue</th><th>Detail</th></tr></thead>
+                 <tbody>${exceptionRows}</tbody>
+               </table>
+               ${exceptions.length > LEGACY_REGISTER_PREVIEW_ROWS ? `<p class="muted">Showing the first ${LEGACY_REGISTER_PREVIEW_ROWS} — the download has all ${exceptions.length}.</p>` : ''}`
+        }
+      </div>
+      <div class="card">
+        ${
+          canLoad
+            ? `<form method="post" action="/legacy-register/load">
+                 ${csrfField(opts.user.csrf)}
+                 <input type="hidden" name="fileName" value="${escapeHtml(opts.fileName)}" />
+                 <input type="hidden" name="sourceFileHash" value="${escapeHtml(opts.sourceFileHash)}" />
+                 <textarea name="content" hidden>${escapeHtml(opts.content)}</textarea>
+                 ${legacyRegisterExpectFields(opts.expect, true)}
+                 <label><input type="checkbox" name="confirm" value="yes" required /> I have read the exceptions.
+                 Load ${c.people} people and ${c.memberRows + c.blankReservedRows} prize draw numbers — this cannot be undone.</label>
+                 <button type="submit">Load register</button>
+               </form>`
+            : ''
+        }
+        <p><a href="/legacy-register">Back</a></p>
       </div>
     `,
   });
