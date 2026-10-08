@@ -156,7 +156,11 @@ export interface LegacyRegisterOptions {
   /** GAP-35: "Forename Surname" whose every number is quarantined on load. */
   readonly quarantineNames?: readonly string[];
   /** GAP-40: counts the register is known to hold. Any that differ fail the plan. */
-  readonly expect?: { readonly rows?: number; readonly memberRows?: number; readonly blankReservedRows?: number };
+  readonly expect?: {
+    readonly rows?: number | undefined;
+    readonly memberRows?: number | undefined;
+    readonly blankReservedRows?: number | undefined;
+  };
 }
 
 /** GAP-35, as recorded in docs/gap-register.md: Pattie #1304, and Alan Henry's rows. */
@@ -604,4 +608,24 @@ export function planLegacyRegister(rows: readonly LegacyRow[], options: LegacyRe
       observedFrequency: tally(rows, 'observedFrequency'),
     },
   };
+}
+
+/**
+ * The exception report, as CSV: every rejected row (not loaded) and every flag
+ * (loaded — check), by spreadsheet row number. Holds real people's details (B-2).
+ */
+export function legacyRegisterExceptionReport(plan: LegacyRegisterPlan): string {
+  const cell = (v: string | number | null) => {
+    const s = v === null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [['Spreadsheet row', 'Prize Draw No', 'Outcome', 'Issue', 'Detail'].join(',')];
+  for (const r of plan.rejected) lines.push([r.sourceRow, r.prizeDrawNo, 'REJECTED — not loaded', 'rejected', r.reason].map(cell).join(','));
+  for (const f of plan.findings) lines.push([f.sourceRow, f.prizeDrawNo, 'loaded — check', f.flag, f.detail].map(cell).join(','));
+  return `${lines.join('\n')}\n`;
+}
+
+/** What a standing order loaded from this plan is worth in a year, in total. */
+export function legacyRegisterAnnualStandingOrders(plan: LegacyRegisterPlan): Pence {
+  return pence(plan.numbers.reduce((sum, n) => sum + (n.standingOrder?.annualBasisPence ?? 0n), 0n));
 }
