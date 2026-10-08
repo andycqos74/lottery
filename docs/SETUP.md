@@ -268,6 +268,50 @@ ENTRY_STRATEGY=prepaid_blocks ENTRY_STRATEGY_CONFIRMED_BY="Andy Cowan, 2026-08-3
 NOTE="GAP-17 activated for testing" pnpm activate-config
 ```
 
+### 2.2.2 Loading the legacy register (T-11)
+
+The register is loaded once, at switch-over, from the spreadsheet saved as
+CSV (or the sheet pasted into a `.tsv`), header row first: `Prize Draw No`,
+`Title`, `Forename`, `Surname`, `Address 1`–`3`, `Post Code`, `Telephone`,
+`Agent`, `Channel`, `Joining Date`, `Payment Type (raw)`, `Amount (parsed)`,
+`Frequency (parsed)`, `Info`, `Row Type`, `Status`, `Payments (12m)`,
+`Total (12m)`, `Observed Freq`.
+
+```bash
+# Dry run: prints the counts, the values it saw in each deciding column, and
+# writes register.exceptions.csv beside the file. Read both.
+pnpm import:legacy-register register.csv --expect-rows 3774 --expect-members 1591 --expect-blank 2183
+
+# Then load — one transaction, all or nothing:
+APP_DB_MIGRATION_URL=postgres://lottery_owner@localhost:5432/lottery_app \
+APP_DB_MIGRATION_PASSWORD_FILE=deploy/secrets/app_db_password \
+pnpm import:legacy-register register.csv --expect-rows 3774 --expect-members 1591 --expect-blank 2183 \
+  --commit --actor "Your Name"
+```
+
+- **People.** Numbers joined by an Info "Also NNNN" note become one person
+  when the surname and the forename or postcode agree; contact details come
+  from the lowest number.
+- **Rejected** (exception report, not loaded): a repeated number (GAP-07), a
+  Prize Draw No that isn't a number, a Row Type other than MEMBER or BLANK
+  RESERVED.
+- **Flagged** (loaded, `member.verify_flags`): no amount (GAP-20), an
+  unreadable postcode, date or channel, a bank frequency that disagrees with
+  the register, unmerged "Also" notes, same name and postcode.
+- **Status.** A person with any PAYING number is `active`; otherwise
+  `lapsed`. GAP-35's open queries load as `quarantined`.
+- **Standing orders.** A PAYING, bank-paid number with an amount and
+  frequency gets a `standing_order` payment method and `subscription`, so
+  bank matching recognises its amount and the jackpot estimate counts it.
+  Agent-collected numbers get none (GAP-19).
+- **A week later** (GAP-13) every active player number with no numbers
+  chosen is given RANDOM.ORG numbers, and — as the register has no email
+  addresses — a task to post them. Expect around one task per person.
+
+A second load of the same numbers is refused (FR-1.3). The register and its
+exception report hold real people's details (B-2): keep them out of the
+repository and off dev machines.
+
 ### 2.3 Member portal (GAP-04, GAP-09)
 
 `apps/api` now also serves member self-service: register/login (password only —

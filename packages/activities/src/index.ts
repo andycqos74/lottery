@@ -208,3 +208,8 @@ export { writeAudit, type AuditRecord } from './audit.js';
 export { estimateStandingOrderEntries } from './draw/standing-order-estimate.js';
 export { resolveLine, describeLineOutcome, type ResolvedLine } from './entries/lines.js';
 export { ON_SALE_DRAWS_SQL } from './draw/place-entry.js';
+export {
+  importLegacyRegister,
+  LegacyRegisterAlreadyLoadedError,
+  type ImportLegacyRegisterRequest,
+} from './migration/import-legacy-register.js';
