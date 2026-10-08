@@ -17,6 +17,6 @@
   "dependencies": {
     "@qosfc/temporal-common": "workspace:*",
     "fastify": "^5.12.2",
-    "@temporalio/common": "^1.14.0"
+    "@temporalio/common": "^1.24.0"
   }
 }
