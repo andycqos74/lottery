@@ -383,6 +383,10 @@ TEST_APP_DB_URL=postgres://…/lottery_test pnpm vitest run packages/db
 The database suite **skips** without `TEST_APP_DB_URL` rather than passing, so a
 green CI run with no database never looks like proof.
 
+[TEST_PLAN.md](TEST_PLAN.md) has the full matrix: every gated suite, the
+variables each needs, the black-box HTTP suites (`pnpm test:e2e`), and the
+last run's findings.
+
 ---
 
 ## 3. Production VPS
