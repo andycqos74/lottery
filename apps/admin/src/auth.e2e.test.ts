@@ -57,6 +57,9 @@ describeDb('admin console authentication (T-9.3)', () => {
   }
 
   async function fullLogin(): Promise<{ jar: CookieJar; csrf: string }> {
+    // A code is accepted once (#46), and this suite logs in many times within
+    // one 30-second step: forget the last accepted step, as the next step would.
+    await pool.query(`UPDATE app_user SET totp_last_step = NULL WHERE id = $1`, [users.active]);
     const jar = await passwordStep();
     const res = await http(server.baseUrl, '/login/mfa', { form: { code: currentTotp(totpSecret) }, jar });
     expect(res.status, res.text).toBe(302);
@@ -248,16 +251,11 @@ describeDb('admin console authentication (T-9.3)', () => {
     });
   });
 
-  describe('known gaps (it.fails — flip to it() when fixed)', () => {
-    it.fails('a pending-MFA cookie value replayed under the session cookie name does not bypass MFA', async () => {
-      // @fastify/cookie signs the VALUE, not the name. The pending cookie's
-      // value is `{"uid":…}` — the same shape currentUser() reads from the
-      // session cookie — so a password alone must not be enough to forge one.
-      //
-      // Today the auth hook ACCEPTS the forged cookie and sets authUser; every
-      // page then 500s only because escapeHtml(undefined) throws on the missing
-      // csrf. Any route that doesn't render the csrf token would serve data to
-      // someone holding the password but not the second factor.
+  describe('fixed test-plan findings (#40, #44, #45, #46)', () => {
+    it('a pending-MFA cookie value replayed under the session cookie name does not bypass MFA', async () => {
+      // #40: @fastify/cookie signs the VALUE, not the name. Each payload now
+      // carries its purpose, so the pending cookie — issued after the password
+      // alone — is never read as a session.
       const jar = await passwordStep();
       const forged = new CookieJar();
       forged.set(SESSION, jar.get(PENDING)!);
@@ -265,28 +263,37 @@ describeDb('admin console authentication (T-9.3)', () => {
       expect(res.status).toBe(302);
       expect(res.location).toBe('/login');
     });
-    it.fails('a session cookie captured before logout stops working after logout', async () => {
+    it('a session cookie captured before logout stops working after logout', async () => {
       const { jar, csrf } = await fullLogin();
       const stolen = jar.clone();
+      expect((await http(server.baseUrl, '/', { jar: stolen })).status).toBe(200);
       await http(server.baseUrl, '/logout', { form: { csrf }, jar });
       expect((await http(server.baseUrl, '/', { jar: stolen })).location).toBe('/login');
     });
 
-    it.fails('a TOTP code cannot be used twice', async () => {
+    it('a TOTP code cannot be used twice', async () => {
+      await pool.query(`UPDATE app_user SET totp_last_step = NULL WHERE id = $1`, [users.active]);
       const code = currentTotp(totpSecret);
       const first = await passwordStep();
-      await http(server.baseUrl, '/login/mfa', { form: { code }, jar: first });
+      expect((await http(server.baseUrl, '/login/mfa', { form: { code }, jar: first })).status).toBe(302);
       const second = await passwordStep();
       const replay = await http(server.baseUrl, '/login/mfa', { form: { code }, jar: second });
       expect(replay.status).toBe(401);
+      expect(second.get(SESSION)).toBeUndefined();
     });
 
-    it.fails('repeated wrong passwords are throttled', async () => {
+    it('repeated wrong passwords are throttled', async () => {
       const statuses: number[] = [];
       for (let i = 0; i < 30; i += 1) {
         statuses.push((await http(server.baseUrl, '/login', { form: { email: 'jo@qosfc.example', password: `guess-${i}` } })).status);
       }
-      expect(statuses).toContain(429);
+      // Ten wrong passwords lock the account; the eleventh guess is not even checked.
+      expect(statuses.slice(0, 10)).toEqual(Array(10).fill(401));
+      expect(new Set(statuses.slice(10))).toEqual(new Set([429]));
+      // While locked, the right password does not get in either.
+      const right = await http(server.baseUrl, '/login', { form: { email: 'jo@qosfc.example', password: PASSWORD } });
+      expect(right.status).toBe(429);
+      expect(right.res.headers.get('retry-after')).toMatch(/^\d+$/);
     });
   });
 });

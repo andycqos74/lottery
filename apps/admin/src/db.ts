@@ -13,9 +13,11 @@ export interface AppUser {
   readonly totpSecretEnc: Buffer | null;
   readonly mfaEnrolled: boolean;
   readonly isActive: boolean;
+  /** #45: a session cookie is valid only while it carries this epoch. */
+  readonly sessionEpoch: number;
 }
 
-export async function findUserByEmail(pool: Pool, email: string): Promise<AppUser | undefined> {
+async function findUser(pool: Pool, column: 'email' | 'id', value: string): Promise<AppUser | undefined> {
   const { rows } = await pool.query<{
     id: string;
     email: string;
@@ -24,10 +26,11 @@ export async function findUserByEmail(pool: Pool, email: string): Promise<AppUse
     totp_secret_enc: Buffer | null;
     mfa_enrolled: boolean;
     is_active: boolean;
+    session_epoch: number;
   }>(
-    `SELECT id, email, display_name, password_hash, totp_secret_enc, mfa_enrolled, is_active
-       FROM app_user WHERE email = $1`,
-    [email],
+    `SELECT id, email, display_name, password_hash, totp_secret_enc, mfa_enrolled, is_active, session_epoch
+       FROM app_user WHERE ${column} = $1`,
+    [value],
   );
   const row = rows[0];
   if (!row) return undefined;
@@ -39,38 +42,34 @@ export async function findUserByEmail(pool: Pool, email: string): Promise<AppUse
     totpSecretEnc: row.totp_secret_enc,
     mfaEnrolled: row.mfa_enrolled,
     isActive: row.is_active,
+    sessionEpoch: row.session_epoch,
   };
 }
 
-export async function findUserById(pool: Pool, id: string): Promise<AppUser | undefined> {
-  const { rows } = await pool.query<{
-    id: string;
-    email: string;
-    display_name: string;
-    password_hash: string;
-    totp_secret_enc: Buffer | null;
-    mfa_enrolled: boolean;
-    is_active: boolean;
-  }>(
-    `SELECT id, email, display_name, password_hash, totp_secret_enc, mfa_enrolled, is_active
-       FROM app_user WHERE id = $1`,
-    [id],
-  );
-  const row = rows[0];
-  if (!row) return undefined;
-  return {
-    id: row.id,
-    email: row.email,
-    displayName: row.display_name,
-    passwordHash: row.password_hash,
-    totpSecretEnc: row.totp_secret_enc,
-    mfaEnrolled: row.mfa_enrolled,
-    isActive: row.is_active,
-  };
-}
+export const findUserByEmail = (pool: Pool, email: string) => findUser(pool, 'email', email);
+export const findUserById = (pool: Pool, id: string) => (UUID.test(id) ? findUser(pool, 'id', id) : Promise.resolve(undefined));
 
 export async function touchLastLogin(pool: Pool, userId: string): Promise<void> {
   await pool.query(`UPDATE app_user SET last_login_at = now() WHERE id = $1`, [userId]);
+}
+
+/** #45: ends every session this user has open, on any device. */
+export async function endAllSessions(pool: Pool, userId: string): Promise<void> {
+  await pool.query(`UPDATE app_user SET session_epoch = session_epoch + 1 WHERE id = $1`, [userId]);
+}
+
+/**
+ * #46 (RFC 6238 §5.2): records `step` as this user's last accepted TOTP step,
+ * if it is later than the one already recorded. False means the code's step
+ * was already used — a replay — and the login must be refused. One UPDATE, so
+ * two requests racing with the same code cannot both win.
+ */
+export async function claimTotpStep(pool: Pool, userId: string, step: number): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE app_user SET totp_last_step = $2 WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2)`,
+    [userId, step],
+  );
+  return rowCount === 1;
 }
 
 export interface AuditEntry {

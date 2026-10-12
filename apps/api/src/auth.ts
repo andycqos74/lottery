@@ -11,6 +11,7 @@
  * CSRF token is still threaded through so a future HTML/portal frontend can
  * use it without a redesign.
  */
+import { randomBytes } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { findMemberById, type Member } from './db.js';
 import type { Pool } from '@qosfc/db';
@@ -19,8 +20,19 @@ export const SESSION_COOKIE = 'qosfc_member_session';
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
 export interface SessionPayload {
+  /** #40: what this signed value is, so no other signed cookie can pass as a session. */
+  readonly p: 'member_session';
   readonly mid: string;
   readonly csrf: string;
+  /** #45: the credential's session epoch when this session began. */
+  readonly ep: number;
+}
+
+/** Starts a session for a member who has just proved who they are. Returns its CSRF token. */
+export function issueSession(reply: FastifyReply, nodeEnv: string, member: { id: string; sessionEpoch: number }): string {
+  const payload: SessionPayload = { p: 'member_session', mid: member.id, csrf: randomBytes(16).toString('hex'), ep: member.sessionEpoch };
+  reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(nodeEnv));
+  return payload.csrf;
 }
 
 export function cookieOpts(nodeEnv: string, maxAgeSeconds = SESSION_MAX_AGE_SECONDS) {
@@ -44,18 +56,22 @@ export function readSignedCookie(request: FastifyRequest, name: string): string 
 export async function currentMember(
   pool: Pool,
   request: FastifyRequest,
-): Promise<{ member: Omit<Member, 'passwordHash'>; session: SessionPayload } | undefined> {
+): Promise<{ member: Omit<Member, 'passwordHash' | 'sessionEpoch'>; session: SessionPayload } | undefined> {
   const value = readSignedCookie(request, SESSION_COOKIE);
   if (!value) return undefined;
-  let session: SessionPayload;
+  let session: Partial<SessionPayload> | null;
   try {
-    session = JSON.parse(value) as SessionPayload;
+    session = JSON.parse(value) as Partial<SessionPayload> | null;
   } catch {
     return undefined;
   }
-  const member = await findMemberById(pool, session.mid);
-  if (!member) return undefined;
-  return { member, session };
+  if (session?.p !== 'member_session' || typeof session.mid !== 'string' || typeof session.csrf !== 'string' || session.csrf === '') {
+    return undefined;
+  }
+  const found = await findMemberById(pool, session.mid);
+  if (!found || found.sessionEpoch !== session.ep) return undefined;
+  const { sessionEpoch: _epoch, ...member } = found;
+  return { member, session: session as SessionPayload };
 }
 
 export function requireCsrf(request: FastifyRequest, reply: FastifyReply, expected: string): boolean {

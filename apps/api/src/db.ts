@@ -9,8 +9,11 @@ export interface Member {
   readonly forename: string | null;
   readonly surname: string | null;
   readonly passwordHash: string;
+  /** #45: a session cookie is valid only while it carries this epoch. */
+  readonly sessionEpoch: number;
 }
 
+/** An active member with a portal login — the only kind that can log in. */
 export async function findMemberByEmail(pool: Pool, email: string): Promise<Member | undefined> {
   const { rows } = await pool.query<{
     id: string;
@@ -18,24 +21,39 @@ export async function findMemberByEmail(pool: Pool, email: string): Promise<Memb
     forename: string | null;
     surname: string | null;
     password_hash: string;
+    session_epoch: number;
   }>(
-    `SELECT m.id, m.email, m.forename, m.surname, c.password_hash
+    `SELECT m.id, m.email, m.forename, m.surname, c.password_hash, c.session_epoch
        FROM member m JOIN member_credential c ON c.member_id = m.id
       WHERE m.email = $1 AND m.status = 'active'`,
     [email],
   );
   const row = rows[0];
   return row
-    ? { id: row.id, email: row.email, forename: row.forename, surname: row.surname, passwordHash: row.password_hash }
+    ? {
+        id: row.id,
+        email: row.email,
+        forename: row.forename,
+        surname: row.surname,
+        passwordHash: row.password_hash,
+        sessionEpoch: row.session_epoch,
+      }
     : undefined;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** An active member with a portal login, by id, with their session epoch. */
 export async function findMemberById(pool: Pool, id: string): Promise<Omit<Member, 'passwordHash'> | undefined> {
-  const { rows } = await pool.query<{ id: string; email: string | null; forename: string | null; surname: string | null }>(
-    `SELECT id, email, forename, surname FROM member WHERE id = $1 AND status = 'active'`,
+  if (!UUID.test(id)) return undefined;
+  const { rows } = await pool.query<{ id: string; email: string | null; forename: string | null; surname: string | null; session_epoch: number }>(
+    `SELECT m.id, m.email, m.forename, m.surname, c.session_epoch
+       FROM member m JOIN member_credential c ON c.member_id = m.id
+      WHERE m.id = $1 AND m.status = 'active'`,
     [id],
   );
-  return rows[0];
+  const row = rows[0];
+  return row ? { id: row.id, email: row.email, forename: row.forename, surname: row.surname, sessionEpoch: row.session_epoch } : undefined;
 }
 
 export type RegisterOutcome =
@@ -44,29 +62,37 @@ export type RegisterOutcome =
 
 /**
  * GAP-04: this is the login path for a NEW member registering through the
- * portal. It does not touch, and cannot create, a legacy `prize_draw_no` —
- * translating an existing legacy member into a portal login is separate,
- * deferred future-phase work (gap-register.md GAP-04).
+ * portal. It does not touch, and cannot create, a legacy `prize_draw_no`. An
+ * existing member (a legacy one, say) whose email is already on file gets
+ * their login through /forgot-password instead (#42): the emailed link is the
+ * proof the address is theirs, which a registration form cannot give.
  */
 export async function registerMember(
   pool: Pool,
   input: { forename: string; surname: string; email: string; passwordHash: string },
 ): Promise<RegisterOutcome> {
-  return withTransaction(pool, async (client) => {
-    const existing = await client.query(`SELECT 1 FROM member WHERE email = $1`, [input.email]);
-    if (existing.rows.length > 0) return { kind: 'email_taken' };
+  try {
+    return await withTransaction(pool, async (client) => {
+      const existing = await client.query(`SELECT 1 FROM member WHERE email = $1`, [input.email]);
+      if (existing.rows.length > 0) return { kind: 'email_taken' };
 
-    const { rows } = await client.query<{ id: string }>(
-      `INSERT INTO member (forename, surname, email, status, preferred_contact) VALUES ($1, $2, $3, 'active', 'email') RETURNING id`,
-      [input.forename, input.surname, input.email],
-    );
-    const memberId = rows[0]!.id;
-    await client.query(`INSERT INTO member_credential (member_id, password_hash) VALUES ($1, $2)`, [
-      memberId,
-      input.passwordHash,
-    ]);
-    return { kind: 'registered', memberId };
-  });
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO member (forename, surname, email, status, preferred_contact) VALUES ($1, $2, $3, 'active', 'email') RETURNING id`,
+        [input.forename, input.surname, input.email],
+      );
+      const memberId = rows[0]!.id;
+      await client.query(`INSERT INTO member_credential (member_id, password_hash) VALUES ($1, $2)`, [
+        memberId,
+        input.passwordHash,
+      ]);
+      return { kind: 'registered', memberId };
+    });
+  } catch (error) {
+    // #43: two registrations racing with one email both pass the check above;
+    // member_email_unique (0026) stops the second insert. It lost the race.
+    if ((error as { code?: string; constraint?: string }).constraint === 'member_email_unique') return { kind: 'email_taken' };
+    throw error;
+  }
 }
 
 export async function touchMemberLastLogin(pool: Pool, memberId: string): Promise<void> {
@@ -76,10 +102,14 @@ export async function touchMemberLastLogin(pool: Pool, memberId: string): Promis
 const PASSWORD_RESET_TTL = "interval '1 hour'";
 
 /**
- * Returns undefined if there's no active member with a portal login for this
- * email — the caller must respond identically either way (T-1.3-style
- * enumeration guard, same convention as /register's "Could not register with
- * those details" and /login's "Invalid email or password").
+ * Returns undefined if there's no active member with this email — the caller
+ * must respond identically either way (T-1.3-style enumeration guard, same
+ * convention as /register's "Could not register with those details" and
+ * /login's "Invalid email or password").
+ *
+ * The member need not have a portal login yet (#42, GAP-04: legacy members
+ * get logins): following the link sets their first password. The email
+ * round-trip is the proof that the address is theirs.
  *
  * Any previous unresolved request for this member is superseded (deleted) so
  * only the most recently requested link ever works.
@@ -88,7 +118,8 @@ export async function createPasswordReset(
   pool: Pool,
   email: string,
 ): Promise<{ readonly memberId: string; readonly token: string } | undefined> {
-  const member = await findMemberByEmail(pool, email);
+  const { rows } = await pool.query<{ id: string }>(`SELECT id FROM member WHERE email = $1 AND status = 'active'`, [email]);
+  const member = rows[0];
   if (!member) return undefined;
 
   const token = randomBytes(32).toString('base64url');
@@ -127,7 +158,16 @@ export async function consumePasswordReset(
     if (new Date(row.expires_at).getTime() < Date.now()) return { kind: 'expired' };
 
     await client.query(`UPDATE member_password_reset SET used_at = now() WHERE id = $1`, [row.id]);
-    await client.query(`UPDATE member_credential SET password_hash = $1 WHERE member_id = $2`, [newPasswordHash, row.member_id]);
+    // A member with no portal login yet gets one (#42). An existing login gets
+    // the new password and a new session epoch (#45): someone resetting may
+    // think their account was taken over, so every session open on the old
+    // password ends here.
+    await client.query(
+      `INSERT INTO member_credential (member_id, password_hash) VALUES ($2, $1)
+       ON CONFLICT (member_id) DO UPDATE SET password_hash = EXCLUDED.password_hash,
+                                             session_epoch = member_credential.session_epoch + 1`,
+      [newPasswordHash, row.member_id],
+    );
     return { kind: 'reset', memberId: row.member_id };
   });
 }

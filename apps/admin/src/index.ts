@@ -32,8 +32,10 @@ import {
 } from '@qosfc/activities';
 import { CsvBankFeed } from '@qosfc/adapters-live';
 import {
+  FailureThrottle,
   formatPence,
   GAP_35_QUARANTINE,
+  LOGIN_THROTTLE_DEFAULTS,
   parseDelimited,
   pence,
   planLegacyRegister,
@@ -42,9 +44,11 @@ import {
 } from '@qosfc/domain';
 import {
   addEntry,
+  claimTotpStep,
   createDraws,
   createMember,
   dashboardCounts,
+  endAllSessions,
   findUserByEmail,
   findUserById,
   getBankStatement,
@@ -100,7 +104,7 @@ import {
 } from './views.js';
 import { planOneOffDraw, planRecurringDraws, type Recurrence } from './draw-schedule.js';
 import { decryptSecret } from './secret-box.js';
-import { verifyTotp } from './totp.js';
+import { matchTotpStep } from './totp.js';
 import { deliverTaskDecision, notifyEscalationTaskClosed, startDrawWorkflow } from './temporal.js';
 
 const port = Number(process.env['PORT'] ?? 8081);
@@ -134,9 +138,56 @@ const PENDING_MFA_COOKIE = 'qosfc_admin_mfa_pending';
 const SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
 const PENDING_MFA_MAX_AGE_SECONDS = 5 * 60;
 
+/**
+ * #40: @fastify/cookie signs a cookie's VALUE, not its name, so each payload
+ * says what it is (`p`) and is read only as that. Otherwise the pending-MFA
+ * cookie, issued after the password alone, would pass as a session.
+ */
 interface SessionPayload {
+  readonly p: 'session';
   readonly uid: string;
   readonly csrf: string;
+  /** #45: the user's session epoch when this session began. */
+  readonly ep: number;
+}
+
+interface PendingMfaPayload {
+  readonly p: 'mfa_pending';
+  readonly uid: string;
+}
+
+function parsePayload<T extends { p: string }>(value: string | undefined, purpose: T['p']): T | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Partial<T> | null;
+    return parsed && parsed.p === purpose && typeof (parsed as { uid?: unknown }).uid === 'string' ? (parsed as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// #44: wrong passwords and MFA codes are counted per account and per client
+// address; at the limit the form answers 429 without checking the password.
+const accountFailures = new FailureThrottle(LOGIN_THROTTLE_DEFAULTS.perAccount);
+const addressFailures = new FailureThrottle(LOGIN_THROTTLE_DEFAULTS.perAddress);
+
+function throttled(reply: FastifyReply, keys: { account: string; address: string }, render: (error: string) => string): boolean {
+  const now = Date.now();
+  const waitMs = Math.max(accountFailures.retryAfterMs(keys.account, now), addressFailures.retryAfterMs(keys.address, now));
+  if (waitMs === 0) return false;
+  const minutes = Math.ceil(waitMs / 60_000);
+  reply
+    .code(429)
+    .header('retry-after', String(Math.ceil(waitMs / 1000)))
+    .type('text/html')
+    .send(render(`Too many failed attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`));
+  return true;
+}
+
+function recordFailure(keys: { account: string; address: string }): void {
+  const now = Date.now();
+  accountFailures.recordFailure(keys.account, now);
+  addressFailures.recordFailure(keys.address, now);
 }
 
 function cookieOpts(maxAgeSeconds: number) {
@@ -167,16 +218,10 @@ function readSignedCookie(request: FastifyRequest, name: string): string | undef
 }
 
 async function currentUser(request: FastifyRequest): Promise<{ user: AppUser; session: SessionPayload } | undefined> {
-  const value = readSignedCookie(request, SESSION_COOKIE);
-  if (!value) return undefined;
-  let session: SessionPayload;
-  try {
-    session = JSON.parse(value) as SessionPayload;
-  } catch {
-    return undefined;
-  }
+  const session = parsePayload<SessionPayload>(readSignedCookie(request, SESSION_COOKIE), 'session');
+  if (!session || typeof session.csrf !== 'string' || session.csrf === '') return undefined;
   const user = await findUserById(pool, session.uid);
-  if (!user || !user.isActive) return undefined;
+  if (!user || !user.isActive || session.ep !== user.sessionEpoch) return undefined;
   return { user, session };
 }
 
@@ -207,19 +252,25 @@ app.post('/login', async (request, reply) => {
 
   if (!email || !password) return genericError();
 
+  const keys = { account: `login:${email}`, address: request.ip };
+  if (throttled(reply, keys, (error) => loginPage({ error }))) return;
+
   const user = await findUserByEmail(pool, email);
   if (!user || !user.isActive) {
     // Same response either way: an invalid email must not be distinguishable
     // from a wrong password.
+    recordFailure(keys);
     await insertAuditLog(pool, { actorLabel: email, action: 'admin_login_failed', entity: 'app_user' });
     return genericError();
   }
 
   const ok = await argon2Verify(user.passwordHash, password).catch(() => false);
   if (!ok) {
+    recordFailure(keys);
     await insertAuditLog(pool, { actorId: user.id, actorLabel: user.email, action: 'admin_login_failed', entity: 'app_user', entityId: user.id });
     return genericError();
   }
+  accountFailures.clear(keys.account);
 
   if (requireMfa && !user.mfaEnrolled) {
     return reply
@@ -229,28 +280,31 @@ app.post('/login', async (request, reply) => {
   }
 
   if (requireMfa) {
-    reply.setCookie(PENDING_MFA_COOKIE, JSON.stringify({ uid: user.id }), cookieOpts(PENDING_MFA_MAX_AGE_SECONDS));
+    const pending: PendingMfaPayload = { p: 'mfa_pending', uid: user.id };
+    reply.setCookie(PENDING_MFA_COOKIE, JSON.stringify(pending), cookieOpts(PENDING_MFA_MAX_AGE_SECONDS));
     return reply.redirect('/login/mfa');
   }
 
-  await establishSession(reply, user.id);
+  establishSession(reply, user);
   await touchLastLogin(pool, user.id);
   await insertAuditLog(pool, { actorId: user.id, actorLabel: user.email, action: 'admin_login', entity: 'app_user', entityId: user.id });
   return reply.redirect('/');
 });
 
 app.get('/login/mfa', async (request, reply) => {
-  const pending = readSignedCookie(request, PENDING_MFA_COOKIE);
+  const pending = parsePayload<PendingMfaPayload>(readSignedCookie(request, PENDING_MFA_COOKIE), 'mfa_pending');
   if (!pending) return reply.redirect('/login');
   reply.type('text/html').send(mfaPage({}));
 });
 
 app.post('/login/mfa', async (request, reply) => {
-  const pendingRaw = readSignedCookie(request, PENDING_MFA_COOKIE);
-  if (!pendingRaw) return reply.redirect('/login');
-  const { uid } = JSON.parse(pendingRaw) as { uid: string };
+  const pending = parsePayload<PendingMfaPayload>(readSignedCookie(request, PENDING_MFA_COOKIE), 'mfa_pending');
+  if (!pending) return reply.redirect('/login');
 
-  const user = await findUserById(pool, uid);
+  const keys = { account: `mfa:${pending.uid}`, address: request.ip };
+  if (throttled(reply, keys, (error) => mfaPage({ error }))) return;
+
+  const user = await findUserById(pool, pending.uid);
   const body = request.body as { code?: string };
   const code = (body.code ?? '').trim();
 
@@ -259,25 +313,32 @@ app.post('/login/mfa', async (request, reply) => {
   if (!user || !user.isActive || !mfaKey || !user.totpSecretEnc) return reject('Verification failed. Log in again.');
 
   const secret = decryptSecret(user.totpSecretEnc, mfaKey);
-  if (!verifyTotp(secret, code)) {
+  const step = matchTotpStep(secret, code);
+  // #46: a code that has already let someone in is refused like a wrong one.
+  if (step === null || !(await claimTotpStep(pool, user.id, step))) {
+    recordFailure(keys);
     await insertAuditLog(pool, { actorId: user.id, actorLabel: user.email, action: 'admin_mfa_failed', entity: 'app_user', entityId: user.id });
-    return reject('That code is not valid. Codes refresh every 30 seconds — try the current one.');
+    return reject('That code is not valid. Codes refresh every 30 seconds — wait for the next one.');
   }
+  accountFailures.clear(keys.account);
 
   reply.clearCookie(PENDING_MFA_COOKIE, { path: '/' });
-  await establishSession(reply, user.id);
+  establishSession(reply, user);
   await touchLastLogin(pool, user.id);
   await insertAuditLog(pool, { actorId: user.id, actorLabel: user.email, action: 'admin_login', entity: 'app_user', entityId: user.id });
   return reply.redirect('/');
 });
 
-async function establishSession(reply: FastifyReply, userId: string): Promise<void> {
-  const payload: SessionPayload = { uid: userId, csrf: randomBytes(16).toString('hex') };
+function establishSession(reply: FastifyReply, user: AppUser): void {
+  const payload: SessionPayload = { p: 'session', uid: user.id, csrf: randomBytes(16).toString('hex'), ep: user.sessionEpoch };
   reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(SESSION_MAX_AGE_SECONDS));
 }
 
 app.post('/logout', async (request, reply) => {
   if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  // #45: clearing this browser's cookie is not enough — a copy elsewhere would
+  // stay valid for 12 hours. Logging out ends every session this admin has.
+  await endAllSessions(pool, request.authUser!.id);
   reply.clearCookie(SESSION_COOKIE, { path: '/' });
   await insertAuditLog(pool, {
     actorId: request.authUser!.id,
