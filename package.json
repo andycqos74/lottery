@@ -22,6 +22,7 @@
     "test:db": "vitest run packages/db",
     "test:security": "vitest run packages/db packages/temporal-common tools apps/worker",
     "test:determinism": "vitest run tools",
+    "test:e2e": "vitest run e2e",
     "docker:build": "bash deploy/bootstrap/build-images.sh"
   },
   "devDependencies": {
