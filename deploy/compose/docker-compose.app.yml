@@ -194,9 +194,11 @@ services:
       TEMPORAL_CODEC_KEY_DIR: /run/secrets/codec
       TEMPORAL_CODEC_ACTIVE_KEY_ID: ${TEMPORAL_CODEC_ACTIVE_KEY_ID:?set in .env}
       ALLOWED_ORIGIN: ${TEMPORAL_UI_URL:?set in .env}
+      CODEC_AUTH_TOKEN_FILE: /run/secrets/codec_auth_token
     secrets:
       - source: codec_key
         target: codec
+      - codec_auth_token
     networks: [edge]
 
   temporal-ui:
@@ -215,6 +217,9 @@ services:
       # "_app" instead of a same-origin path — DNS fails and the page is blank.
       TEMPORAL_UI_PUBLIC_PATH: ""
       TEMPORAL_CODEC_ENDPOINT: ${CODEC_SERVER_URL:?set in .env}
+      # #41: the codec server asks the browser for its token (HTTP Basic); this
+      # makes the UI send those stored credentials with every decode.
+      TEMPORAL_CODEC_INCLUDE_CREDENTIALS: "true"
       # Never a substitute for the task inbox (GAP-43): this is a developer tool,
       # and a treasurer must not be asked to release a stuck payment from it.
       TEMPORAL_NOTIFY_ON_NEW_VERSION: "false"
@@ -233,6 +238,7 @@ volumes:
 
 secrets:
   codec_key:        { file: ../secrets/codec }
+  codec_auth_token: { file: ../secrets/codec_auth_token }
   app_role_password: { file: ../secrets/app_role_password }
   session_secret:   { file: ../secrets/session_secret }
   admin_mfa_key:    { file: ../secrets/admin_mfa_key }
