@@ -51,6 +51,9 @@ write_secret "${SECRETS_DIR}/sandbox_webhook_secret" "openssl rand -hex 32"     
 # Encrypts app_user.totp_secret_enc at rest — deliberately separate from the
 # Temporal codec key below (apps/admin/src/secret-box.ts explains why).
 write_secret "${SECRETS_DIR}/admin_mfa_key"          "openssl rand -base64 32"             "admin console MFA secret-at-rest key (AES-256-GCM)"
+# #41: the codec server decrypts member data for anyone who presents this —
+# the password an operator enters (any username) when the browser asks.
+write_secret "${SECRETS_DIR}/codec_auth_token"       "openssl rand -hex 32"                "codec server access token"
 
 # GAP-09 / GitHub #12: Elavon Payment Gateway credentials are issued by Elavon,
 # not generated — these start EMPTY so Compose can mount them. Paste the secret

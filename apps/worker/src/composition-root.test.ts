@@ -54,7 +54,7 @@ describe('provider selection', () => {
   });
 
   it('GAP-33, resolved: csv is a real, working adapter', () => {
-    const registry = buildProviderRegistry({ ...base, BANK_FEED: 'csv', BANK_CSV_UPLOADS_DIR: '/tmp' }, pool);
+    const registry = buildProviderRegistry({ ...base, BANK_FEED: 'csv', BANK_FEED_CSV_DIR: '/tmp' }, pool);
     expect(registry.bankFeed.providerName).toBe('live:csv-upload');
     expect(registry.bankFeed.source).toBe('csv');
   });

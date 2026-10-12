@@ -7,14 +7,14 @@
  * directly, so every state change carries a workflow's durability, idempotency
  * and audit trail rather than depending on a request completing.
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
-import { formatPence, pence } from '@qosfc/domain';
+import { FailureThrottle, formatPence, LOGIN_THROTTLE_DEFAULTS, pence } from '@qosfc/domain';
 import { idempotencyKey, isSandbox } from '@qosfc/ports';
 import { changeLineNumbers, describeNumbersChange } from '@qosfc/activities';
 import {
@@ -36,7 +36,7 @@ import {
 import { cancelDirectDebit, completeDirectDebitSetup, listActiveDirectDebits, startDirectDebitSetup } from './direct-debit.js';
 import { completeEntryPurchase, MAX_LINES_PER_PURCHASE, normaliseLines, PURCHASE_BLOCK_SIZES, startEntryPurchase } from './entries.js';
 import { buildBacsBureau, buildNotifier, buildPaymentGateway } from './providers.js';
-import { cookieOpts, currentMember, requireCsrf, SESSION_COOKIE, type SessionPayload } from './auth.js';
+import { currentMember, issueSession, requireCsrf, SESSION_COOKIE } from './auth.js';
 import { registerAssets } from './assets.js';
 import {
   accountPage,
@@ -268,9 +268,7 @@ app.post('/register', async (request, reply) => {
   if (!form) return reply.code(201).send({ memberId: outcome.memberId });
 
   await touchMemberLastLogin(pool, outcome.memberId);
-  const csrf = randomBytes(16).toString('hex');
-  const payload: SessionPayload = { mid: outcome.memberId, csrf };
-  reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(nodeEnv));
+  issueSession(reply, nodeEnv, { id: outcome.memberId, sessionEpoch: 0 });
   return reply.redirect(next ?? '/draw');
 });
 
@@ -293,18 +291,45 @@ app.post('/login', async (request, reply) => {
       : reply.code(401).send({ error: 'Invalid email or password.' });
   if (!email || !password) return invalid();
 
+  // #44: wrong passwords are counted per account and per client address; at
+  // the limit the password is not even checked.
+  const keys = { account: email, address: request.ip };
+  const waitMs = Math.max(loginFailures.perAccount.retryAfterMs(keys.account, Date.now()), loginFailures.perAddress.retryAfterMs(keys.address, Date.now()));
+  if (waitMs > 0) return tooManyAttempts(reply, waitMs, form, (error) => loginPage({ error, next }));
+
   const member = await findMemberByEmail(pool, email);
-  if (!member) return invalid();
-  const ok = await argon2Verify(member.passwordHash, password).catch(() => false);
-  if (!ok) return invalid();
+  const ok = member ? await argon2Verify(member.passwordHash, password).catch(() => false) : false;
+  if (!member || !ok) {
+    loginFailures.perAccount.recordFailure(keys.account, Date.now());
+    loginFailures.perAddress.recordFailure(keys.address, Date.now());
+    return invalid();
+  }
+  loginFailures.perAccount.clear(keys.account);
 
   await touchMemberLastLogin(pool, member.id);
-  const csrf = randomBytes(16).toString('hex');
-  const payload: SessionPayload = { mid: member.id, csrf };
-  reply.setCookie(SESSION_COOKIE, JSON.stringify(payload), cookieOpts(nodeEnv));
+  const csrf = issueSession(reply, nodeEnv, member);
   if (form) return reply.redirect(next ?? '/draw');
   return { memberId: member.id, csrf };
 });
+
+const loginFailures = {
+  perAccount: new FailureThrottle(LOGIN_THROTTLE_DEFAULTS.perAccount),
+  perAddress: new FailureThrottle(LOGIN_THROTTLE_DEFAULTS.perAddress),
+};
+
+// #44: every reset request sends an email, so each one counts, not just failures.
+const RESET_REQUEST_LIMITS = { perEmail: { maxFailures: 5, windowMs: 60 * 60 * 1000 }, perAddress: { maxFailures: 20, windowMs: 60 * 60 * 1000 } };
+const resetRequests = {
+  perEmail: new FailureThrottle(RESET_REQUEST_LIMITS.perEmail),
+  perAddress: new FailureThrottle(RESET_REQUEST_LIMITS.perAddress),
+};
+
+function tooManyAttempts(reply: FastifyReply, waitMs: number, form: boolean, page: (error: string) => string) {
+  const minutes = Math.ceil(waitMs / 60_000);
+  const error = `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+  reply.code(429).header('retry-after', String(Math.ceil(waitMs / 1000)));
+  return form ? reply.type('text/html').send(page(error)) : reply.send({ error });
+}
 
 app.get('/forgot-password', async (request, reply) => {
   const found = await viewMember(request);
@@ -324,6 +349,14 @@ app.post('/forgot-password', async (request, reply) => {
       .code(400)
       .send(forgotPasswordPage({ error: 'Enter your email address.', ...(openDraw ? { openDraw } : {}) }));
   }
+
+  const now = Date.now();
+  const waitMs = Math.max(resetRequests.perEmail.retryAfterMs(email, now), resetRequests.perAddress.retryAfterMs(request.ip, now));
+  if (waitMs > 0) {
+    return tooManyAttempts(reply, waitMs, true, (error) => forgotPasswordPage({ error, ...(openDraw ? { openDraw } : {}) }));
+  }
+  resetRequests.perEmail.recordFailure(email, now);
+  resetRequests.perAddress.recordFailure(request.ip, now);
 
   const reset = await createPasswordReset(pool, email);
   // Same response whether or not the address is registered — confirming which

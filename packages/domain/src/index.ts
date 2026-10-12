@@ -5,3 +5,4 @@ export * from './allocation.js';
 export * from './prize-sharing.js';
 export * from './entry-generation.js';
 export * from './legacy-register.js';
+export * from './failure-throttle.js';

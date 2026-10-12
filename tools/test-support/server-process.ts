@@ -140,7 +140,7 @@ export async function http(
   const res = await fetch(baseUrl + path, {
     method: init.method ?? (body === undefined ? 'GET' : 'POST'),
     headers,
-    body,
+    ...(body === undefined ? {} : { body }),
     redirect: 'manual',
   });
   init.jar?.absorb(res);

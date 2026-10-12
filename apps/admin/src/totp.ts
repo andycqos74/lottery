@@ -32,13 +32,22 @@ export function currentTotp(secret: string, at: number = Date.now()): string {
  * clock or the second it takes to type six digits doesn't fail a real code.
  */
 export function verifyTotp(secret: string, token: string, at: number = Date.now()): boolean {
+  return matchTotpStep(secret, token, at) !== null;
+}
+
+/**
+ * The 30-second step the code belongs to, or null if it matches none of the
+ * accepted steps. RFC 6238 §5.2: the caller must then refuse a step it has
+ * already accepted, or a code seen once can be replayed for ~90 seconds (#46).
+ */
+export function matchTotpStep(secret: string, token: string, at: number = Date.now()): number | null {
   const normalised = token.trim();
-  if (!/^\d{6}$/.test(normalised)) return false;
+  if (!/^\d{6}$/.test(normalised)) return null;
   const counter = Math.floor(at / 1000 / STEP_SECONDS);
   for (const drift of [0, -1, 1]) {
-    if (timingSafeEqual(hotp(secret, counter + drift), normalised)) return true;
+    if (timingSafeEqual(hotp(secret, counter + drift), normalised)) return counter + drift;
   }
-  return false;
+  return null;
 }
 
 function hotp(secret: string, counter: number): string {

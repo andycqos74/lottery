@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty",
+    "typecheck:tests": "tsc -p tsconfig.eslint.json",
     "lint": "eslint .",
     "test": "vitest run",
     "test:unit": "vitest run packages/domain packages/adapters-sandbox packages/adapters-live apps/worker",

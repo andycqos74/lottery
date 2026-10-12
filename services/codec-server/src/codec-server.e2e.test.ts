@@ -2,9 +2,8 @@
  * Codec server (T-10.11), black-box: the real process, HTTP only.
  *
  * It is a decryption oracle for member data in workflow history. These tests
- * pin what it does today — CORS restricted to the Temporal UI origin, and an
- * honest round-trip — and record in `it.fails` what its own header comment and
- * the Caddyfile say it does but it does not: authenticate the caller.
+ * pin that it authenticates every caller (#41), restricts CORS to the Temporal
+ * UI origin, and round-trips honestly.
  *
  * Needs no database, so it always runs.
  */
@@ -18,6 +17,8 @@ import { EncryptionCodec, FileKeyProvider } from '@qosfc/temporal-common';
 import { startServer, type RunningServer } from '../../../tools/test-support/server-process.js';
 
 const UI_ORIGIN = 'https://temporal.qosfc.example';
+const TOKEN = randomBytes(32).toString('hex');
+const BEARER = { authorization: `Bearer ${TOKEN}` };
 
 interface WirePayload {
   metadata: Record<string, string>;
@@ -33,10 +34,11 @@ describe('codec server (T-10.11)', () => {
   let server: RunningServer;
   let codec: EncryptionCodec;
 
+  /** Authenticated with the Bearer token unless `headers` says otherwise. */
   async function post(path: string, payloads: WirePayload[], headers: Record<string, string> = {}) {
     const res = await fetch(server.baseUrl + path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
+      headers: { 'content-type': 'application/json', ...BEARER, ...headers },
       body: JSON.stringify({ payloads }),
     });
     return { status: res.status, headers: res.headers, body: (await res.json()) as { payloads?: WirePayload[] } };
@@ -58,8 +60,11 @@ describe('codec server (T-10.11)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'qosfc-codec-e2e-'));
     writeFileSync(join(dir, 'k1.key'), randomBytes(32).toString('base64'));
     codec = new EncryptionCodec(new FileKeyProvider(dir, 'k1'));
+    const tokenDir = mkdtempSync(join(tmpdir(), 'qosfc-codec-token-'));
+    writeFileSync(join(tokenDir, 'token'), `${TOKEN}\n`);
     server = await startServer('services/codec-server/src/index.ts', {
       ALLOWED_ORIGIN: UI_ORIGIN,
+      CODEC_AUTH_TOKEN_FILE: join(tokenDir, 'token'),
       TEMPORAL_CODEC_KEY_DIR: dir,
       TEMPORAL_CODEC_ACTIVE_KEY_ID: 'k1',
     });
@@ -118,11 +123,33 @@ describe('codec server (T-10.11)', () => {
     expect(JSON.stringify(res.body)).not.toContain('SENSITIVE-MARKER');
   });
 
-  describe('known gaps (it.fails — flip to it() when fixed)', () => {
-    it.fails('refuses to decrypt for a caller that presents no credentials (no Origin header at all)', async () => {
+  describe('authentication (#41)', () => {
+    it('refuses to decrypt for a caller that presents no credentials (no Origin header at all)', async () => {
       // curl, a script, or any container on the `edge` network sends no Origin.
-      const res = await post('/decode', [await encryptedMarker()]);
+      const res = await post('/decode', [await encryptedMarker()], { authorization: '' });
       expect(res.status).toBe(401);
+      expect(res.headers.get('www-authenticate')).toMatch(/^Basic /);
+      expect(JSON.stringify(res.body)).not.toContain('SENSITIVE-MARKER');
+    });
+
+    it('refuses the UI origin without credentials, and a wrong token', async () => {
+      expect((await post('/decode', [await encryptedMarker()], { origin: UI_ORIGIN, authorization: '' })).status).toBe(401);
+      expect((await post('/decode', [await encryptedMarker()], { authorization: `Bearer ${TOKEN.slice(1)}x` })).status).toBe(401);
+      expect((await post('/encode', [await encryptedMarker()], { authorization: 'Bearer ' })).status).toBe(401);
+    });
+
+    it('accepts the token as HTTP Basic auth from the browser, with credentialed CORS', async () => {
+      const basic = `Basic ${Buffer.from(`operator:${TOKEN}`).toString('base64')}`;
+      const res = await post('/decode', [await encryptedMarker()], { origin: UI_ORIGIN, authorization: basic });
+      expect(res.status).toBe(200);
+      expect(plaintextOf(res.body.payloads![0]!)).toContain('SENSITIVE-MARKER');
+      expect(res.headers.get('access-control-allow-credentials')).toBe('true');
+    });
+
+    it('accepts the Bearer token from a script that sends no Origin', async () => {
+      const res = await post('/decode', [await encryptedMarker()]);
+      expect(res.status).toBe(200);
+      expect(plaintextOf(res.body.payloads![0]!)).toContain('SENSITIVE-MARKER');
     });
   });
 });

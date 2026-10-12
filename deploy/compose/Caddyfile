@@ -67,7 +67,8 @@
 # ── Codec server (T-10.11). ───────────────────────────────────────────────────
 # Called from the operator's BROWSER, not from the nodes, so it needs a public
 # route. It decrypts member data, so it gets the allowlist too — and its own
-# authentication inside the service.
+# authentication inside the service: a token, asked for by the browser as HTTP
+# Basic auth (services/codec-server/src/index.ts, #41).
 {$CODEC_HOST} {
 	import security_headers
 

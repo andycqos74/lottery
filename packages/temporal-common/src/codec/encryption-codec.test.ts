@@ -49,7 +49,7 @@ describe('TG-11 — payload encryption', () => {
     const codec = new EncryptionCodec(providerA);
     const [encrypted] = await codec.encode([payloadOf({ amountPence: '200' })]);
     const tampered = Buffer.from(encrypted!.data!);
-    tampered[tampered.length - 1] ^= 0xff;
+    tampered[tampered.length - 1] = tampered[tampered.length - 1]! ^ 0xff;
     await expect(codec.decode([{ ...encrypted!, data: tampered }])).rejects.toThrow();
   });
 

@@ -251,17 +251,19 @@ describeDb('member portal authentication (GAP-04)', () => {
     });
   });
 
-  describe('known gaps (it.fails — flip to it() when fixed)', () => {
-    it.fails('a password reset ends sessions opened with the old password', async () => {
+  describe('fixed test-plan findings (#42, #43, #44, #45)', () => {
+    it('a password reset ends sessions opened with the old password', async () => {
       const email = freshEmail();
       await register(email);
       const { jar: stolen } = await login(email);
+      expect((await http(server.baseUrl, '/me', { jar: stolen })).status).toBe(200);
       const { token } = (await createPasswordReset(pool, email))!;
       await http(server.baseUrl, '/reset-password', { form: { token, password: 'a brand new long password' } });
       expect((await http(server.baseUrl, '/me', { jar: stolen })).status).toBe(401);
+      expect((await login(email, 'a brand new long password')).status).toBe(200);
     });
 
-    it.fails('concurrent registrations with one email create one member (member.email is not unique)', async () => {
+    it('concurrent registrations with one email create one member', async () => {
       // Exercised at the function /register calls: over HTTP the argon2 hash
       // staggers requests enough to hide the race, but two members double-
       // clicking "Register" (or a retrying proxy) can still land together.
@@ -269,36 +271,58 @@ describeDb('member portal authentication (GAP-04)', () => {
       // the second insert. Reproduces on every attempt at this concurrency.
       const email = freshEmail();
       const racePool = createPool({ connectionString: url!, applicationName: 'qosfc-register-race', max: 20 });
+      let outcomes: Awaited<ReturnType<typeof registerMember>>[];
       try {
-        await Promise.all(
+        outcomes = await Promise.all(
           Array.from({ length: 20 }, () => registerMember(racePool, { forename: 'Pat', surname: 'Member', email, passwordHash: 'x' })),
         );
       } finally {
         await racePool.end();
       }
+      // The losers are told the email is taken, exactly as a later attempt would be — no error escapes.
+      expect(outcomes.filter((o) => o.kind === 'registered')).toHaveLength(1);
+      expect(outcomes.filter((o) => o.kind === 'email_taken')).toHaveLength(19);
       const { rows } = await pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM member WHERE email = $1`, [email]);
       expect(Number(rows[0]!.n)).toBe(1);
     });
 
-    it.fails('GAP-04: a legacy member with an email on file can get a portal login', async () => {
+    it('GAP-04: a legacy member with an email on file can get a portal login', async () => {
       // An imported register member: email on file, no member_credential.
       const email = freshEmail();
-      await pool.query(`INSERT INTO member (forename, surname, email, status) VALUES ('Legacy', 'Member', $1, 'active')`, [email]);
-      // /register says the email is taken; /forgot-password finds no portal
-      // login to reset. One of them has to let this person in.
-      const registered = (await register(email)).status === 201;
-      const resetIssued = (await createPasswordReset(pool, email)) !== undefined;
-      expect(registered || resetIssued).toBe(true);
+      const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO member (forename, surname, email, status) VALUES ('Legacy', 'Member', $1, 'active') RETURNING id`,
+        [email],
+      );
+      // /register still refuses (it can't prove the address is theirs); the
+      // emailed "forgot password" link is the way in, and sets their first password.
+      expect((await register(email)).status).toBe(400);
+      const reset = await createPasswordReset(pool, email);
+      expect(reset?.memberId).toBe(rows[0]!.id);
+      expect((await http(server.baseUrl, '/reset-password', { form: { token: reset!.token, password: 'my first portal password' } })).status).toBe(200);
+      const { status, jar } = await login(email, 'my first portal password');
+      expect(status).toBe(200);
+      expect(JSON.parse((await http(server.baseUrl, '/me', { jar })).text).member.id).toBe(rows[0]!.id);
     });
 
-    it.fails('repeated wrong passwords are throttled', async () => {
+    it('repeated wrong passwords are throttled', async () => {
       const email = freshEmail();
       await register(email);
       const statuses: number[] = [];
       for (let i = 0; i < 30; i += 1) {
         statuses.push((await http(server.baseUrl, '/login', { json: { email, password: `guess-number-${i}` } })).status);
       }
-      expect(statuses).toContain(429);
+      expect(statuses.slice(0, 10)).toEqual(Array(10).fill(401));
+      expect(new Set(statuses.slice(10))).toEqual(new Set([429]));
+      // Locked means locked: the right password waits too.
+      expect((await login(email)).status).toBe(429);
+    });
+
+    it('requests for a reset link are rate-limited, since each one sends an email', async () => {
+      const email = freshEmail();
+      await register(email);
+      const statuses: number[] = [];
+      for (let i = 0; i < 7; i += 1) statuses.push((await http(server.baseUrl, '/forgot-password', { form: { email } })).status);
+      expect(statuses).toEqual([200, 200, 200, 200, 200, 429, 429]);
     });
   });
 });
