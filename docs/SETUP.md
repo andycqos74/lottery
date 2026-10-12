@@ -510,6 +510,17 @@ working.
 | Ledger transactions must sum to zero — deferred constraint trigger | `db/migrations/0005` |
 | Dual approval enforced by the **workflow**, and by a DB constraint | `human_task`, GAP-44 |
 | No card data in the system: PSP-hosted fields only, PAN-shaped tokens refused | `payment_method` |
+| Login throttling: 10 failures per account / 50 per address in 15 min → 429 | `FailureThrottle` (`packages/domain`) |
+| Sessions revocable: admin logout and member password reset end every copy | `session_epoch`, `db/migrations/0026` |
+| A TOTP code is accepted once (RFC 6238 §5.2) | `app_user.totp_last_step` |
+| Codec server needs a token on every decode, not just the right Origin | `services/codec-server`, `codec_auth_token` |
+
+**Codec server token (#41).** `generate-secrets.sh` writes
+`deploy/secrets/codec_auth_token` (re-running it adds only files that are
+missing). To read decrypted payloads in the Temporal UI, open the codec
+server's URL in the same browser once; when it asks, enter any username and
+the token as the password. The UI then sends those credentials with each
+decode. Scripts send `Authorization: Bearer <token>`.
 
 Two of these deserve emphasis because they are unusual:
 

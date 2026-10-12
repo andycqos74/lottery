@@ -78,9 +78,23 @@ PostgreSQL 16, Node 22, all variables in §2 set.
 
 ## 5. Findings
 
-Each is pinned by an `it.fails` test in the "known gaps" block of the named
-suite: it passes while the defect exists and turns red once fixed, so whoever
-fixes it flips `it.fails` → `it`.
+**All nine are fixed** (2026-10-12): each former `it.fails` test is now an
+ordinary `it` in a "fixed test-plan findings" block of the named suite, and
+CI runs the workflow and app-role suites and typechecks the tests.
+
+| Fixed by | |
+|---|---|
+| F-1 | Each signed cookie names its purpose (`p: 'session' \| 'mfa_pending' \| 'member_session'`) and is read only as that; a session also needs a non-empty CSRF token. |
+| F-2 | The codec server requires a token (`CODEC_AUTH_TOKEN_FILE`) on `/encode` and `/decode`, as Bearer or as an HTTP Basic password; the Temporal UI sends the browser's stored credentials (`TEMPORAL_CODEC_INCLUDE_CREDENTIALS`). |
+| F-3 | `/forgot-password` issues a link to any active member with that email; following it creates the portal login if there is none. `/register` still refuses an email on file. |
+| F-4 | `member_email_unique` (migration 0026); the losing insert maps to `email_taken`. |
+| F-5 | 10 wrong passwords (or MFA codes) per account, or 50 per client address, in 15 minutes lock that key with a 429 and `Retry-After`; success clears the account. Reset-link requests: 5 per email, 20 per address, per hour (`FailureThrottle`, `packages/domain`). |
+| F-6 | A session epoch per account (`app_user.session_epoch`, `member_credential.session_epoch`) is carried in the cookie and checked on every request. Admin logout and member password reset raise it, ending every copy. |
+| F-7 | `app_user.totp_last_step`: a code is accepted only for a later 30-second step than the last one accepted, in one atomic UPDATE. |
+| F-8 | CI creates `lottery_app_login` and sets `TEST_APP_ROLE_DB_URL` and `TEST_WORKFLOW_ENV=1`; the app-role test now skips visibly instead of passing when the variable is missing. |
+| F-9 | `tsconfig.eslint.json` compiles (`declarationMap: false`), the type errors in tests are fixed, and CI runs `pnpm typecheck:tests`. |
+
+As found:
 
 | # | Severity | Finding | Test |
 |---|---|---|---|
@@ -96,9 +110,8 @@ fixes it flips `it.fails` → `it`.
 
 ## 6. Next cycles
 
-1. **Fix F-1**, then flip its test. One line; highest value.
-2. **CI:** set `TEST_WORKFLOW_ENV=1`, and create a login role in `lottery_app` and set `TEST_APP_ROLE_DB_URL` (F-8). Add a typecheck step over test files (F-9).
-3. **Admin mutations over HTTP:** create a draw, add a member, change numbers, upload a statement, resolve a task — each checking the audit row and the database state, with the same e2e harness.
-4. **Portal money flows over HTTP:** purchase → sandbox payment return → entries; DD setup → return → cancel. Needs `services/sandbox-providers` started by the harness.
-5. **Restore drill (T-10.16):** restore the latest backup to a scratch instance, check row counts and that the ledger balances. A scheduled job, not a unit test.
-6. **Manual acceptance with a volunteer**, on the sandbox stack (`docs/SETUP.md`): one weekly cycle end to end. Schedule the draw, take an online entry and a DD entry, upload a statement with one clear and one ambiguous match, resolve the review task, run the draw, check the 50/40/10 split and the winner email or postal-contact task.
+1. ~~Fix F-1~~ and ~~the CI gaps (F-8, F-9)~~ — done, with the rest of §5.
+2. **Admin mutations over HTTP:** create a draw, add a member, change numbers, upload a statement, resolve a task — each checking the audit row and the database state, with the same e2e harness.
+3. **Portal money flows over HTTP:** purchase → sandbox payment return → entries; DD setup → return → cancel. Needs `services/sandbox-providers` started by the harness.
+4. **Restore drill (T-10.16):** restore the latest backup to a scratch instance, check row counts and that the ledger balances. A scheduled job, not a unit test.
+5. **Manual acceptance with a volunteer**, on the sandbox stack (`docs/SETUP.md`): one weekly cycle end to end. Schedule the draw, take an online entry and a DD entry, upload a statement with one clear and one ambiguous match, resolve the review task, run the draw, check the 50/40/10 split and the winner email or postal-contact task.
