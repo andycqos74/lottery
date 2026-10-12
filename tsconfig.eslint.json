@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.base.json",
-  "compilerOptions": { "noEmit": true, "composite": false, "declaration": false },
+  "compilerOptions": { "noEmit": true, "composite": false, "declaration": false, "declarationMap": false },
   "include": [
     "packages/**/*.ts",
     "apps/**/*.ts",

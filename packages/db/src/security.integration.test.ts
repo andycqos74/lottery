@@ -288,12 +288,11 @@ describeDb('database-enforced security guarantees', () => {
   });
 
   describe('T-9.4 — the application role physically lacks the privilege to rewrite history', () => {
-    it('cannot UPDATE or DELETE ledger_entry even with valid credentials', async () => {
+    // Skipped — visibly, not passed — without a login role in lottery_app (#47);
+    // CI creates one. The grant assertions below still run either way.
+    it.skipIf(!process.env['TEST_APP_ROLE_DB_URL'])('cannot UPDATE or DELETE ledger_entry even with valid credentials', async () => {
       // Prove the revocation, not the trigger: connect AS the application role.
-      const appUrl = process.env['TEST_APP_ROLE_DB_URL'];
-      if (!appUrl) return; // covered by the grant assertions below instead
-
-      appPool = createPool({ connectionString: appUrl, applicationName: 'qosfc-app-role-test', max: 2 });
+      appPool = createPool({ connectionString: process.env['TEST_APP_ROLE_DB_URL']!, applicationName: 'qosfc-app-role-test', max: 2 });
       await expect(appPool.query(`UPDATE ledger_entry SET amount_pence = 0`)).rejects.toThrow(/permission denied/);
       await expect(appPool.query(`DELETE FROM ledger_entry`)).rejects.toThrow(/permission denied/);
     });

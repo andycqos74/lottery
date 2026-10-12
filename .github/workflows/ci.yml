@@ -48,16 +48,41 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The per-package builds exclude test files, and vitest strips types
+      # without checking them — so without this, tests drift from the code (#48).
+      - name: Typecheck tests
+        run: pnpm typecheck:tests
+
       # Includes the workflow determinism rules (T-6.1/6.2/6.3). A failure here
       # means non-deterministic code reached a workflow — treat it as a defect,
       # never as a lint nit to disable.
       - name: Lint
         run: pnpm lint
 
+      # T-9.4 must be proven by connecting AS the application role, so CI needs
+      # a login role inside lottery_app (#47). Roles are cluster-wide, so they
+      # survive the suites' schema resets.
+      - name: App-role login for T-9.4
+        env:
+          PGPASSWORD: ci
+        run: |
+          psql -h localhost -U lottery_owner -d lottery_test -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lottery_app') THEN CREATE ROLE lottery_app NOLOGIN; END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lottery_app_login') THEN
+              CREATE ROLE lottery_app_login LOGIN PASSWORD 'app' IN ROLE lottery_app;
+            END IF;
+          END $$;
+          SQL
+
       - name: Tests
         run: pnpm test
         env:
           TEST_APP_DB_URL: postgres://lottery_owner:ci@localhost:5432/lottery_test
+          TEST_APP_ROLE_DB_URL: postgres://lottery_app_login:app@localhost:5432/lottery_test
+          # The draw, dispatch, watchdog and escalation workflow tests (#47):
+          # TestWorkflowEnvironment downloads Temporal's test server on first use.
+          TEST_WORKFLOW_ENV: '1'
 
       # Belt and braces on the .gitignore rules: real member data must never
       # enter the repository, dev, or CI (build plan blocker B-2).
