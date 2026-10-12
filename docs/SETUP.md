@@ -277,6 +277,17 @@ CSV (or the sheet pasted into a `.tsv`), header row first: `Prize Draw No`,
 `Frequency (parsed)`, `Info`, `Row Type`, `Status`, `Payments (12m)`,
 `Total (12m)`, `Observed Freq`.
 
+**From the admin console:** Members → "Load the legacy register from the
+spreadsheet" (`/legacy-register`). Choose the file, enter the counts the
+register is known to hold, and click *Check register*: the next page shows
+what would be loaded, the values it saw in each deciding column, and every
+exception (with the full report as a CSV download). Nothing is written until
+you tick the confirmation and click *Load register* — and the load is refused
+if the file is not byte-for-byte the one that was checked. Past loads are
+listed on the page, from the audit log.
+
+**Or from a shell**, with the same rules:
+
 ```bash
 # Dry run: prints the counts, the values it saw in each deciding column, and
 # writes register.exceptions.csv beside the file. Read both.

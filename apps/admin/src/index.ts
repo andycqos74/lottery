@@ -10,7 +10,7 @@
  * are created by `deploy/bootstrap/create-admin-user.ts` — there is no
  * self-service signup for an admin console.
  */
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import Fastify from 'fastify';
@@ -25,12 +25,21 @@ import {
   endDirectDebit,
   describeNumbersChange,
   generateDueEntries,
+  importLegacyRegister,
   ingestNewStatements,
   recordManualTicket,
   type ManualTicketSelectionInput,
 } from '@qosfc/activities';
 import { CsvBankFeed } from '@qosfc/adapters-live';
-import { formatPence, pence, TICKET_PRICE_PENCE } from '@qosfc/domain';
+import {
+  formatPence,
+  GAP_35_QUARANTINE,
+  parseDelimited,
+  pence,
+  planLegacyRegister,
+  readLegacyRegister,
+  TICKET_PRICE_PENCE,
+} from '@qosfc/domain';
 import {
   addEntry,
   createDraws,
@@ -56,6 +65,7 @@ import {
   getTask,
   insertAuditLog,
   listBankStatements,
+  listLegacyRegisterLoads,
   listDrawEntrants,
   listDraws,
   listAgentMembers,
@@ -72,6 +82,9 @@ import {
   bankStatementsPage,
   dashboardPage,
   drawDetailPage,
+  legacyRegisterPage,
+  legacyRegisterPreviewPage,
+  type LegacyRegisterExpect,
   drawEntrantsPage,
   drawsPage,
   loginPage,
@@ -807,6 +820,97 @@ app.post('/members/:id/contact', async (request, reply) => {
         ...(outcome.kind === 'rejected' ? { error: outcome.reason } : { flash: 'Contact details saved.' }),
       }),
     );
+});
+
+// ── Legacy register (T-11): upload, check, then load ─────────────────────────
+
+/** The register, posted as form text, runs to a few MB — well over the 1 MB default. */
+const LEGACY_REGISTER_BODY_LIMIT = 16 * 1024 * 1024;
+
+function legacyRegisterExpect(body: Record<string, string | undefined>): LegacyRegisterExpect {
+  return { rows: (body['rows'] ?? '').trim(), memberRows: (body['memberRows'] ?? '').trim(), blankReservedRows: (body['blankReservedRows'] ?? '').trim() };
+}
+
+/** Plans the uploaded register exactly as the CLI does, GAP-35's quarantine included. */
+function planUploadedRegister(content: string, expect: LegacyRegisterExpect) {
+  const count = (label: string, value: string) => {
+    if (value === '') return undefined;
+    if (!/^\d+$/.test(value)) throw new Error(`${label} must be a whole number.`);
+    return Number(value);
+  };
+  return planLegacyRegister(readLegacyRegister(parseDelimited(content)), {
+    quarantineNumbers: GAP_35_QUARANTINE.numbers,
+    quarantineNames: GAP_35_QUARANTINE.names,
+    expect: {
+      rows: count('Rows in the register', expect.rows),
+      memberRows: count('MEMBER rows', expect.memberRows),
+      blankReservedRows: count('BLANK RESERVED rows', expect.blankReservedRows),
+    },
+  });
+}
+
+const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+
+async function sendLegacyRegisterPage(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  extra: { expect?: LegacyRegisterExpect; error?: string; flash?: string } = {},
+) {
+  const loads = await listLegacyRegisterLoads(pool);
+  reply.type('text/html').send(
+    legacyRegisterPage({
+      user: viewUser(request),
+      loads,
+      expect: extra.expect ?? { rows: '', memberRows: '', blankReservedRows: '' },
+      ...(extra.error ? { error: extra.error } : {}),
+      ...(extra.flash ? { flash: extra.flash } : {}),
+    }),
+  );
+}
+
+app.get('/legacy-register', async (request, reply) => sendLegacyRegisterPage(request, reply));
+
+app.post('/legacy-register/preview', { bodyLimit: LEGACY_REGISTER_BODY_LIMIT }, async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const body = request.body as Record<string, string | undefined>;
+  const expect = legacyRegisterExpect(body);
+  const content = body['content'] ?? '';
+  if (content.trim() === '') return sendLegacyRegisterPage(request, reply, { expect, error: 'Choose the register file first.' });
+  try {
+    const plan = planUploadedRegister(content, expect);
+    reply.type('text/html').send(
+      legacyRegisterPreviewPage({ user: viewUser(request), plan, fileName: body['fileName'] ?? '', content, sourceFileHash: sha256(content), expect }),
+    );
+  } catch (error) {
+    return sendLegacyRegisterPage(request, reply, { expect, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/legacy-register/load', { bodyLimit: LEGACY_REGISTER_BODY_LIMIT }, async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const body = request.body as Record<string, string | undefined>;
+  const expect = legacyRegisterExpect(body);
+  const content = body['content'] ?? '';
+  const sourceFileHash = sha256(content);
+  // The load is of exactly the file that was checked, or nothing.
+  if (body['confirm'] !== 'yes' || body['sourceFileHash'] !== sourceFileHash) {
+    return sendLegacyRegisterPage(request, reply, { expect, error: 'The register changed after it was checked, or the load was not confirmed. Check it again.' });
+  }
+  try {
+    const counts = await importLegacyRegister(pool, {
+      plan: planUploadedRegister(content, expect),
+      sourceFileHash,
+      actorLabel: request.authUser!.email,
+    });
+    return sendLegacyRegisterPage(request, reply, {
+      flash: `Register loaded: ${counts.people} people, ${counts.memberRows + counts.blankReservedRows} prize draw numbers, ` +
+        `${counts.standingOrders} standing orders.` +
+        (counts.rejectedRows > 0 ? ` ${counts.rejectedRows} rows were rejected and not loaded — see the exception report.` : ''),
+    });
+  } catch (error) {
+    // LegacyRegisterAlreadyLoadedError and GAP-40 failures say what to do in their message.
+    return sendLegacyRegisterPage(request, reply, { expect, error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 app.get('/bank-statements', async (request, reply) => {

@@ -1396,3 +1396,29 @@ export async function getBankTransactionForReview(pool: Pool, bankTransactionId:
     })),
   };
 }
+
+export interface LegacyRegisterLoad {
+  readonly at: Date;
+  readonly actorLabel: string;
+  readonly sourceFileHash: string;
+  readonly people: number;
+  readonly numbers: number;
+  readonly standingOrders: number;
+  readonly rejected: number;
+}
+
+/** Past loads of the legacy register (T-11), from the audit record each one writes. */
+export async function listLegacyRegisterLoads(pool: Pool): Promise<LegacyRegisterLoad[]> {
+  const { rows } = await pool.query<{ at: Date; actor_label: string; after: { sourceFileHash: string; rejected: number; counts: { people: number; memberRows: number; blankReservedRows: number; standingOrders: number } } }>(
+    `SELECT at, actor_label, after FROM audit_log WHERE action = 'legacy_register.imported' ORDER BY at DESC`,
+  );
+  return rows.map((r) => ({
+    at: r.at,
+    actorLabel: r.actor_label,
+    sourceFileHash: r.after.sourceFileHash,
+    people: r.after.counts.people,
+    numbers: r.after.counts.memberRows + r.after.counts.blankReservedRows,
+    standingOrders: r.after.counts.standingOrders,
+    rejected: r.after.rejected,
+  }));
+}
