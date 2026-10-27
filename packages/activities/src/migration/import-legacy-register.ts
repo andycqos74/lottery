@@ -10,7 +10,11 @@
  * Every number's `created_at` is the load time. GAP-13's week to choose
  * numbers runs from it, so a week after loading the random allocation sweep
  * gives every active player number with no numbers chosen its RANDOM.ORG
- * numbers and asks for a letter to be posted (the register holds no emails).
+ * numbers and emails them, or asks for a letter to be posted.
+ *
+ * GAP-05: a member loaded with an email is contacted by email and can get a
+ * portal login through /forgot-password; one without is contacted by post and
+ * cannot log in.
  */
 import type { Pool } from '@qosfc/db';
 import { withTransaction } from '@qosfc/db';
@@ -35,6 +39,16 @@ export class LegacyRegisterAlreadyLoadedError extends Error {
   }
 }
 
+export class LegacyRegisterEmailTakenError extends Error {
+  constructor(readonly emails: readonly string[]) {
+    super(
+      `${emails.length} email address(es) in this register already belong to a member ` +
+        `(${emails.slice(0, 20).join(', ')}${emails.length > 20 ? ', …' : ''}). ` +
+        'An email is one member\'s login; nothing was written.',
+    );
+  }
+}
+
 export async function importLegacyRegister(pool: Pool, request: ImportLegacyRegisterRequest): Promise<LegacyRegisterCounts> {
   const { plan, sourceFileHash, actorLabel } = request;
   if (plan.reconciliationFailures.length > 0) {
@@ -48,15 +62,22 @@ export async function importLegacyRegister(pool: Pool, request: ImportLegacyRegi
     );
     if (existing.length > 0) throw new LegacyRegisterAlreadyLoadedError(existing.map((r) => r.prize_draw_no));
 
+    // Someone who registered on the portal before the load already has the address.
+    const { rows: taken } = await client.query<{ email: string }>(
+      `SELECT email::text FROM member WHERE email = ANY($1::citext[]) ORDER BY email`,
+      [plan.members.flatMap((m) => (m.email ? [m.email] : []))],
+    );
+    if (taken.length > 0) throw new LegacyRegisterEmailTakenError(taken.map((r) => r.email));
+
     const memberIds: string[] = [];
     for (const m of plan.members) {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO member (status, title, forename, surname, address_1, address_2, address_3, post_code, post_code_valid,
-                             telephone, preferred_contact, joining_date, migrated_from_row, source_file_hash, verify_flags)
-         VALUES ($1::member_status, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'post', $11::date, $12, $13, $14::jsonb)
+                             telephone, email, preferred_contact, joining_date, migrated_from_row, source_file_hash, verify_flags)
+         VALUES ($1::member_status, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::contact_channel, $13::date, $14, $15, $16::jsonb)
          RETURNING id`,
         [m.status, m.title, m.forename, m.surname, m.address1, m.address2, m.address3, m.postCode, m.postCodeValid,
-          m.telephone, m.joiningDate, m.sourceRow, sourceFileHash, JSON.stringify(m.flags)],
+          m.telephone, m.email, m.email ? 'email' : 'post', m.joiningDate, m.sourceRow, sourceFileHash, JSON.stringify(m.flags)],
       );
       memberIds.push(rows[0]!.id);
     }

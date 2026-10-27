@@ -11,6 +11,8 @@
  *   Payment Type (raw) | Amount (parsed) | Frequency (parsed) | Info |
  *   Row Type | Status | Payments (12m) | Total (12m) | Observed Freq
  *
+ * and optionally Email (GAP-05: blank for most members).
+ *
  * A DRY RUN unless --commit: it prints what would be loaded and writes the
  * exception report — every rejected row and every flag, with its spreadsheet
  * row number — beside the input (or to --report). Read that before
@@ -25,7 +27,10 @@
  *     estimate counts it.
  *   - A person with no PAYING number is loaded as lapsed.
  *   - GAP-13: a week after the load, every active player number with no
- *     numbers chosen gets RANDOM.ORG numbers, and a task to post them.
+ *     numbers chosen gets RANDOM.ORG numbers, emailed to them or, with no
+ *     email, a task to post them.
+ *   - GAP-05: a member with an email can get a portal login through "forgot
+ *     password"; one without is contacted by post and cannot log in.
  *
  * The register holds real people's details: B-2 bars it from dev and CI. Do
  * not commit the file or the exception report to the repository.
@@ -47,7 +52,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { createPool } from '@qosfc/db';
-import { importLegacyRegister, LegacyRegisterAlreadyLoadedError } from '../packages/activities/src/index.js';
+import { importLegacyRegister, LegacyRegisterAlreadyLoadedError, LegacyRegisterEmailTakenError } from '../packages/activities/src/index.js';
 import {
   formatPence,
   GAP_35_QUARANTINE,
@@ -117,7 +122,7 @@ try {
   const counts = await importLegacyRegister(pool, { plan, sourceFileHash, actorLabel });
   console.log(`\nLoaded: ${counts.people} people, ${counts.memberRows + counts.blankReservedRows} prize draw numbers, ${counts.standingOrders} standing orders. sha256 ${sourceFileHash}`);
 } catch (error) {
-  if (!(error instanceof LegacyRegisterAlreadyLoadedError)) throw error;
+  if (!(error instanceof LegacyRegisterAlreadyLoadedError || error instanceof LegacyRegisterEmailTakenError)) throw error;
   console.error(`\n${error.message}`);
   process.exitCode = 1;
 } finally {
@@ -132,6 +137,7 @@ function printSummary(p: LegacyRegisterPlan): void {
   console.log(`  blank reserved        ${c.blankReservedRows}`);
   console.log(`  rejected              ${c.rejectedRows}`);
   console.log(`  people                ${c.people}  (${c.peopleActive} active, ${c.peopleLapsed} lapsed, ${c.peopleQuarantined} quarantined)`);
+  console.log(`  with an email         ${c.peopleWithEmail}  (the rest get letters, and cannot log in)`);
   console.log(`  standing orders       ${c.standingOrders}  (${formatPence(legacyRegisterAnnualStandingOrders(p))} a year)`);
 
   const byFlag: Record<string, number> = {};

@@ -275,7 +275,7 @@ CSV (or the sheet pasted into a `.tsv`), header row first: `Prize Draw No`,
 `Title`, `Forename`, `Surname`, `Address 1`–`3`, `Post Code`, `Telephone`,
 `Agent`, `Channel`, `Joining Date`, `Payment Type (raw)`, `Amount (parsed)`,
 `Frequency (parsed)`, `Info`, `Row Type`, `Status`, `Payments (12m)`,
-`Total (12m)`, `Observed Freq`.
+`Total (12m)`, `Observed Freq` — and, optionally, `Email`.
 
 **From the admin console:** Members → "Load the legacy register from the
 spreadsheet" (`/legacy-register`). Choose the file, enter the counts the
@@ -309,6 +309,14 @@ pnpm import:legacy-register register.csv --expect-rows 3774 --expect-members 159
 - **Flagged** (loaded, `member.verify_flags`): no amount (GAP-20), an
   unreadable postcode, date or channel, a bank frequency that disagrees with
   the register, unmerged "Also" notes, same name and postcode.
+- **Email** (GAP-05). Only some members have one; a register without the
+  column loads with none. A person's email comes from their lowest number
+  that has one. Loaded with an email, a member is contacted by email and can
+  get a portal login through "Forgot password"; without one they are
+  contacted by post and cannot log in. Not loaded, and flagged: an address
+  that isn't email-shaped (`email_invalid`), or one on more than one person
+  (`email_shared`). The load is refused if an address already belongs to a
+  member (someone who registered on the portal first).
 - **Status.** A person with any PAYING number is `active`; otherwise
   `lapsed`. GAP-35's open queries load as `quarantined`.
 - **Standing orders.** A PAYING, bank-paid number with an amount and
@@ -316,8 +324,8 @@ pnpm import:legacy-register register.csv --expect-rows 3774 --expect-members 159
   bank matching recognises its amount and the jackpot estimate counts it.
   Agent-collected numbers get none (GAP-19).
 - **A week later** (GAP-13) every active player number with no numbers
-  chosen is given RANDOM.ORG numbers, and — as the register has no email
-  addresses — a task to post them. Expect around one task per person.
+  chosen is given RANDOM.ORG numbers, emailed to them — or, with no email, a
+  task to post them. Expect a task for most people.
 
 A second load of the same numbers is refused (FR-1.3). The register and its
 exception report hold real people's details (B-2): keep them out of the
@@ -349,11 +357,14 @@ button. Cancelling withdraws that Direct Debit's entries from draws still
 taking entries; draws already paid for stand. The bureau has no cancel call
 yet (GAP-10), so a real bureau will also need the mandate cancelled there.
 
-Per GAP-04 (confirmed by Andy Cowan): legacy members will get logins too, and
-their existing standing orders keep running unchanged in the meantime.
-Translating those legacy payment records into the new `payment_method`/
-`subscription` model, and provisioning legacy members with portal credentials,
-is **explicit future-phase work** — not attempted in this build.
+Per GAP-04 (confirmed by Andy Cowan): legacy members get logins too, and
+their existing standing orders keep running unchanged at the bank. The
+register load (§2.2.2) records each still-paying standing order as a
+`payment_method` and `subscription`, so bank matching and the jackpot
+estimate know about it. A legacy member loaded with an email sets their first
+password through "Forgot password" (#42); one without an email cannot log in,
+which is accepted (GAP-05). Still **future-phase work**: moving legacy
+standing orders onto Direct Debit or card, and creating logins in bulk.
 
 #### Taking real card payments: Elavon (GitHub #12)
 

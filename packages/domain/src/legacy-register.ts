@@ -17,6 +17,7 @@
  *   GAP-35  open member queries — loaded as `quarantined`
  *   GAP-40  the counts must reconcile, or the plan is not committable
  *   GAP-41  the raw payment string is kept verbatim, never normalised
+ *   GAP-05  an email, where the register has one, is loaded; most have none
  */
 import { type Pence, pence } from './money.js';
 
@@ -49,7 +50,15 @@ export const LEGACY_REGISTER_COLUMNS = {
   observedFrequency: 'Observed Freq',
 } as const;
 
-type ColumnKey = keyof typeof LEGACY_REGISTER_COLUMNS;
+/**
+ * Columns a register may have. GAP-05: only some members have an email, so a
+ * register without the column loads as one with every email blank.
+ */
+export const LEGACY_REGISTER_OPTIONAL_COLUMNS = {
+  email: 'Email',
+} as const;
+
+type ColumnKey = keyof typeof LEGACY_REGISTER_COLUMNS | keyof typeof LEGACY_REGISTER_OPTIONAL_COLUMNS;
 export type LegacyRow = { readonly sourceRow: number } & { readonly [K in ColumnKey]: string };
 
 /** Flags a person should check. Stable codes: they are stored in `verify_flags`. */
@@ -66,6 +75,8 @@ export type LegacyFlag =
   | 'also_number_not_merged'
   | 'possible_same_person'
   | 'contact_details_differ'
+  | 'email_invalid'
+  | 'email_shared'
   | 'quarantined'; // GAP-35
 
 export interface Finding {
@@ -119,6 +130,8 @@ export interface PlannedMember {
   readonly postCode: string | null;
   readonly postCodeValid: boolean;
   readonly telephone: string | null;
+  /** GAP-05: null for most. Without one the member gets letters, and cannot log in to the portal. */
+  readonly email: string | null;
   readonly joiningDate: string | null;
   readonly status: LegacyMemberStatus;
   readonly prizeDrawNos: readonly number[];
@@ -134,6 +147,7 @@ export interface LegacyRegisterCounts {
   readonly peopleActive: number;
   readonly peopleLapsed: number;
   readonly peopleQuarantined: number;
+  readonly peopleWithEmail: number;
   readonly standingOrders: number;
   readonly agentCollectedNumbers: number;
 }
@@ -215,7 +229,8 @@ const headerKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
 /**
  * Maps cells to named columns by the header row. Every column must be
- * present (in any order); extra columns are ignored. Wholly empty lines are
+ * present (in any order) except the optional ones, which read as blank when
+ * absent; extra columns are ignored. Wholly empty lines are
  * skipped. `sourceRow` is the spreadsheet row number, header = row 1.
  */
 export function readLegacyRegister(cells: readonly (readonly string[])[]): LegacyRow[] {
@@ -233,6 +248,10 @@ export function readLegacyRegister(cells: readonly (readonly string[])[]): Legac
     const row: Record<string, string | number> = { sourceRow: i + 2 };
     for (const [key, heading] of Object.entries(LEGACY_REGISTER_COLUMNS)) {
       row[key] = (cellsInRow[position.get(headerKey(heading))!] ?? '').trim();
+    }
+    for (const [key, heading] of Object.entries(LEGACY_REGISTER_OPTIONAL_COLUMNS)) {
+      const at = position.get(headerKey(heading));
+      row[key] = at === undefined ? '' : (cellsInRow[at] ?? '').trim();
     }
     rows.push(row as unknown as LegacyRow);
   });
@@ -328,6 +347,11 @@ function civilFromDays(days: number): [number, number, number] {
 /** A UK postcode in its usual shape (FR-12.2) — the shape, not that Royal Mail delivers to it. */
 export function isUkPostcode(text: string): boolean {
   return /^(GIR ?0AA|[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2})$/i.test(text.trim());
+}
+
+/** An email address in its usual shape — one @, a dot in the domain, no spaces — not that it delivers. */
+export function isEmailAddress(text: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text.trim());
 }
 
 /** The numbers an Info note such as "Also 1030" or "also 1030 & 1031" says the same person holds. */
@@ -433,7 +457,8 @@ export function planLegacyRegister(rows: readonly LegacyRow[], options: LegacyRe
     const flags = new Set<LegacyFlag>();
 
     const address = (r: LegacyRow) => [r.address1, r.address2, r.address3, normPostcode(r.postCode)].map(norm).join('|');
-    if (group.some((k) => address(k.row) !== address(first) || norm(k.row.telephone) !== norm(first.telephone))) {
+    const emails = new Set(group.map((k) => norm(k.row.email)).filter((e) => e !== ''));
+    if (emails.size > 1 || group.some((k) => address(k.row) !== address(first) || norm(k.row.telephone) !== norm(first.telephone))) {
       flags.add('contact_details_differ');
       flag(first, group[0]!.no, 'contact_details_differ',
         `Numbers ${group.map((k) => k.no).join(', ')} are one person with different contact details; loaded from ${group[0]!.no}`);
@@ -443,6 +468,16 @@ export function planLegacyRegister(rows: readonly LegacyRow[], options: LegacyRe
     if (!postCodeValid) {
       flags.add('postcode_invalid');
       flag(first, group[0]!.no, 'postcode_invalid', `Post Code "${first.postCode}"`);
+    }
+
+    // GAP-05: the lowest number's email, or the next number's that has one —
+    // a person's only email is worth keeping whichever row it was typed on.
+    let email: string | null = null;
+    const emailRow = group.find((k) => k.row.email !== '');
+    if (emailRow && isEmailAddress(emailRow.row.email)) email = emailRow.row.email;
+    else if (emailRow) {
+      flags.add('email_invalid');
+      flag(emailRow.row, emailRow.no, 'email_invalid', `Email "${emailRow.row.email}" — not loaded`);
     }
 
     // The person joined when their earliest number did.
@@ -476,6 +511,7 @@ export function planLegacyRegister(rows: readonly LegacyRow[], options: LegacyRe
       postCode: blank(first.postCode),
       postCodeValid,
       telephone: blank(first.telephone),
+      email,
       joiningDate,
       status: quarantined ? 'quarantined' : paying ? 'active' : 'lapsed',
       prizeDrawNos: group.map((k) => k.no),
@@ -498,6 +534,23 @@ export function planLegacyRegister(rows: readonly LegacyRow[], options: LegacyRe
       members[i] = { ...m, flags: [...m.flags, 'possible_same_person'] };
       findings.push({ sourceRow: m.sourceRow, prizeDrawNo: m.prizeDrawNos[0]!, flag: 'possible_same_person',
         detail: `Same name and postcode as another member (numbers ${nos.join(', ')}), with no "Also" note linking them` });
+    }
+  }
+
+  // One email, one person: it is how a member logs in (and a member's email is
+  // unique). An address on two people is loaded on neither — staff decide whose it is.
+  const byEmail = new Map<string, number[]>();
+  members.forEach((m, i) => {
+    if (m.email) byEmail.set(norm(m.email), [...(byEmail.get(norm(m.email)) ?? []), i]);
+  });
+  for (const indexes of byEmail.values()) {
+    if (indexes.length < 2) continue;
+    const nos = indexes.flatMap((i) => members[i]!.prizeDrawNos);
+    for (const i of indexes) {
+      const m = members[i]!;
+      findings.push({ sourceRow: m.sourceRow, prizeDrawNo: m.prizeDrawNos[0]!, flag: 'email_shared',
+        detail: `Email "${m.email}" is on more than one person (numbers ${nos.join(', ')}) — not loaded on any of them` });
+      members[i] = { ...m, email: null, flags: [...m.flags, 'email_shared'] };
     }
   }
 
@@ -568,6 +621,7 @@ export function planLegacyRegister(rows: readonly LegacyRow[], options: LegacyRe
     peopleActive: members.filter((m) => m.status === 'active').length,
     peopleLapsed: members.filter((m) => m.status === 'lapsed').length,
     peopleQuarantined: members.filter((m) => m.status === 'quarantined').length,
+    peopleWithEmail: members.filter((m) => m.email).length,
     standingOrders: numbers.filter((n) => n.standingOrder).length,
     agentCollectedNumbers: numbers.filter((n) => n.legacyChannel === 'agent_collected').length,
   };

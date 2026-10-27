@@ -11,15 +11,15 @@ import { dirname, resolve } from 'node:path';
 import { createPool, migrate, type Pool } from '@qosfc/db';
 import { LEGACY_REGISTER_COLUMNS, parseDelimited, planLegacyRegister, readLegacyRegister } from '@qosfc/domain';
 import { estimateStandingOrderEntries } from '../draw/standing-order-estimate.js';
-import { importLegacyRegister, LegacyRegisterAlreadyLoadedError } from './import-legacy-register.js';
+import { importLegacyRegister, LegacyRegisterAlreadyLoadedError, LegacyRegisterEmailTakenError } from './import-legacy-register.js';
 
 const url = process.env['TEST_APP_DB_URL'];
 const describeDb = url ? describe : describe.skip;
 
 // Synthetic (B-2), in the register's own column order, as pasted from the spreadsheet.
 const REGISTER = [
-  Object.values(LEGACY_REGISTER_COLUMNS).join('\t'),
-  '1002\tMr\tKen\tExample\t1 Test Road\tCorstorphine\tEdinburgh\tEH12 6NS\t0131 000 0000\tSO\tDirect (bank)\t\t£8.68 monthly\t8.68\tmonthly\tAlso 1030\tMEMBER\tPAYING\t12\t104.16\tmonthly',
+  [...Object.values(LEGACY_REGISTER_COLUMNS), 'Email'].join('\t'),
+  '1002\tMr\tKen\tExample\t1 Test Road\tCorstorphine\tEdinburgh\tEH12 6NS\t0131 000 0000\tSO\tDirect (bank)\t\t£8.68 monthly\t8.68\tmonthly\tAlso 1030\tMEMBER\tPAYING\t12\t104.16\tmonthly\tken@example.com',
   '1030\tMr\tKen\tExample\t1 Test Road\tCorstorphine\tEdinburgh\tEH12 6NS\t0131 000 0000\tSO\tDirect (bank)\t01/06/2015\t£4.34 monthly\t4.34\tmonthly\t\tMEMBER\tPAYING\t12\t52.08\tmonthly',
   '1040\tMrs\tJean\tSample\t2 Test Street\t\tGlasgow\tG1 1AA\t\tSO\tDirect (bank)\t\tSO\t\t\t\tMEMBER\tNOT PAYING\t0\t0\t',
   '1050\tMr\tAl\tAgentPlayer\t3 Test Lane\t\tPaisley\tPA1 1AA\t\tBob\tAgent\t\t£1 weekly\t1.00\tweekly\t\tMEMBER\tPAYING\t52\t52.00\tweekly',
@@ -82,6 +82,14 @@ describeDb('importing the legacy register (T-11)', () => {
       { type: 'standing_order', reference: '1030', amount_pence: 434n, frequency: 'monthly', annual_basis_pence: 5208n, basis_source: 'register', status: 'active' },
     ]);
 
+    // GAP-05: an email where the register has one, letters where it hasn't.
+    const { rows: contact } = await pool.query(`SELECT forename, email::text, preferred_contact FROM member ORDER BY forename`);
+    expect(contact).toEqual([
+      { forename: 'Al', email: null, preferred_contact: 'post' },
+      { forename: 'Jean', email: null, preferred_contact: 'post' },
+      { forename: 'Ken', email: 'ken@example.com', preferred_contact: 'email' },
+    ]);
+
     const { rows: flags } = await pool.query(`SELECT verify_flags FROM member WHERE forename = 'Jean'`);
     expect(flags[0].verify_flags).toContain('amount_unknown');
 
@@ -107,5 +115,14 @@ describeDb('importing the legacy register (T-11)', () => {
   it('refuses to load the same numbers twice, writing nothing (FR-1.3)', async () => {
     await expect(importLegacyRegister(pool, { plan, sourceFileHash: 'abc', actorLabel: 'test' })).rejects.toBeInstanceOf(LegacyRegisterAlreadyLoadedError);
     expect((await pool.query(`SELECT count(*)::int AS n FROM member`)).rows[0].n).toBe(3);
+  });
+
+  it('GAP-05: refuses an email that already belongs to a member, writing nothing', async () => {
+    const other = planLegacyRegister(readLegacyRegister(parseDelimited([
+      [...Object.values(LEGACY_REGISTER_COLUMNS), 'Email'].join('\t'),
+      '2001\tMs\tAnn\tLater\t4 Test Way\t\tLeith\tEH6 1AA\t\tSO\tDirect (bank)\t\t\t\t\t\tMEMBER\tNOT PAYING\t\t\t\tKEN@example.com',
+    ].join('\n'))));
+    await expect(importLegacyRegister(pool, { plan: other, sourceFileHash: 'def', actorLabel: 'test' })).rejects.toBeInstanceOf(LegacyRegisterEmailTakenError);
+    expect((await pool.query(`SELECT count(*)::int AS n FROM member_number WHERE prize_draw_no = 2001`)).rows[0].n).toBe(0);
   });
 });
