@@ -9,7 +9,7 @@
   "scripts": { "build": "tsc -b" },
   "dependencies": {
     "@qosfc/domain": "workspace:*",
-    "@temporalio/client": "^1.14.0",
-    "@temporalio/common": "^1.14.0"
+    "@temporalio/client": "^1.24.0",
+    "@temporalio/common": "^1.24.0"
   }
 }

@@ -19,8 +19,8 @@
     "@qosfc/ports": "workspace:*",
     "@qosfc/db": "workspace:*",
     "@qosfc/temporal-common": "workspace:*",
-    "@temporalio/activity": "^1.14.0",
-    "pg": "^8.16.3"
+    "@temporalio/activity": "^1.24.0",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@types/pg": "^8.15.5"
