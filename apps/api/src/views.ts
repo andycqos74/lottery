@@ -3,6 +3,7 @@ import type { DrawStats, LifetimeTotals, MemberDetails, MemberLine, MyEntry, Ope
 import { MAX_LINES_PER_PURCHASE, PURCHASE_BLOCK_SIZES } from './entries.js';
 import type { DirectDebitStatus } from './direct-debit.js';
 import { assetUrl } from './assets.js';
+import { FAQ, type FaqSection } from './faq.js';
 
 /*
  * The member-facing pages, in the Queen of the South FC identity
@@ -122,6 +123,7 @@ const LOGGED_OUT_MENU: MenuItem[] = [
   { label: 'Results', href: '/past-draws' },
   { label: 'How to play', href: '/#how-to-play' },
   { label: 'Good causes', href: '/#good-causes' },
+  { label: 'FAQs', href: '/faq' },
   { label: 'Log in / Sign up', href: '/login' },
 ];
 
@@ -131,10 +133,12 @@ const LOGGED_IN_MENU: MenuItem[] = [
   { label: 'My numbers', href: '/account' },
   { label: 'My details', href: '/details' },
   { label: 'Results', href: '/past-draws' },
+  { label: 'FAQs', href: '/faq' },
 ];
 
-// The club has not supplied these pages yet; the links are placeholders until it does.
+// The club has not supplied the pages after FAQs yet; those links are placeholders until it does.
 const FOOTER_LINKS: MenuItem[] = [
+  { label: 'FAQs', href: '/faq' },
   { label: 'Rules', href: '#' },
   { label: 'Privacy', href: '#' },
   { label: 'Play responsibly', href: '#' },
@@ -1029,5 +1033,49 @@ export function pastDrawsPage(opts: { member?: ViewMember; openDraw?: OpenDraw |
         <div class="results-table" data-reveal="up" data-delay="120"><div class="results-grid">${head}${rows}</div></div>
         <div class="results-cards" data-reveal="up" data-delay="120">${cards}</div>
       </div>`,
+  });
+}
+
+// ── FAQs ────────────────────────────────────────────────────────────────────
+
+/**
+ * Sent with every answer open, so the page reads in full without scripts;
+ * site.js closes them and turns each question into an accordion toggle.
+ */
+export function faqPage(opts: { member?: ViewMember | undefined; sections?: readonly FaqSection[] }): string {
+  const sections = opts.sections ?? FAQ;
+  const links = sections.map((s, i) => `<a href="#faq-${i}">${escapeHtml(s.title)}</a>`).join('');
+  const list = sections
+    .map(
+      (s, si) => `<section class="faq-section" id="faq-${si}" aria-labelledby="faq-${si}-title">
+        <h2 id="faq-${si}-title">${escapeHtml(s.title)}</h2>
+        <div class="faq-box">${s.items
+          .map(
+            ([question, answer], qi) => `<div class="faq-item is-open">
+            <h3><button type="button" class="faq-q" aria-expanded="true" aria-controls="faq-${si}-${qi}">
+              <span>${escapeHtml(question)}</span><span class="faq-icon">${icon('fa-minus')}</span>
+            </button></h3>
+            <div class="faq-a" id="faq-${si}-${qi}"><div class="faq-a-inner"><div class="faq-a-text"><p>${escapeHtml(answer)}</p></div></div></div>
+          </div>`,
+          )
+          .join('')}</div>
+      </section>`,
+    )
+    .join('');
+
+  return layout({
+    title: 'FAQs',
+    eyebrow: 'Help',
+    heading: 'Questions and answers',
+    lede: 'How QOS Lotto works, entering, standing orders, winning and your account.',
+    member: opts.member,
+    body: `<div class="faq" data-faq>
+      <aside class="faq-nav" data-reveal="left">
+        <span class="stat-label">Sections</span>
+        <nav aria-label="FAQ sections">${links}</nav>
+        <button type="button" class="faq-toggle-all" hidden>Open all</button>
+      </aside>
+      <div class="faq-list" data-reveal="up" data-delay="120">${list}</div>
+    </div>`,
   });
 }

@@ -10,7 +10,7 @@
   --navy:#094582; --sky:#009fff; --mid:#3068a7; --midnight:#00091c;
   --ice:#f2f8fe; --ice-2:#e1e8f9; --ice-line:#b7c7f1; --steel-line:#c9d7e4; --pitch:#8fa6c1;
   --on-navy:#d3e4f5; --on-navy-label:#9cc9f0; --on-navy-soft:#e6f0fa;
-  --grey-150:#efefef; --grey-500:#6c757d; --grey-600:#666666; --grey-800:#333333;
+  --grey-150:#efefef; --grey-500:#6c757d; --grey-600:#666666; --grey-700:#555555; --grey-800:#333333;
   --error:#b3261e; --error-bg:#fdecea; --error-line:#f3c1bd;
   --font-display:'Merriweather Sans', sans-serif; --font-body:'Open Sans', sans-serif; --font-accent:'Play', sans-serif;
 }
@@ -359,6 +359,35 @@ input,button,select{ font-family:var(--font-body) }
 .community-text p{ margin:0; font-size:16px; line-height:1.7; color:var(--grey-600); max-width:52ch; }
 .more-link{ font-weight:700; font-size:15px; display:flex; align-items:center; gap:8px; }
 
+/* ── FAQs ─────────────────────────────────────────────────────────────── */
+.faq{ display:flex; flex-wrap:wrap; gap:clamp(24px,4vw,48px); align-items:flex-start; }
+.faq-nav{ flex:1 1 220px; max-width:280px; display:flex; flex-direction:column; gap:4px; position:sticky; top:24px; }
+.faq-nav .stat-label{ padding-bottom:8px; }
+.faq-nav nav{ display:flex; flex-direction:column; gap:4px; }
+.faq-nav nav a{ padding:10px 14px; border-left:3px solid var(--steel-line); color:var(--navy); text-decoration:none; font-weight:700; font-size:14px; }
+.faq-nav nav a:hover{ border-left-color:var(--sky); background:var(--ice); }
+.faq-toggle-all{ margin-top:16px; height:44px; padding:0 16px; background:#fff; border:2px solid var(--navy); color:var(--navy); font-weight:700; font-size:14px; font-family:var(--font-body); cursor:pointer; align-self:flex-start; }
+.faq-list{ flex:3 1 min(100%,560px); min-width:0; display:flex; flex-direction:column; gap:clamp(32px,5vw,48px); }
+.faq-section{ display:flex; flex-direction:column; gap:14px; scroll-margin-top:24px; }
+.faq-section h2{ margin:0; font-family:var(--font-display); font-weight:800; font-size:clamp(22px,3vw,26px); color:var(--navy); }
+.faq-box{ border:1px solid var(--steel-line); background:#fff; display:flex; flex-direction:column; }
+.faq-item + .faq-item{ border-top:1px solid var(--grey-150); }
+.faq-item h3{ margin:0; font:inherit; }
+.faq-q{ width:100%; min-height:56px; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px clamp(16px,3vw,24px);
+  background:#fff; border:0; text-align:left; cursor:pointer; font-family:var(--font-body); font-size:16px; font-weight:700; color:var(--navy); line-height:1.4; }
+.faq-q > span:first-child{ text-wrap:pretty; }
+.faq-q:hover, .faq-item.is-open .faq-q{ background:var(--ice); }
+.faq-icon{ flex:none; width:32px; height:32px; border-radius:50%; background:var(--ice); color:var(--navy); display:flex; align-items:center; justify-content:center; font-size:13px; }
+.faq-item.is-open .faq-icon{ background:var(--navy); color:#fff; transform:rotate(180deg); }
+.faq-a{ display:grid; grid-template-rows:0fr; opacity:0; background:var(--ice); }
+.faq-item.is-open .faq-a{ grid-template-rows:1fr; opacity:1; }
+.faq-a-inner{ overflow:hidden; min-height:0; }
+.faq-a-text{ padding:0 clamp(16px,3vw,24px) 20px; transform:translateY(-8px); }
+.faq-item.is-open .faq-a-text{ transform:none; }
+.faq-a p{ margin:0; font-size:15px; line-height:1.7; color:var(--grey-700); max-width:72ch; text-wrap:pretty; }
+/* Narrow: the section list stacks above the questions, and stops sticking. */
+@media (max-width:875px){ .faq-nav{ position:static; max-width:none; } }
+
 /* ── Motion: only for people who have not asked for less ────────────────── */
 @media (prefers-reduced-motion: no-preference){
   /* Inner pages: header and panels slide in once on load — pure CSS, so
@@ -377,6 +406,13 @@ input,button,select{ font-family:var(--font-body) }
   .page-landing [data-delay="280"]{ transition-delay:280ms } .page-landing [data-delay="420"]{ transition-delay:420ms }
 
   [data-pulse]{ animation:pulse 2.8s ease-in-out infinite; }
+
+  /* FAQs: section links glide, answers slide open (without this, they snap). */
+  html:has([data-faq]){ scroll-behavior:smooth; }
+  .faq-q{ transition:background .3s ease; }
+  .faq-icon{ transition:transform .3s ease, background .3s ease, color .3s ease; }
+  .faq-a{ transition:grid-template-rows .3s ease, opacity .3s ease; }
+  .faq-a-text{ transition:transform .3s ease; }
 
   .is-shown [data-ball], .page-inner [data-ball]{ animation:ball-in .7s ease-out backwards, ball-ring 1.6s ease-out infinite; }
   [data-ball]:nth-child(1){ animation-delay:300ms, 1.5s } [data-ball]:nth-child(2){ animation-delay:480ms, 1.9s }

@@ -208,6 +208,40 @@
     update();
   });
 
+  // ── FAQs: each question opens and closes its answer ──────────────────────
+  // The server sends every answer open, so the page reads in full without
+  // this; here they all start closed.
+  var faq = $('[data-faq]');
+  if (faq) {
+    var items = $$('.faq-item', faq);
+    var toggleAll = $('.faq-toggle-all', faq);
+    var setItem = function (item, open) {
+      var q = $('.faq-q', item);
+      var a = document.getElementById(q.getAttribute('aria-controls'));
+      item.classList.toggle('is-open', open);
+      q.setAttribute('aria-expanded', open ? 'true' : 'false');
+      a.setAttribute('aria-hidden', open ? 'false' : 'true');
+      a.inert = !open;
+      $('.faq-icon i', item).className = 'fa ' + (open ? 'fa-minus' : 'fa-plus');
+    };
+    var allOpen = function () { return items.every(function (item) { return item.classList.contains('is-open'); }); };
+    var refreshAll = function () { toggleAll.textContent = allOpen() ? 'Close all' : 'Open all'; };
+    items.forEach(function (item) {
+      setItem(item, false);
+      $('.faq-q', item).addEventListener('click', function () {
+        setItem(item, !item.classList.contains('is-open'));
+        refreshAll();
+      });
+    });
+    toggleAll.addEventListener('click', function () {
+      var open = !allOpen();
+      items.forEach(function (item) { setItem(item, open); });
+      refreshAll();
+    });
+    toggleAll.hidden = false;
+    refreshAll();
+  }
+
   // ── Payment: card or Direct Debit (GitHub #8) ─────────────────────────────
   var payForm = $('#pay-form');
   if (payForm) {
