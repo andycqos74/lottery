@@ -43,6 +43,7 @@ import {
   detailsPage,
   directDebitReturnPage,
   drawPage,
+  faqPage,
   forgotPasswordPage,
   landingPage,
   loginPage,
@@ -772,6 +773,12 @@ app.get('/past-draws', async (request, reply) => {
   reply.type('text/html').send(
     pastDrawsPage({ ...(found ? { member: found.view } : {}), ...(openDraw ? { openDraw } : {}), draws }),
   );
+});
+
+// Public: anyone can read the FAQs, logged in or not.
+app.get('/faq', async (request, reply) => {
+  const found = await viewMember(request);
+  reply.type('text/html').send(faqPage({ member: found?.view }));
 });
 
 await app.listen({ port, host: '0.0.0.0' });
