@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FAQ, faqPlaceholders, type FaqSection } from './faq.js';
-import { escapeHtml, faqPage, pastDrawsPage } from './views.js';
+import { escapeHtml, faqPage, landingPage, pastDrawsPage } from './views.js';
 
 describe('FAQ copy (design_handoff_public_pages, page 9)', () => {
   it("has the design's sections, in order, with every question", () => {
@@ -59,10 +59,20 @@ describe('the FAQ page', () => {
     expect(html).toContain('<h1>Questions and answers</h1>');
   });
 
-  it('is linked from the menu (logged in or out) and the footer', () => {
-    const loggedOut = pastDrawsPage({ draws: [] });
-    const loggedIn = pastDrawsPage({ member: { forename: 'Ken', csrf: 'x' }, draws: [] });
-    expect(loggedOut.match(/href="\/faq"/g)).toHaveLength(2);
-    expect(loggedIn.match(/href="\/faq"/g)).toHaveLength(2);
+  it('is linked from the menu (logged in or out) and the footer, on the landing page and inner pages', () => {
+    const member = { forename: 'Ken', csrf: 'x' };
+    const landing = (m?: typeof member) =>
+      landingPage({ member: m, totals: { prizePaidPence: 0n }, split: { prizeBp: 5000, goodCauseBp: 4000, adminBp: 1000 } });
+    const pages = {
+      'landing, logged out': landing(),
+      'landing, logged in': landing(member),
+      'inner, logged out': pastDrawsPage({ draws: [] }),
+      'inner, logged in': pastDrawsPage({ member, draws: [] }),
+    };
+    for (const [name, html] of Object.entries(pages)) {
+      const menu = html.slice(html.indexOf('id="site-menu"'), html.indexOf('</nav>'));
+      const footer = html.slice(html.indexOf('<footer'));
+      expect({ name, menu: menu.includes('href="/faq"'), footer: footer.includes('href="/faq"') }).toEqual({ name, menu: true, footer: true });
+    }
   });
 });
