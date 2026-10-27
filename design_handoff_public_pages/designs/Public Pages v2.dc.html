@@ -285,18 +285,50 @@
         </div>
       </div>
     </sc-if>
+    <sc-if value="{{ isFaq }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-wrap:wrap;gap:clamp(24px,4vw,48px);align-items:flex-start">
+        <aside style="flex:1 1 220px;max-width:280px;display:flex;flex-direction:column;gap:4px;position:sticky;top:24px" data-reveal="left">
+          <span style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grey-500);padding-bottom:8px">Sections</span>
+          <sc-for list="{{ faq }}" as="s" hint-placeholder-count="6">
+            <a href="#{{ s.id }}" onClick="{{ s.jump }}" style="padding:10px 14px;border-left:3px solid var(--qos-steel-line);color:var(--qos-navy);text-decoration:none;font-weight:700;font-size:14px" style-hover="border-left-color:var(--qos-sky);background:var(--qos-ice)">{{ s.title }}</a>
+          </sc-for>
+          <button type="button" onClick="{{ toggleAll }}" style="margin-top:16px;height:44px;padding:0 16px;background:#fff;border:2px solid var(--qos-navy);color:var(--qos-navy);font-weight:700;font-size:14px;cursor:pointer;align-self:flex-start">{{ toggleAllLabel }}</button>
+        </aside>
+        <div style="flex:3 1 min(100%,560px);min-width:0;display:flex;flex-direction:column;gap:clamp(32px,5vw,48px)" data-reveal="up" data-delay="120">
+          <sc-for list="{{ faq }}" as="s" hint-placeholder-count="6">
+            <div id="{{ s.id }}" style="display:flex;flex-direction:column;gap:14px;scroll-margin-top:24px">
+              <h2 style="margin:0;font-family:var(--font-display);font-weight:800;font-size:clamp(22px,3vw,26px);color:var(--qos-navy)">{{ s.title }}</h2>
+              <div style="border:1px solid var(--qos-steel-line);background:#fff;display:flex;flex-direction:column">
+                <sc-for list="{{ s.items }}" as="q" hint-placeholder-count="4">
+                  <div style="border-top:{{ q.rule }}">
+                    <button type="button" onClick="{{ q.toggle }}" aria-expanded="{{ q.open }}" style="width:100%;min-height:56px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px clamp(16px,3vw,24px);background:{{ q.bg }};border:0;text-align:left;cursor:pointer;transition:background .3s ease;font-family:var(--font-body);font-size:16px;font-weight:700;color:var(--qos-navy);line-height:1.4" style-hover="background:var(--qos-ice)">
+                      <span style="text-wrap:pretty">{{ q.q }}</span>
+                      <span style="flex:none;width:32px;height:32px;border-radius:50%;background:{{ q.iconBg }};color:{{ q.iconFg }};display:flex;align-items:center;justify-content:center;transform:{{ q.spin }};transition:transform .3s ease, background .3s ease, color .3s ease"><i class="fa {{ q.icon }}" aria-hidden="true" style="font-size:13px"></i></span>
+                    </button>
+                    <div style="display:grid;grid-template-rows:{{ q.rows }};opacity:{{ q.opacity }};background:var(--qos-ice);transition:grid-template-rows .3s ease, opacity .3s ease">
+                      <div style="overflow:hidden;min-height:0" aria-hidden="{{ q.hidden }}"><div style="padding:0 clamp(16px,3vw,24px) 20px;transform:{{ q.shift }};transition:transform .3s ease"><p style="margin:0;font-size:15px;line-height:1.7;color:var(--grey-700);max-width:72ch;text-wrap:pretty"><sc-for list="{{ q.parts }}" as="p" hint-placeholder-count="1"><span style="background:{{ p.bg }};color:{{ p.fg }}">{{ p.t }}</span></sc-for></p></div></div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
   </main>
 
   <footer style="background:var(--qos-navy);color:#d3e4f5;padding:40px clamp(16px,4vw,48px) 32px;display:flex;flex-wrap:wrap;align-items:center;gap:20px;font-size:13px;clip-path:polygon(0 12px,30% 0,62% 14px,100% 2px,100% 100%,0 100%)">
     <img src="assets/qos-crest.png" alt="" style="height:40px;width:40px">
     <span>The Doonhamers Draw · Queen of the South FC · Palmerston Park, Dumfries</span>
-    <div style="margin-left:auto;display:flex;flex-wrap:wrap;gap:20px"><a href="#" style="color:#fff;text-decoration:none">Rules</a><a href="#" style="color:#fff;text-decoration:none">Privacy</a><a href="#" style="color:#fff;text-decoration:none">Play responsibly</a><a href="#" style="color:#fff;text-decoration:none">Contact</a></div>
+    <div style="margin-left:auto;display:flex;flex-wrap:wrap;gap:20px"><a href="#" onClick="{{ goFaq }}" style="color:#fff;text-decoration:none">FAQs</a><a href="#" style="color:#fff;text-decoration:none">Rules</a><a href="#" style="color:#fff;text-decoration:none">Privacy</a><a href="#" style="color:#fff;text-decoration:none">Play responsibly</a><a href="#" style="color:#fff;text-decoration:none">Contact</a></div>
   </footer>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props="{&quot;startPage&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signup&quot;,&quot;login&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;past&quot;,&quot;draw&quot;,&quot;pay&quot;],&quot;default&quot;:&quot;signup&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+<script type="text/x-dc" data-dc-script data-props="{&quot;startPage&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signup&quot;,&quot;login&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;past&quot;,&quot;draw&quot;,&quot;pay&quot;,&quot;faq&quot;],&quot;default&quot;:&quot;signup&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const FAQ = [["About QOS Lotto",[["What is QOS Lotto?","It's Queen of the South's club lottery, now a weekly match-the-numbers draw. It replaces the old numbered raffle from [first draw date]."],["How does it work?","Each ticket has 4 numbers from 1 to 20. Every [draw day] we draw 4 numbers. If your ticket matches all 4, you win the jackpot."],["How much is a ticket?","£2 per ticket, per draw."],["How much can I win?","The jackpot is never less than £500. If nobody wins, it rolls over to the next week and keeps growing. [It must be won once it reaches £20,000 — wording to follow.]"],["What are the odds of winning?","1 in 4,845 for each ticket."],["Are there smaller prizes for matching 2 or 3 numbers?","No. The whole prize fund goes into the jackpot, so it grows faster."],["What if more than one ticket matches?","The jackpot is shared equally between the winning tickets."],["How is the draw made?","[Method, e.g. a certified random number generator or a ball machine, witnessed by two people.] Results are published every [draw day]."],["Where does the money go?","For every £2 ticket, £1 goes to prizes, 80p goes to [what the money funds] and 20p covers running costs."],["Who can play?","Anyone aged 16 or over. [Any other limits, e.g. UK residents only, or exclusions for people who run the draw.]"]]],["Entering",[["How do I enter?","Online by debit card or Direct Debit at [web address], or [through one of our collecting agents / at the club shop]."],["Can I choose my own numbers?","Yes, if you enter online or by Direct Debit. If you'd rather not choose, we can pick random numbers for you."],["Can I keep the same numbers every week?","Yes. On Direct Debit your numbers go into every draw automatically until you cancel."],["Can I buy more than one ticket?","Yes. Each ticket is £2 and can have different numbers."],["When do entries close?","[Cut-off time and day] before each draw. Entries after that go into the following week's draw."]]],["If you already pay by standing order",[["Do I need to do anything?","No. Your standing order carries on as it is, and you'll keep playing in QOS Lotto."],["What will I get for my payment?","Every £2 you pay buys one ticket. We'll write and tell you exactly how many draws your payment covers."],["I pay £4.34 a month. What does that get me now?","A ticket in every other draw. That amount was set for the old £1-a-week draw, and tickets are now £2. To play every week, raise your standing order to £8.67 a month or switch to Direct Debit."],["Which draws am I in?","If you pay for a ticket every week, you're in every draw. If you pay for every other week, you're in the first draw and then every second week after that. Your letter gives your first draw date."],["Why do standing order members get random numbers?","Your bank sends standing order payments without any instructions attached, so we can't link a payment to numbers you've chosen. A computer picks your 4 numbers, and they stay the same every week you play."],["Are random numbers less likely to win?","No. Every combination has exactly the same 1 in 4,845 chance."],["I want to choose my own numbers. What do I do?","Switch to Direct Debit at [web address] or call [phone]. Wait until we've written to confirm your Direct Debit before you ask your bank to cancel your standing order, so you don't miss any draws."],["What happens to my old raffle number?","Your member number stays the same, so we can find your record. Your 4 lotto numbers replace your old raffle number for the draw."],["I want to change how much I pay.","Ask your bank to change your standing order, then let us know on [phone] or [email] so we can update your entries."],["My payment doesn't divide exactly into £2 tickets.","Any small amount left over [goes to (what the money funds) / is carried forward toward your next ticket]."]]],["If you pay through a collecting agent",[["What happens to my entry?","Your agent will be in touch before [first draw date] to explain how to enter the new draw. [Details to follow once the agent process is confirmed.]"]]],["Winning",[["How will I know if I've won?","Results are posted every [draw day] at [web address], on the club's social media and [in the club shop / matchday programme]. We'll also contact winners using the details we hold, so please keep your address and phone number up to date."],["How do I claim?","Call [phone] within [claim window] of the draw."],["How are prizes paid?","[By bank transfer / cheque] within [number] days of the claim being confirmed."],["Will my name be published?","[Only with your permission. We may publish the jackpot amount and the town you live in.]"]]],["Your account and support",[["How do I stop playing?","Standing order: cancel it with your bank and let us know. Direct Debit: contact us or cancel with your bank. Card: simply don't buy another ticket."],["I've moved house or changed my details.","Call [phone] or email [email] and we'll update your record."],["Who runs QOS Lotto?","Queen of the South FC Ltd Development Association. It's registered with Dumfries and Galloway Council under the Gambling Act 2005 [registration no.]. The promoter is [name], [address]."],["Where can I read the full rules?","At [web address], or ask for a printed copy in the club shop."],["What if playing stops being fun?","Please play for fun and only spend what you can afford. For free, confidential support, call the National Gambling Helpline on 0808 8020 133 or visit begambleaware.org. To stop playing at any time, contact us and we'll close your entry."],["Who do I contact with a question?","[Name] on [phone] or [email]."]]]];
 class Component extends DCLogic {
-  state = { page: this.props.startPage ?? 'signup', menu: false, sent: false, lines: [[]], method: 'card', blocks: 4, vw: window.innerWidth };
+  state = { page: this.props.startPage ?? 'signup', menu: false, faqOpen: {}, sent: false, lines: [[]], method: 'card', blocks: 4, vw: window.innerWidth };
   componentDidMount() { setTimeout(() => this.motion(), 60); this.onResize = () => this.setState({ vw: window.innerWidth }); window.addEventListener('resize', this.onResize); }
   componentWillUnmount() { window.removeEventListener('resize', this.onResize); }
   componentDidUpdate(_, prev) { if (prev.page !== this.state.page) setTimeout(() => this.motion(), 30); }
@@ -315,6 +347,24 @@ class Component extends DCLogic {
     }
   }
   go(page) { return (e) => { e && e.preventDefault && e.preventDefault(); this.setState({ page, menu: false, sent: false }); window.scrollTo(0, 0); }; }
+  faqVals() {
+    const open = this.state.faqOpen;
+    const all = FAQ.flatMap(([, items], si) => items.map((_, qi) => si + '-' + qi));
+    const allOpen = all.every((k) => open[k]);
+    const parts = (a) => a.split(/(\[[^\]]*\])/).filter(Boolean).map((t) => { const ph = t[0] === '['; return { t, bg: ph ? '#fff3c4' : 'transparent', fg: ph ? '#6b4e00' : 'inherit' }; });
+    return {
+      faq: FAQ.map(([title, items], si) => ({
+        title, id: 'faq-' + si,
+        jump: (e) => { e.preventDefault(); const el = document.getElementById('faq-' + si); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 24, behavior: 'smooth' }); },
+        items: items.map(([q, a], qi) => { const k = si + '-' + qi, o = !!open[k]; return {
+          q, parts: parts(a), open: o, rows: o ? '1fr' : '0fr', opacity: o ? 1 : 0, hidden: o ? 'false' : 'true', shift: o ? 'none' : 'translateY(-8px)', spin: o ? 'rotate(180deg)' : 'none', rule: qi ? '1px solid var(--grey-150)' : '0',
+          bg: o ? 'var(--qos-ice)' : '#fff', icon: o ? 'fa-minus' : 'fa-plus', iconBg: o ? '#094582' : '#f2f8fe', iconFg: o ? '#fff' : '#094582',
+          toggle: () => this.setState((s) => ({ faqOpen: { ...s.faqOpen, [k]: !s.faqOpen[k] } })) }; }),
+      })),
+      toggleAllLabel: allOpen ? 'Close all' : 'Open all',
+      toggleAll: () => this.setState({ faqOpen: allOpen ? {} : Object.fromEntries(all.map((k) => [k, true])) }),
+    };
+  }
   setLine(i, fn) { this.setState((s) => ({ lines: s.lines.map((l, j) => (j === i ? fn(l) : l)) })); }
   renderVals() {
     const { page, lines, method, blocks } = this.state;
@@ -325,9 +375,10 @@ class Component extends DCLogic {
       reset: ['Log in', 'Choose a new password', 'Use at least 10 characters.'],
       past: ['Results', 'Past draws', 'Winning numbers, jackpots and winners from every settled draw.'],
       draw: ['Draw No. 143 · Sat 10 Oct, 19:00', 'Current draw', 'Drawn Sat 10 Oct, 19:00 — entries close Fri 9 Oct, 18:00. Pick 4 numbers from 1 to 20, or let us pick for you.'],
+      faq: ['Help', 'Questions and answers', 'How QOS Lotto works, entering, standing orders, winning and your account.'],
       pay: ['Draw No. 143', 'Pay for your entries', '£2.00 buys one entry into one draw. Pay by card for a set number of draws, or by Direct Debit to stay entered every draw.'],
     }[page];
-    const tabDefs = [['signup', 'Sign up'], ['login', 'Log in'], ['forgot', 'Forgotten password'], ['reset', 'Reset password'], ['past', 'Past draws'], ['draw', 'Current draw'], ['pay', 'Payment']];
+    const tabDefs = [['signup', 'Sign up'], ['login', 'Log in'], ['forgot', 'Forgotten password'], ['reset', 'Reset password'], ['past', 'Past draws'], ['draw', 'Current draw'], ['pay', 'Payment'], ['faq', 'FAQs']];
     const filled = lines.filter((l) => l.length === 4);
     const payLines = (filled.length ? filled : [[3, 9, 14, 18]]);
     const n = payLines.length, several = n > 1;
@@ -339,12 +390,12 @@ class Component extends DCLogic {
       tabs: tabDefs.map(([k, label]) => ({ label, go: this.go(k), bg: page === k ? '#094582' : '#fff', fg: page === k ? '#fff' : '#094582' })),
       menuOpen: this.state.menu, menuGlyph: this.state.menu ? '×' : '☰',
       toggleMenu: () => this.setState((s) => ({ menu: !s.menu })),
-      menuItems: [['Home', null], ['Current draw', 'draw'], ['Results', 'past'], ['Log in', 'login'], ['Sign up', 'signup']].map(([label, k]) => ({ label, go: k ? this.go(k) : () => { window.location.href = 'Landing Page v2.dc.html'; } })),
+      menuItems: [['Home', null], ['Current draw', 'draw'], ['Results', 'past'], ['FAQs', 'faq'], ['Log in', 'login'], ['Sign up', 'signup']].map(([label, k]) => ({ label, go: k ? this.go(k) : () => { window.location.href = 'Landing Page v2.dc.html'; } })),
       wide: this.state.vw >= 560, narrow: this.state.vw < 700, wideTable: this.state.vw >= 700, ballCols: this.state.vw >= 720 ? 10 : 5,
       eyebrow: meta[0], title: meta[1], lede: meta[2],
       isSignup: page === 'signup', isAuth: ['login', 'forgot', 'reset'].includes(page), isLogin: page === 'login', isForgot: page === 'forgot', isReset: page === 'reset',
       isPast: page === 'past', isDraw: page === 'draw', isPay: page === 'pay',
-      goLogin: this.go('login'), goSignup: this.go('signup'), goForgot: this.go('forgot'), goDraw: this.go('draw'), goPay: this.go('pay'),
+      goLogin: this.go('login'), goSignup: this.go('signup'), goForgot: this.go('forgot'), goDraw: this.go('draw'), goPay: this.go('pay'), goFaq: this.go('faq'), isFaq: page === 'faq', ...this.faqVals(),
       sent: this.state.sent, notSent: !this.state.sent, send: () => this.setState({ sent: true }),
       whyJoin: [
         { icon: 'fa-heart', text: '40p in every £1 goes to the Queen of the South Community Trust.' },

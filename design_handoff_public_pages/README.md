@@ -14,6 +14,7 @@ Pages covered:
 6. **Past draws** — `pastDrawsPage()`
 7. **Current draw (pick numbers)** — `drawPage()`
 8. **Payment** — `paymentPage()`
+9. **FAQs** (new) — `/faq`, new `faqPage()`
 
 Out of scope (unchanged for now, but should adopt the new shell): `accountPage`, `detailsPage`, `purchaseReturnPage`, `directDebitReturnPage`.
 
@@ -62,8 +63,8 @@ Drop the dark-mode variables from the current `STYLE`. The new design is light-o
   - **Menu button**: height 44px, min-width 44px, transparent, no border, **`#f2f8fe`** text, Open Sans 700 15px, letter-spacing 1px, uppercase. Shows "MENU ☰" (the word "Menu" is hidden below 560px viewport width; just ☰ at 22px). When open the glyph becomes "×". **Hover colour navy `#094582`.**
   - **Profile link**: a 44×44 circle, background `#094582`, white `fa-user` at 20px; hover `opacity:.7`. Links to `/account` when logged in and `/login` when logged out.
 - **Menu dropdown** (toggled by the Menu button): `position:absolute; top:76px; right:clamp(0px,4vw,48px); width:min(300px,100%)`, background `#094582`, padding 12px 0. Items are links with padding 12px 24px, white, Open Sans 700 14px, letter-spacing 1px, uppercase, hover background `#009fff`.
-  - Logged out: Home, Current draw, Results, How to play, Good causes, Log in / Sign up
-  - Logged in: Home, Current draw, My numbers, My details, Results, Log out (a POST form with CSRF, like today)
+  - Logged out: Home, Current draw, Results, How to play, Good causes, FAQs, Log in / Sign up
+  - Logged in: Home, Current draw, My numbers, My details, Results, FAQs, Log out (a POST form with CSRF, like today)
   - Close on outside click and on Escape. Give it `aria-expanded`/`aria-controls`.
 
 ### Inner page header (every page except landing)
@@ -89,6 +90,7 @@ Per-page header copy (eyebrow / H1 / lede):
 | Past draws | Results | Past draws | Winning numbers, jackpots and winners from every settled draw. |
 | Current draw | `Draw No. {n} · {drawWhen}` | Current draw (or `drawHeading(draw)`) | `Drawn {drawWhen} — entries close {closeAt}. Pick 4 numbers from 1 to 20, or let us pick for you.` |
 | Payment | `Draw No. {n}` | Pay for your entries | £2.00 buys one entry into one draw. Pay by card for a set number of draws, or by Direct Debit to stay entered every draw. |
+| FAQs | Help | Questions and answers | How QOS Lotto works, entering, standing orders, winning and your account. |
 
 ### Slanted band (under every header)
 A 28px-tall element with `margin-top:-14px; position:relative; z-index:3`, containing two absolutely positioned bars skewed `skewY(-1deg)`: the top part `#009fff` (`inset:0 0 10px 0`) and the bottom part `#094582` (`inset:10px 0 0 0`).
@@ -97,7 +99,7 @@ A 28px-tall element with `margin-top:-14px; position:relative; z-index:3`, conta
 `max-width:1140px; margin:0 auto; padding:clamp(32px,6vw,64px) clamp(16px,3vw,24px) clamp(64px,10vw,96px)`.
 
 ### Footer
-Background `#094582`, colour `#d3e4f5`, padding `40px clamp(16px,4vw,48px) 32px`, flex-wrap, gap 20–24px, 13px. Irregular top edge: `clip-path:polygon(0 12px,30% 0,62% 14px,100% 2px,100% 100%,0 100%)`. Contents: crest 40–44px, the text "The Doonhamers Draw · Queen of the South FC · Palmerston Park, Dumfries", and right-aligned white links Rules, Privacy, Play responsibly, Contact (no underline).
+Background `#094582`, colour `#d3e4f5`, padding `40px clamp(16px,4vw,48px) 32px`, flex-wrap, gap 20–24px, 13px. Irregular top edge: `clip-path:polygon(0 12px,30% 0,62% 14px,100% 2px,100% 100%,0 100%)`. Contents: crest 40–44px, the text "The Doonhamers Draw · Queen of the South FC · Palmerston Park, Dumfries", and right-aligned white links FAQs (→ `/faq`), Rules, Privacy, Play responsibly, Contact (no underline).
 
 ### Shared components
 - **Panel (light):** background `#f2f8fe`, `1px solid #c9d7e4`, padding `clamp(20px,5vw,32px)` (forms) or `clamp(18px,4.5vw,28px)` (draw/pay), flex column, gap 18–22px.
@@ -204,6 +206,27 @@ Flex-wrap, gap 24px.
 - Order summary (navy angled panel, `flex:1 1 280px`): the line description and amount (Play 700), a jagged sky divider, then "Total due today" / "Due today" with the amount (Merriweather 800 30px, pulse), and the existing explanatory note.
 - Keep all existing form names, hidden inputs, CSRF and the `choose()` script behaviour.
 
+### 9. FAQs (`/faq`, new)
+Public page (no login), standard inner shell. Copy is final and must be used **verbatim**; it lives in the `FAQ` constant at the top of the logic script in `designs/Public Pages v2.dc.html` (array of `[sectionTitle, [[question, answer], …]]`). Move it to a data module (e.g. `apps/api/src/faq.ts`) so the club can edit it without touching markup.
+
+Sections, in order: About QOS Lotto (10) · Entering (5) · If you already pay by standing order (10) · If you pay through a collecting agent (1) · Winning (4) · Your account and support (6).
+
+**Layout:** flex-wrap, gap `clamp(24px,4vw,48px)`.
+- **Section nav** (`flex:1 1 220px; max-width:280px; position:sticky; top:24px`): label "Sections" (stat-label style); one link per section (padding 10px 14px, `3px solid #c9d7e4` left border, navy 700 14px, no underline; hover: left border `#009fff`, background `#f2f8fe`). Links are `#faq-{i}` anchors with smooth scroll and 24px offset (`scroll-margin-top:24px` on targets). Below: secondary button "Open all" / "Close all" (44px, `2px solid #094582`), toggling every item.
+- On narrow screens the nav stacks above the list and loses `sticky`.
+- **List** (`flex:3 1 min(100%,560px)`), sections gap `clamp(32px,5vw,48px)`. Each: H2 (Merriweather 800 `clamp(22px,3vw,26px)` navy), then a white box with `1px solid #c9d7e4` holding the items; items after the first have a `1px solid #efefef` top rule.
+
+**Item (accordion):** use `<button aria-expanded aria-controls>` + a region, or native `<details>/<summary>` if you can match the animation.
+- Question row: full width, min-height 56px, padding `14px clamp(16px,3vw,24px)`, Open Sans 700 16px / 1.4 navy, left-aligned. Hover and open background `#f2f8fe`.
+- Icon: 32px circle at the right, `fa-plus` (closed: `#f2f8fe` bg, navy icon) / `fa-minus` (open: navy bg, white icon), 13px.
+- Answer: background `#f2f8fe` across the **full width** of the box; inner padding `0 clamp(16px,3vw,24px) 20px`; text 15px / 1.7 `#555`, `max-width:72ch`, `text-wrap:pretty`.
+- All items start closed; each toggles independently.
+- **Open/close animation** (inside the reduced-motion media query; without it, snap): the answer wrapper is `display:grid` transitioning `grid-template-rows: 0fr ↔ 1fr` and `opacity 0 ↔ 1` over .3s ease; inner element `overflow:hidden; min-height:0`; content slides `translateY(-8px) → none`. Icon rotates 180° and cross-fades colours (.3s). Row background transitions .3s. Closed answers get `aria-hidden="true"` / `inert`.
+
+**Placeholders:** answer text in `[square brackets]` is copy the club still has to supply (draw day, web address, phone, registration no., etc.). The prototype highlights it (background `#fff3c4`, text `#6b4e00`) so reviewers can spot gaps. **Before go-live every bracket must be replaced**. Add a build/test check that fails if any FAQ answer still contains `[`. Do not ship the highlight.
+
+**Consistency to confirm with the club:** the FAQ split ("£1 to prizes, 80p to [what the money funds], 20p running costs" per £2) matches the 50/40/10 used elsewhere, but the landing/sign-up pages name the Queen of the South Community Trust, while the FAQ leaves the recipient as a placeholder. Use one wording site-wide.
+
 ---
 
 ## Interactions & animation
@@ -262,10 +285,11 @@ Draw 143 / £1,860 estimate, last draw 142 (3 · 9 · 14 · 18, £1,240, 2 winne
 ## Screenshots
 `screenshots/` is captured at a ~907px-wide preview, so each image shows the viewport, not the full page.
 - `01a`–`01h`: the landing page, top to bottom (hero, last draw, easy entry, how to play, totals, split, community, footer)
-- `02-sign-up`, `03-log-in`, `04-forgotten-password`, `05-reset-password`, `06-past-draws`, `07-current-draw`, `08-payment`: the top of each inner page
+- `02-sign-up`, `03-log-in`, `04-forgotten-password`, `05-reset-password`, `06-past-draws`, `07-current-draw`, `08-payment`, `09-faqs`: the top of each inner page
+- `09b-faqs-list`: FAQ section nav and accordion, first item open (placeholder highlighted)
 
 ## Files
 - `designs/Landing Page v2.dc.html`: landing page (final). Photos load from `designs/.image-slots.state.json`.
-- `designs/Public Pages v2.dc.html`: all 7 inner pages (final; use the top review bar to switch pages)
+- `designs/Public Pages v2.dc.html`: all 8 inner pages including FAQs (final; use the top review bar to switch pages)
 - `designs/reference/Current - Sign up.dc.html`: the current UI, for comparison
-- Source to change: `apps/api/src/views.ts` (STYLE, `layout()`, every public page function), `apps/api/src/index.ts` (a new `/` route), `apps/api/src/db.ts` (lifetime totals query)
+- Source to change: `apps/api/src/views.ts` (STYLE, `layout()`, every public page function), `apps/api/src/index.ts` (new `/` and `/faq` routes), `apps/api/src/db.ts` (lifetime totals query)
