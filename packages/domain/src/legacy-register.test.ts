@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   alsoNumbers,
   GAP_35_QUARANTINE,
+  isEmailAddress,
   isUkPostcode,
   LEGACY_REGISTER_COLUMNS,
+  LEGACY_REGISTER_OPTIONAL_COLUMNS,
   parseDelimited,
   parseFrequency,
   parsePounds,
@@ -13,20 +15,20 @@ import {
   type LegacyRow,
 } from './legacy-register.js';
 
-const HEADER = Object.values(LEGACY_REGISTER_COLUMNS);
+const HEADER = [...Object.values(LEGACY_REGISTER_COLUMNS), ...Object.values(LEGACY_REGISTER_OPTIONAL_COLUMNS)];
 
 // Synthetic — B-2 keeps real member data out of the repository. Same shape as the register.
 const BASE: Omit<LegacyRow, 'sourceRow'> = {
   prizeDrawNo: '1002', title: 'Mr', forename: 'Ken', surname: 'Example', address1: '1 Test Road', address2: 'Corstorphine',
   address3: 'Edinburgh', postCode: 'EH12 6NS', telephone: '0131 000 0000', agent: 'SO', channel: 'Direct (bank)',
   joiningDate: '', paymentRaw: '£8.68 monthly', amount: '8.68', frequency: 'monthly', info: '', rowType: 'MEMBER',
-  status: 'PAYING', payments12m: '12', total12m: '104.16', observedFrequency: 'monthly',
+  status: 'PAYING', payments12m: '12', total12m: '104.16', observedFrequency: 'monthly', email: '',
 };
 let nextRow = 2;
 const row = (over: Partial<LegacyRow>): LegacyRow => ({ ...BASE, sourceRow: nextRow++, ...over });
 const blankReserved = (no: string): LegacyRow =>
   row({ prizeDrawNo: no, title: '', forename: '', surname: '', address1: '', address2: '', address3: '', postCode: '', telephone: '',
-    agent: '', channel: '', paymentRaw: '', amount: '', frequency: '', rowType: 'BLANK RESERVED', status: '', payments12m: '', total12m: '', observedFrequency: '' });
+    agent: '', channel: '', paymentRaw: '', amount: '', frequency: '', rowType: 'BLANK RESERVED', status: '', payments12m: '', total12m: '', observedFrequency: '', email: '' });
 
 describe('reading the register file', () => {
   it('reads a pasted (tab-separated) register by its header, in any column order', () => {
@@ -39,6 +41,12 @@ describe('reading the register file', () => {
   it('reads a CSV with quoted commas, quotes and a byte-order mark', () => {
     const cells = parseDelimited('﻿a,b,c\r\n"1, High St","say ""hi""",x\r\n');
     expect(cells).toEqual([['a', 'b', 'c'], ['1, High St', 'say "hi"', 'x']]);
+  });
+
+  it('GAP-05: reads a register with no Email column as every email blank', () => {
+    const header = HEADER.filter((h) => h !== 'Email');
+    const rows = readLegacyRegister([header, header.map((h) => (h === 'Prize Draw No' ? '1002' : 'x'))]);
+    expect(rows[0]).toMatchObject({ prizeDrawNo: '1002', email: '' });
   });
 
   it('refuses a file missing a column, naming it', () => {
@@ -80,6 +88,14 @@ describe('reading a cell', () => {
     expect(isUkPostcode('EH12 6NS')).toBe(true);
     expect(isUkPostcode('eh126ns')).toBe(true);
     expect(isUkPostcode('EH12')).toBe(false);
+  });
+
+  it('checks an email is email-shaped', () => {
+    expect(isEmailAddress('ken@example.com')).toBe(true);
+    expect(isEmailAddress(' ken.example@mail.example.co.uk ')).toBe(true);
+    expect(isEmailAddress('ken@example')).toBe(false);
+    expect(isEmailAddress('ken example@example.com')).toBe(false);
+    expect(isEmailAddress('see notes')).toBe(false);
   });
 
   it('finds the numbers an "Also" note names', () => {
@@ -182,6 +198,46 @@ describe('planning the load', () => {
     );
     expect(plan.members.map((m) => m.status)).toEqual(['quarantined', 'quarantined', 'active']);
     expect(plan.numbers.map((n) => n.standingOrder === null)).toEqual([true, true, false]);
+  });
+
+  it('GAP-05: loads an email where there is one; a person without one has none', () => {
+    const plan = planLegacyRegister([row({ email: 'ken@example.com' }), row({ prizeDrawNo: '1003', forename: 'B' })]);
+    expect(plan.members.map((m) => m.email)).toEqual(['ken@example.com', null]);
+    expect(plan.members[0]!.flags).toEqual([]);
+    expect(plan.counts.peopleWithEmail).toBe(1);
+  });
+
+  it('GAP-05: takes a merged person\'s email from whichever number has one', () => {
+    const plan = planLegacyRegister([
+      row({ prizeDrawNo: '1002', info: 'Also 1030' }),
+      row({ prizeDrawNo: '1030', email: 'ken@example.com' }),
+    ]);
+    expect(plan.members).toEqual([expect.objectContaining({ prizeDrawNos: [1002, 1030], email: 'ken@example.com', flags: [] })]);
+  });
+
+  it('GAP-05: flags a merged person with two different emails, keeping the lowest number\'s', () => {
+    const plan = planLegacyRegister([
+      row({ prizeDrawNo: '1002', info: 'Also 1030', email: 'ken@example.com' }),
+      row({ prizeDrawNo: '1030', email: 'ken.other@example.com' }),
+    ]);
+    expect(plan.members[0]).toMatchObject({ email: 'ken@example.com' });
+    expect(plan.members[0]!.flags).toContain('contact_details_differ');
+  });
+
+  it('GAP-05: does not load an email that is not email-shaped — flags it', () => {
+    const plan = planLegacyRegister([row({ email: 'ken at example' })]);
+    expect(plan.members[0]).toMatchObject({ email: null, flags: ['email_invalid'] });
+    expect(plan.findings).toEqual([expect.objectContaining({ prizeDrawNo: 1002, flag: 'email_invalid' })]);
+  });
+
+  it('GAP-05: does not load an email on two people on either — flags both', () => {
+    const plan = planLegacyRegister([
+      row({ prizeDrawNo: '1002', email: 'family@example.com' }),
+      row({ prizeDrawNo: '1003', forename: 'Jean', email: 'FAMILY@example.com' }),
+    ]);
+    expect(plan.members.map((m) => m.email)).toEqual([null, null]);
+    expect(plan.members.every((m) => m.flags.includes('email_shared'))).toBe(true);
+    expect(plan.counts.peopleWithEmail).toBe(0);
   });
 
   it('flags when the bank shows a different frequency from the register', () => {

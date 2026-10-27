@@ -1332,8 +1332,8 @@ export function legacyRegisterPage(opts: {
           " />
           <p class="muted" style="margin:0.2rem 0 0.6rem">Header row first: Prize Draw No, Title, Forename, Surname,
           Address 1–3, Post Code, Telephone, Agent, Channel, Joining Date, Payment Type (raw), Amount (parsed),
-          Frequency (parsed), Info, Row Type, Status, Payments (12m), Total (12m), Observed Freq. An .xlsx must be
-          saved as CSV first.</p>
+          Frequency (parsed), Info, Row Type, Status, Payments (12m), Total (12m), Observed Freq — and, optionally,
+          Email. An .xlsx must be saved as CSV first.</p>
           <input type="hidden" id="fileName" name="fileName" />
           <textarea id="content" name="content" hidden></textarea>
           <p class="muted" style="margin:0.6rem 0 0.2rem">GAP-40: the counts the register is known to hold. Leave blank
@@ -1424,11 +1424,12 @@ export function legacyRegisterPreviewPage(opts: {
             <tr><td>Blank reserved numbers</td><td>${c.blankReservedRows}</td></tr>
             <tr><td>Rejected rows — not loaded</td><td>${c.rejectedRows}</td></tr>
             <tr><td>People</td><td>${c.people} (${c.peopleActive} active, ${c.peopleLapsed} lapsed, ${c.peopleQuarantined} quarantined)</td></tr>
+            <tr><td>People with an email</td><td>${c.peopleWithEmail} (the rest get letters, and cannot log in)</td></tr>
             <tr><td>Standing orders recorded</td><td>${c.standingOrders} (${formatPence(legacyRegisterAnnualStandingOrders(plan))} a year)</td></tr>
           </tbody>
         </table>
         <p class="muted">A week after loading (GAP-13), every active player number with no numbers chosen is given
-        random numbers, and — as the register has no email addresses — a task to post them.</p>
+        random numbers, and is emailed them — or, with no email, a task is opened to post them.</p>
       </div>
       <div class="card">
         <h2 style="font-size:1.05rem;margin-top:0">Values seen</h2>

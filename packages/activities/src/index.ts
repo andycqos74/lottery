@@ -211,5 +211,6 @@ export { ON_SALE_DRAWS_SQL } from './draw/place-entry.js';
 export {
   importLegacyRegister,
   LegacyRegisterAlreadyLoadedError,
+  LegacyRegisterEmailTakenError,
   type ImportLegacyRegisterRequest,
 } from './migration/import-legacy-register.js';

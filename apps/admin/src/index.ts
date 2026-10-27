@@ -969,7 +969,7 @@ app.post('/legacy-register/load', { bodyLimit: LEGACY_REGISTER_BODY_LIMIT }, asy
         (counts.rejectedRows > 0 ? ` ${counts.rejectedRows} rows were rejected and not loaded — see the exception report.` : ''),
     });
   } catch (error) {
-    // LegacyRegisterAlreadyLoadedError and GAP-40 failures say what to do in their message.
+    // LegacyRegisterAlreadyLoadedError, LegacyRegisterEmailTakenError and GAP-40 failures say what to do in their message.
     return sendLegacyRegisterPage(request, reply, { expect, error: error instanceof Error ? error.message : String(error) });
   }
 });

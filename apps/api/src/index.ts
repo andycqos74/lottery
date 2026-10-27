@@ -215,9 +215,9 @@ app.get('/results', async () => {
 });
 
 // ── Member accounts (GAP-04) ─────────────────────────────────────────────────
-// A new-member portal login. Translating an existing legacy member (most of
-// whom have no email on file — GAP-05) into a portal login is deferred
-// future-phase work, not attempted here.
+// A new-member portal login. A legacy member loaded with an email gets theirs
+// through /forgot-password (#42); most have no email (GAP-05) and cannot log
+// in, which is accepted.
 
 app.get('/register', async (request, reply) => {
   const next = safeNext((request.query as { next?: unknown }).next);
