@@ -63,7 +63,7 @@ Three consequences shape the whole plan:
 | # | Decision | Recommendation for the dry run | Who |
 |---|---|---|---|
 | D1 | **Real or anonymised data, and where.** B-2 says real member data stays off dev machines; the dev stack sends real email (`NOTIFIER=socketlabs`). | Run on the dev host with the **real register and statement**, *but* with `NOTIFIER=sandbox` (mail goes to mailpit), and delete the files after. Or anonymise the names/emails/addresses (keep Prize Draw No, amounts, frequencies, status, channel, agent). Either way, no real member may get an email from the dry run. | Andy |
-| D2 | **Legacy prepaid credit.** How does a member who paid their monthly/quarterly/annual standing order *before* cut-over get entries in the first draws? Options: (a) nothing — entries start from their next payment; (b) import a longer statement window so earlier payments count as weeks (risks paying twice for weeks the old lottery already drew); (c) a one-off opening credit per number, calculated from the old statements up to the cut-off — **built**: `pnpm opening-credit` (SETUP §2.2.3). It runs a balance per number (payments in, £2 out for each old weekly draw) and credits the whole weeks left at the cut-off, so nobody gets weeks the old lottery already drew. | Run (c) in Phase 8 step 5 and compare the Phase 9 "no Draw 1 entry" count with and without it. | Andy / treasurer |
+| D2 | **Legacy prepaid credit.** How does a member who paid their monthly/quarterly/annual standing order *before* cut-over get entries in the first draws? Options: (a) nothing — entries start from their next payment; (b) import a longer statement window so earlier payments count as weeks (risks paying twice for weeks the old lottery already drew); (c) a one-off opening credit per number, calculated from the old statements up to the cut-off — **built**: admin console `/opening-credit`, or `pnpm opening-credit` (SETUP §2.2.3). It runs a balance per number (payments in, £2 out for each old weekly draw) and credits the whole weeks left at the cut-off, so nobody gets weeks the old lottery already drew. | Run (c) in Phase 8 step 5 and compare the Phase 9 "no Draw 1 entry" count with and without it. | Andy / treasurer |
 | D3 | **Cut-over date and statement window.** The *cut-off* is the old lottery's last draw; the first day whose standing-order credits belong to the new lottery is the day after. Also: the old lottery's draw weekday. | Use the old lottery's last draw as `--cutoff` (Phase 8 step 5) and upload statements on the Bank statements page from the day after. | Andy |
 | D4 | **First draw date and the series.** GAP-16: Fridays 12:00, entries close Friday 00:00. | Create a weekly series of 13 draws from the intended live Draw 1 date, so quarterly payments place in full (weeks beyond created draws wait — rule 4). | Andy |
 | D5 | **TG-04 auto-accept threshold.** Unset = every credit is a manual review task (likely 600–800 for a month). A credit that quotes one number and equals that number's subscription amount scores 0.9. | Set it to `0.9` for the dry run so exact matches allocate themselves and only the odd ones need review. Record the confirmer. | Andy |
@@ -305,24 +305,28 @@ RANDOM.ORG numbers by the hourly sweep.
    ```
    Record how long the review took — that is the weekly treasurer workload.
 5. **Opening credit (D2 (c))** — weeks paid to the old lottery and not yet
-   drawn, from R3a (SETUP §2.2.3). From the repo root, as the owner role:
-   ```bash
-   export APP_DB_MIGRATION_URL=$OWNER APP_DB_MIGRATION_PASSWORD_FILE=deploy/secrets/app_db_password
-   pnpm opening-credit --cutoff <old last draw> --first-draw <Draw 1 date> /root/switchover-dryrun/old/*.csv
-   ```
-   Read the summary and `opening-credit-<cutoff>.csv` (weeks per number;
-   flags `no_payment_in_window`, `no_standing_order`, `amount_differs`,
-   `window_shorter_than_cycle`). Fill in the `assign` column of
-   `opening-credit-<cutoff>.exceptions.csv` (a prize draw number or
-   `ignore`), re-run with `--assign <that file>` until nothing is left to
-   assign, then add `--commit --actor "<name>"`. It refuses if any R3
-   statement line is dated on or before the cut-off (fix R3, don't force it).
+   drawn, from R3a (SETUP §2.2.3). Admin console → **Members** → *Carry over
+   weeks paid to the old lottery* (`/opening-credit`):
+   1. Choose the R3a files; cut-off = the old lottery's last draw (D3); old
+      draw day; Draw 1 (pre-filled from the first open draw). **Check
+      statements**.
+   2. Read the summary, download the report (weeks per number), and read
+      the flags (`no_payment_in_window`, `no_standing_order`,
+      `amount_differs`, `window_shorter_than_cycle`). Anything unexpected →
+      stop; nothing has been written.
+   3. Under *Payments to assign*, enter the prize draw number for each, or
+      `ignore`, and **Check again** until none are left. Record how many and
+      how long it took.
+   4. Tick the confirmation, **Credit the weeks**. It refuses if any R3
+      statement line is dated on or before the cut-off (fix R3, don't force
+      it). The same is possible from a shell: `pnpm opening-credit`.
+
    **Check:**
    ```sql
    SELECT count(*), sum(amount_pence)/200 AS weeks FROM payment WHERE allocation_method = 'legacy_opening_credit';
    ```
-   Re-run the `--commit` once: it must credit 0 numbers and list the rest as
-   already credited.
+   Credit the same check once more: it must credit 0 numbers and say the
+   rest already had one.
 
 ### Phase 9 — Readiness check for Draw 1
 
@@ -400,7 +404,7 @@ cutoff only counts if a statement is uploaded and matched before 00:00.
 
 | # | Issue | Effect on go-live | Suggested fix |
 |---|---|---|---|
-| G1 | ~~No opening credit for legacy standing orders paid before cut-over (D2)~~ **Built:** `pnpm opening-credit` (SETUP §2.2.3) | Monthly/quarterly/annual payers would have no entries for weeks or months | Run it in Phase 8 step 5; needs R3a (12 months of old statements) |
+| G1 | ~~No opening credit for legacy standing orders paid before cut-over (D2)~~ **Built:** admin console `/opening-credit`, or `pnpm opening-credit` (SETUP §2.2.3) | Monthly/quarterly/annual payers would have no entries for weeks or months | Run it in Phase 8 step 5; needs R3a (12 months of old statements) |
 | G2 | `activate-config` can't set `recon_auto_threshold` or `selection_cutoff_before` | Manual SQL on the live database | Add both to `OVERRIDABLE_COLUMNS` |
 | G3 | `RANDOM_ALLOCATION_GRACE_DAYS` is a constant 7 | Load must happen ≥ 9 days before Draw 1's cutoff | Fine if planned; otherwise make it config |
 | G4 | Random allocation covers *every* number of an active member, including their non-paying numbers | Extra allocations and letters for numbers that pay nothing | Restrict the sweep to numbers with an active subscription, or accept |

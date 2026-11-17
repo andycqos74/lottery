@@ -372,6 +372,19 @@ the **old** lottery's statements (`packages/domain/src/opening-credit.ts`,
   until GAP-13 gives it some). It shows on the member page as "Opening
   credit: N weeks paid before the switch-over".
 
+**From the admin console:** Members → "Carry over weeks paid to the old
+lottery (opening credit)" (`/opening-credit`). Choose the statement files,
+enter the cut-off and Draw 1 (pre-filled from the first open draw) and the old
+draw day, and click *Check statements*. The next page shows the summary, the
+weeks per number, the flags and the downloadable reports. Payments it could
+not tie to a number get a box each: enter the number or `ignore` and click
+*Check again*. Nothing is written until you tick the confirmation and click
+*Credit the weeks*, and the credit is refused unless the files, dates and
+decisions are exactly the ones checked. Past runs are listed on the page,
+from the audit log.
+
+**Or from a shell**, with the same rules:
+
 ```bash
 export APP_DB_MIGRATION_URL=postgres://lottery_owner@localhost:5432/lottery_app
 export APP_DB_MIGRATION_PASSWORD_FILE=deploy/secrets/app_db_password

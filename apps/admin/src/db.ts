@@ -1421,3 +1421,61 @@ export async function listLegacyRegisterLoads(pool: Pool): Promise<LegacyRegiste
     rejected: r.after.rejected,
   }));
 }
+
+// ── Opening credit (switch-over D2 (c)) ──────────────────────────────────────
+
+export interface OpeningCreditRun {
+  readonly at: Date;
+  readonly actorLabel: string;
+  readonly cutoff: string;
+  readonly firstDraw: string;
+  readonly numbersCredited: number;
+  readonly weeksCredited: number;
+  readonly alreadyCredited: number;
+  readonly unresolvedCredits: number;
+}
+
+export interface OpeningCreditStatus {
+  /** The soonest draw still open — the default for "Draw 1". */
+  readonly firstOpenDraw: { readonly drawNumber: number; readonly day: string } | null;
+  readonly openDraws: number;
+  /** Opening credits written so far. */
+  readonly numbersCredited: number;
+  readonly weeksCredited: number;
+  readonly runs: readonly OpeningCreditRun[];
+}
+
+export async function getOpeningCreditStatus(pool: Pool): Promise<OpeningCreditStatus> {
+  const [draws, credited, runs] = await Promise.all([
+    pool.query<{ draw_number: number; day: string; open: string }>(
+      `SELECT draw_number, to_char(draw_date, 'YYYY-MM-DD') AS day, (count(*) OVER ())::text AS open
+         FROM draw WHERE status = 'open' ORDER BY COALESCE(draw_at, draw_date::timestamptz), draw_number LIMIT 1`,
+    ),
+    pool.query<{ numbers: string; weeks: string }>(
+      `SELECT count(*)::text AS numbers, COALESCE(sum(amount_pence) / 200, 0)::text AS weeks
+         FROM payment WHERE allocation_method = 'legacy_opening_credit'`,
+    ),
+    pool.query<{
+      at: Date;
+      actor_label: string;
+      after: { cutoff: string; firstDraw: string; numbersCredited: number; weeksCredited: number; alreadyCredited: number; unresolvedCredits: number };
+    }>(`SELECT at, actor_label, after FROM audit_log WHERE action = 'legacy_opening_credit.applied' ORDER BY at DESC`),
+  ]);
+  const first = draws.rows[0];
+  return {
+    firstOpenDraw: first ? { drawNumber: first.draw_number, day: first.day } : null,
+    openDraws: first ? Number(first.open) : 0,
+    numbersCredited: Number(credited.rows[0]!.numbers),
+    weeksCredited: Number(credited.rows[0]!.weeks),
+    runs: runs.rows.map((r) => ({
+      at: r.at,
+      actorLabel: r.actor_label,
+      cutoff: r.after.cutoff,
+      firstDraw: r.after.firstDraw,
+      numbersCredited: r.after.numbersCredited,
+      weeksCredited: r.after.weeksCredited,
+      alreadyCredited: r.after.alreadyCredited,
+      unresolvedCredits: r.after.unresolvedCredits,
+    })),
+  };
+}

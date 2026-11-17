@@ -52,8 +52,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createPool } from '@qosfc/db';
-import { parseCanonicalStatementCsv } from '../packages/adapters-live/src/bank-feed/csv-format.js';
-import { looksLikeRealExportCsv, parseRealExportCsv } from '../packages/adapters-live/src/bank-feed/real-export-csv-format.js';
+import { readOpeningCreditStatement } from '../packages/adapters-live/src/bank-feed/opening-credit-statement.js';
 import {
   applyOpeningCredit,
   countImportedCreditsUpTo,
@@ -67,7 +66,6 @@ import {
   openingCreditExceptionReport,
   openingCreditReport,
   parseDelimited,
-  pence,
   planOpeningCredit,
   readOpeningCreditAssignments,
   WEEKDAY_NAMES,
@@ -75,6 +73,9 @@ import {
   type OpeningCreditPlan,
   type OpeningCreditStatementLine,
 } from '../packages/domain/src/index.js';
+
+/** A mistake in how it was run: printed plainly, no stack trace. */
+class UsageError extends Error {}
 
 const argv = process.argv.slice(2);
 const has = (flag: string) => argv.includes(flag);
@@ -103,21 +104,8 @@ const statementLines: OpeningCreditStatementLine[] = [];
 for (const file of files) {
   const bytes = readFileSync(file);
   sourceFileHashes.push(createHash('sha256').update(bytes).digest('hex'));
-  const text = bytes.toString('utf8').replace(/^\uFEFF/, '');
-  const firstLine = text.slice(0, text.search(/\r?\n|$/));
-  const rows = looksLikeRealExportCsv(firstLine) ? parseRealExportCsv(text).rows : parseCanonicalStatementCsv(text).rows;
-  for (const r of rows) {
-    statementLines.push({
-      externalId: r.externalId,
-      valueDate: r.valueDate,
-      amountPence: pence(BigInt(r.amountPence.replace(/^-/, ''))),
-      isCredit: r.isCredit,
-      typeRaw: r.typeRaw,
-      reference: r.extractedReference ?? null,
-      description: r.description,
-      name: r.extractedName ?? null,
-    });
-  }
+  const rows = readOpeningCreditStatement(bytes.toString('utf8'));
+  statementLines.push(...rows);
   console.log(`Statement ${file}: ${rows.length} lines (sha256 ${sourceFileHashes.at(-1)!.slice(0, 12)}…)`);
 }
 const assignments = value('--assign') ? readOpeningCreditAssignments(parseDelimited(readFileSync(value('--assign')!, 'utf8'))) : undefined;
@@ -134,7 +122,7 @@ const pool = createPool({
 
 try {
   const numbers = await loadOpeningCreditNumbers(pool);
-  if (numbers.length === 0) throw new Error('No member numbers are loaded. Load the legacy register first (pnpm import:legacy-register).');
+  if (numbers.length === 0) throw new UsageError('No member numbers are loaded. Load the legacy register first (pnpm import:legacy-register).');
   const plan = planOpeningCredit(statementLines, numbers, {
     cutoff,
     firstDraw,
@@ -181,7 +169,7 @@ try {
     }
   }
 } catch (error) {
-  if (!(error instanceof OpeningCreditOverlapError || error instanceof OpeningCreditUnresolvedError || error instanceof RangeError)) throw error;
+  if (!(error instanceof UsageError || error instanceof OpeningCreditOverlapError || error instanceof OpeningCreditUnresolvedError || error instanceof RangeError)) throw error;
   console.error(`\n${error.message}`);
   process.exitCode = 1;
 } finally {

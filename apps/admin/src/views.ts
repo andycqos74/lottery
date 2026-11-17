@@ -3,10 +3,15 @@ import {
   jackpotPosition,
   legacyRegisterAnnualStandingOrders,
   legacyRegisterExceptionReport,
+  openingCreditExceptionReport,
+  openingCreditReport,
   pence,
   revenueFor,
   TICKET_PRICE_PENCE,
+  WEEKDAY_NAMES,
+  weekdayOf,
   type LegacyRegisterPlan,
+  type OpeningCreditPlan,
 } from '@qosfc/domain';
 import type {
   BankStatementDetail,
@@ -29,6 +34,7 @@ import type {
   MemberPayment,
   MemberSummary,
   MemberUpcomingEntry,
+  OpeningCreditStatus,
 } from './db.js';
 
 export function escapeHtml(value: string): string {
@@ -616,7 +622,8 @@ export function membersPage(opts: {
     user: opts.user,
     body: `
       <h1>Members</h1>
-      <p class="muted"><a href="/legacy-register">Load the legacy register from the spreadsheet →</a></p>
+      <p class="muted"><a href="/legacy-register">Load the legacy register from the spreadsheet →</a><br />
+      <a href="/opening-credit">Carry over weeks paid to the old lottery (opening credit) →</a></p>
       <div class="card">
         ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
         ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
@@ -1467,6 +1474,279 @@ export function legacyRegisterPreviewPage(opts: {
             : ''
         }
         <p><a href="/legacy-register">Back</a></p>
+      </div>
+    `,
+  });
+}
+
+// ── Opening credit (switch-over D2 (c), SETUP §2.2.3) ────────────────────────
+
+/** What the opening-credit forms carry from page to page, so a credit is of exactly what was checked. */
+export interface OpeningCreditInputs {
+  readonly statements: readonly { readonly name: string; readonly content: string }[];
+  readonly cutoff: string;
+  readonly firstDraw: string;
+  /** '' = the cut-off's weekday, otherwise '0' (Sunday) … '6'. */
+  readonly oldDrawDay: string;
+  /** Payments a person has decided, by external id: a prize draw number, or null for "ignore". */
+  readonly decisions: Readonly<Record<string, number | null>>;
+}
+
+function openingCreditHiddenFields(inputs: OpeningCreditInputs): string {
+  return `
+    <textarea name="statements" hidden>${escapeHtml(JSON.stringify(inputs.statements))}</textarea>
+    <textarea name="decisions" hidden>${escapeHtml(JSON.stringify(inputs.decisions))}</textarea>
+    <input type="hidden" name="cutoff" value="${escapeHtml(inputs.cutoff)}" />
+    <input type="hidden" name="firstDraw" value="${escapeHtml(inputs.firstDraw)}" />
+    <input type="hidden" name="oldDrawDay" value="${escapeHtml(inputs.oldDrawDay)}" />`;
+}
+
+const dayName = (iso: string) => WEEKDAY_NAMES[weekdayOf(iso)];
+const poundsOf = (p: bigint) => formatPence(pence(p));
+
+export function openingCreditPage(opts: {
+  user: { displayName: string; csrf: string };
+  status: OpeningCreditStatus;
+  form?: { cutoff: string; firstDraw: string; oldDrawDay: string };
+  error?: string;
+  flash?: string;
+}): string {
+  const { status } = opts;
+  const form = opts.form ?? { cutoff: '', firstDraw: status.firstOpenDraw?.day ?? '', oldDrawDay: '' };
+  const runs = status.runs
+    .map((r) => `<tr>
+      <td>${escapeHtml(formatLondon(r.at))}</td><td>${escapeHtml(r.actorLabel)}</td>
+      <td>${escapeHtml(r.cutoff)}</td><td>${escapeHtml(r.firstDraw)}</td>
+      <td>${r.numbersCredited}</td><td>${r.weeksCredited}</td><td>${r.alreadyCredited}</td><td>${r.unresolvedCredits}</td>
+    </tr>`)
+    .join('\n');
+  const dayOptions = ['', '0', '1', '2', '3', '4', '5', '6']
+    .map((v) => `<option value="${v}" ${v === form.oldDrawDay ? 'selected' : ''}>${v === '' ? "The cut-off's weekday" : WEEKDAY_NAMES[Number(v)]}</option>`)
+    .join('');
+  return layout({
+    title: 'Opening credit',
+    user: opts.user,
+    body: `
+      <h1>Opening credit</h1>
+      <p class="muted">Weeks members paid to the old lottery by standing order before the switch-over, which the old
+      lottery never drew, carried into the new draws from Draw 1 (SETUP §2.2.3). Run once, after the register is loaded
+      and the draws are created. Upload the <strong>old</strong> lottery's bank statements up to its last draw —
+      a full year, so annual payers' last payment is in them. Nothing is written until you confirm on the next page.
+      The statements name real people (B-2).</p>
+      <div class="card">
+        ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
+        ${opts.flash ? `<div class="flash">${escapeHtml(opts.flash)}</div>` : ''}
+        <h2 style="font-size:1.05rem;margin-top:0">Check the statements</h2>
+        <form method="post" action="/opening-credit/preview">
+          ${csrfField(opts.user.csrf)}
+          <label for="files">Old lottery bank statements (the bank's TransactionHistory CSV export — several files may overlap)</label>
+          <input type="file" id="files" multiple accept=".csv,.txt,text/csv" required onchange="
+            Promise.all([...this.files].map(f => f.text().then(t => ({ name: f.name, content: t }))))
+              .then(s => { document.getElementById('statements').value = JSON.stringify(s); });
+          " />
+          <textarea id="statements" name="statements" hidden></textarea>
+          <label for="cutoff">Cut-off: the old lottery's last draw</label>
+          <input type="date" id="cutoff" name="cutoff" value="${escapeHtml(form.cutoff)}" required />
+          <p class="muted" style="margin:0.2rem 0 0.6rem">Payments after it are the new lottery's — upload those on the
+          <a href="/bank-statements">Bank statements</a> page, starting the day after.</p>
+          <label for="oldDrawDay">The old lottery's draw day</label>
+          <select id="oldDrawDay" name="oldDrawDay">${dayOptions}</select>
+          <label for="firstDraw">The new lottery's Draw 1</label>
+          <input type="date" id="firstDraw" name="firstDraw" value="${escapeHtml(form.firstDraw)}" required />
+          ${
+            status.firstOpenDraw
+              ? `<p class="muted" style="margin:0.2rem 0 0.6rem">The first open draw is Draw ${status.firstOpenDraw.drawNumber}, on ${escapeHtml(status.firstOpenDraw.day)} (${status.openDraws} open).</p>`
+              : '<p class="muted" style="margin:0.2rem 0 0.6rem">No draws are open yet: credited weeks would wait until draws are created.</p>'
+          }
+          <label for="assignFile">Optional: an exception report with its "assign" column filled in</label>
+          <input type="file" id="assignFile" accept=".csv,text/csv" onchange="
+            const f = this.files[0]; if (!f) return;
+            f.text().then(t => { document.getElementById('assignmentsCsv').value = t; });
+          " />
+          <textarea id="assignmentsCsv" name="assignmentsCsv" hidden></textarea>
+          <button type="submit">Check statements</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Credited so far</h2>
+        <p>${status.numbersCredited} numbers, ${status.weeksCredited} weeks.</p>
+        ${
+          status.runs.length === 0
+            ? '<p class="muted">No opening credit has been run.</p>'
+            : `<table>
+                 <thead><tr><th>When</th><th>By</th><th>Cut-off</th><th>Draw 1</th><th>Numbers credited</th><th>Weeks</th><th>Already credited</th><th>Left unassigned</th></tr></thead>
+                 <tbody>${runs}</tbody>
+               </table>`
+        }
+      </div>
+    `,
+  });
+}
+
+/** Rows shown on the page; the downloads have them all. */
+const OPENING_CREDIT_PREVIEW_ROWS = 500;
+
+export function openingCreditPreviewPage(opts: {
+  user: { displayName: string; csrf: string };
+  plan: OpeningCreditPlan;
+  inputs: OpeningCreditInputs;
+  files: readonly { readonly name: string; readonly lines: number; readonly sha256: string }[];
+  /** The checked inputs' hash: crediting is refused unless it is of exactly these. */
+  planHash: string;
+  warnings: readonly string[];
+  /** Statement credits already in the system dated on or before the cut-off: crediting is refused while any exist. */
+  importedUpToCutoff: number;
+}): string {
+  const { plan, inputs } = opts;
+  const t = plan.totals;
+  const credited = plan.lines.filter((l) => l.weeks > 0);
+
+  const byWeeks = new Map<number, number>();
+  for (const l of credited) byWeeks.set(l.weeks, (byWeeks.get(l.weeks) ?? 0) + 1);
+  const weekRows = [...byWeeks]
+    .sort((a, b) => a[0] - b[0])
+    .map(([w, n]) => `<tr><td>${w}</td><td>${n}</td></tr>`)
+    .join('');
+
+  const byFlag: Record<string, number> = {};
+  for (const l of plan.lines) for (const f of l.flags) byFlag[f] = (byFlag[f] ?? 0) + 1;
+  const flagRows = Object.entries(byFlag)
+    .sort((a, b) => b[1] - a[1])
+    .map(([f, n]) => `<tr><td>${escapeHtml(f)}</td><td>${n}</td></tr>`)
+    .join('');
+
+  const flagged = plan.lines.filter((l) => l.flags.length > 0);
+  const flaggedRows = flagged
+    .slice(0, OPENING_CREDIT_PREVIEW_ROWS)
+    .map((l) => `<tr>
+      <td>${l.prizeDrawNo}</td><td>${escapeHtml(l.memberName ?? '')}</td>
+      <td>${l.standingOrder ? `${poundsOf(l.standingOrder.amountPence)} ${escapeHtml(l.standingOrder.frequency)}` : '—'}</td>
+      <td>${l.payments.length} (${poundsOf(l.paidPence)})</td><td>${escapeHtml(l.lastPaymentDate ?? '—')}</td>
+      <td>${l.oldDrawsCovered}</td><td>${l.weeks}</td><td>${l.flags.map((f) => `<span class="badge">${escapeHtml(f)}</span>`).join(' ')}</td>
+    </tr>`)
+    .join('');
+
+  const assignRow = (
+    line: OpeningCreditPlan['exceptions'][number]['line'],
+    why: string,
+    value: string,
+  ) => `<tr>
+      <td>${escapeHtml(line.valueDate)}</td><td>${poundsOf(line.amountPence)}</td><td>${escapeHtml(line.typeRaw)}</td>
+      <td>${escapeHtml(line.reference ?? '')}</td><td>${escapeHtml(line.description)}</td><td>${escapeHtml(why)}</td>
+      <td><input type="text" name="assign:${escapeHtml(line.externalId)}" value="${escapeHtml(value)}" placeholder="number or ignore" style="width:9rem;margin:0" /></td>
+    </tr>`;
+  const open = new Set(plan.exceptions.map((e) => e.line.externalId));
+  const toDecide = [
+    ...plan.exceptions.map((e) =>
+      e.reason === 'several_numbers'
+        ? assignRow(e.line, `Several numbers: ${e.candidates.join(', ')}`, '')
+        : e.reason === 'assigned_number_unknown'
+          ? assignRow(e.line, `No member number ${e.candidates[0]}`, String(e.candidates[0]))
+          : assignRow(e.line, 'No number in the reference', ''),
+    ),
+    ...plan.decided
+      .filter((d) => !open.has(d.line.externalId))
+      .map((d) => assignRow(d.line, 'Decided', d.assigned === null ? 'ignore' : String(d.assigned))),
+  ];
+
+  const csv = (text: string) => `data:text/csv;charset=utf-8,${encodeURIComponent(text)}`;
+  const canCredit = opts.importedUpToCutoff === 0 && credited.length > 0;
+  const warnings = [...plan.warnings, ...opts.warnings];
+  const oldDraws =
+    plan.oldDraws.length > 0 ? ` (${escapeHtml(plan.oldDraws[0]!)} … ${escapeHtml(plan.oldDraws[plan.oldDraws.length - 1]!)})` : '';
+
+  return layout({
+    title: 'Opening credit — check',
+    user: opts.user,
+    body: `
+      <h1>Opening credit — check</h1>
+      <p class="muted">${opts.files.map((f) => `${escapeHtml(f.name)} (${f.lines} lines, sha256 <code>${escapeHtml(f.sha256.slice(0, 12))}…</code>)`).join(' · ')}.
+      Nothing has been written yet.</p>
+      ${
+        opts.importedUpToCutoff > 0
+          ? `<div class="error">The system already holds ${opts.importedUpToCutoff} bank statement credit(s) dated on or before the cut-off
+             (${escapeHtml(plan.cutoff)}). Those were counted as new-lottery money at full value, so an opening credit on top would pay
+             for the same weeks twice. Statements on the Bank statements page must start the day after the cut-off.</div>`
+          : ''
+      }
+      ${warnings.length > 0 ? `<div class="error">${warnings.map(escapeHtml).join('<br />')}</div>` : ''}
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">What would be credited</h2>
+        <table><tbody>
+          <tr><td>Cut-off (the old lottery's last draw)</td><td>${escapeHtml(plan.cutoff)} (${dayName(plan.cutoff)})</td></tr>
+          <tr><td>Old lottery draws in the statements</td><td>${WEEKDAY_NAMES[plan.oldDrawWeekday]}s — ${plan.oldDraws.length}${oldDraws}</td></tr>
+          <tr><td>Statement lines from</td><td>${escapeHtml(plan.windowStart ?? '—')} to ${escapeHtml(plan.windowEnd ?? '—')}</td></tr>
+          <tr><td>New lottery Draw 1</td><td>${escapeHtml(plan.firstDraw)} (${dayName(plan.firstDraw)})</td></tr>
+          <tr><td>Payments matched to a number</td><td>${t.matchedCredits} (${poundsOf(t.matchedPence)})</td></tr>
+          <tr><td>Payments still to assign</td><td>${plan.exceptions.length}</td></tr>
+          <tr><td>Left out</td><td>${plan.ignored.afterCutoff} after the cut-off, ${plan.ignored.agentLodgements} agent lodgements,
+            ${plan.ignored.debits} debits, ${plan.ignored.duplicates} repeated rows, ${plan.ignored.assignedIgnore} marked "ignore"</td></tr>
+          <tr><td><strong>Numbers with weeks left</strong></td><td><strong>${t.numbersCredited} — ${t.weeks} weeks (${poundsOf(t.creditPence)})</strong></td></tr>
+        </tbody></table>
+        <p class="muted">Per number: payments in, £2 out for every old draw while it is in credit; the whole £2s left at the
+        cut-off are its weeks, entered from Draw 1. Pennies under £2 are not credited, and nobody is credited a week the
+        old lottery already drew.</p>
+        <p><a href="${csv(openingCreditReport(plan))}" download="opening-credit-${escapeHtml(plan.cutoff)}.csv">Download the report</a>
+        (CSV, one row per number) ·
+        <a href="${csv(openingCreditExceptionReport(plan))}" download="opening-credit-${escapeHtml(plan.cutoff)}.exceptions.csv">Download the exception report</a></p>
+        ${weekRows ? `<table><thead><tr><th>Weeks carried</th><th>Numbers</th></tr></thead><tbody>${weekRows}</tbody></table>` : ''}
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">To check</h2>
+        ${
+          flagged.length === 0
+            ? '<p class="muted">Nothing flagged.</p>'
+            : `<table><thead><tr><th>Flag</th><th>Numbers</th></tr></thead><tbody>${flagRows}</tbody></table>
+               <p class="muted">no_payment_in_window: a standing order with no payment in the statements · no_standing_order: money
+               for a number the register has none on · amount_differs: a payment unlike the register's amount ·
+               window_shorter_than_cycle: the statements may miss an earlier payment · member_not_active: lapsed or quarantined.</p>
+               <table style="margin-top:1rem">
+                 <thead><tr><th>No.</th><th>Member</th><th>Standing order</th><th>Payments</th><th>Last paid</th><th>Old draws</th><th>Weeks</th><th>Flags</th></tr></thead>
+                 <tbody>${flaggedRows}</tbody>
+               </table>
+               ${flagged.length > OPENING_CREDIT_PREVIEW_ROWS ? `<p class="muted">Showing the first ${OPENING_CREDIT_PREVIEW_ROWS} — the report has all ${flagged.length}.</p>` : ''}`
+        }
+      </div>
+      <div class="card">
+        <h2 style="font-size:1.05rem;margin-top:0">Payments to assign</h2>
+        ${
+          toDecide.length === 0
+            ? '<p class="muted">Every payment was tied to a number.</p>'
+            : `<p class="muted">Enter the prize draw number each payment is for, or <code>ignore</code> if it is not a member's lottery
+               money, then check again. Leave a box blank to decide later.</p>
+               <form method="post" action="/opening-credit/preview">
+                 ${csrfField(opts.user.csrf)}
+                 ${openingCreditHiddenFields(inputs)}
+                 <table>
+                   <thead><tr><th>Date</th><th>Amount</th><th>Type</th><th>Reference</th><th>Description</th><th>Why</th><th>Assign</th></tr></thead>
+                   <tbody>${toDecide.join('')}</tbody>
+                 </table>
+                 <button type="submit">Check again</button>
+               </form>`
+        }
+      </div>
+      <div class="card">
+        ${
+          canCredit
+            ? `<form method="post" action="/opening-credit/apply">
+                 ${csrfField(opts.user.csrf)}
+                 ${openingCreditHiddenFields(inputs)}
+                 <input type="hidden" name="planHash" value="${escapeHtml(opts.planHash)}" />
+                 ${
+                   plan.exceptions.length > 0
+                     ? `<label><input type="checkbox" name="allowUnresolved" value="yes" required /> Leave the ${plan.exceptions.length}
+                        unassigned payment(s) out — whoever they belong to gets no opening credit for them.</label>`
+                     : ''
+                 }
+                 <label><input type="checkbox" name="confirm" value="yes" required /> I have read the report and the flags.
+                 Credit ${t.weeks} weeks to ${t.numbersCredited} numbers. A number already credited is left as it is.</label>
+                 <button type="submit">Credit the weeks</button>
+               </form>`
+            : credited.length === 0 && opts.importedUpToCutoff === 0
+              ? '<p class="muted">No number has weeks left at the cut-off, so there is nothing to credit.</p>'
+              : ''
+        }
+        <p><a href="/opening-credit">Back</a></p>
       </div>
     `,
   });

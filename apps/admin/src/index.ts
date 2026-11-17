@@ -21,6 +21,10 @@ import { appDbConnectionFromEnv, createPool } from '@qosfc/db';
 import {
   acceptBankTransactionMatchTx,
   allocateUpcomingEntries,
+  applyOpeningCredit,
+  countImportedCreditsUpTo,
+  existingOpeningCredits,
+  loadOpeningCreditNumbers,
   changeLineNumbers,
   endDirectDebit,
   describeNumbersChange,
@@ -30,7 +34,7 @@ import {
   recordManualTicket,
   type ManualTicketSelectionInput,
 } from '@qosfc/activities';
-import { CsvBankFeed } from '@qosfc/adapters-live';
+import { CsvBankFeed, readOpeningCreditStatement } from '@qosfc/adapters-live';
 import {
   FailureThrottle,
   formatPence,
@@ -39,8 +43,11 @@ import {
   parseDelimited,
   pence,
   planLegacyRegister,
+  planOpeningCredit,
   readLegacyRegister,
+  readOpeningCreditAssignments,
   TICKET_PRICE_PENCE,
+  type OpeningCreditStatementLine,
 } from '@qosfc/domain';
 import {
   addEntry,
@@ -70,6 +77,7 @@ import {
   insertAuditLog,
   listBankStatements,
   listLegacyRegisterLoads,
+  getOpeningCreditStatus,
   listDrawEntrants,
   listDraws,
   listAgentMembers,
@@ -88,7 +96,10 @@ import {
   drawDetailPage,
   legacyRegisterPage,
   legacyRegisterPreviewPage,
+  openingCreditPage,
+  openingCreditPreviewPage,
   type LegacyRegisterExpect,
+  type OpeningCreditInputs,
   drawEntrantsPage,
   drawsPage,
   loginPage,
@@ -971,6 +982,205 @@ app.post('/legacy-register/load', { bodyLimit: LEGACY_REGISTER_BODY_LIMIT }, asy
   } catch (error) {
     // LegacyRegisterAlreadyLoadedError, LegacyRegisterEmailTakenError and GAP-40 failures say what to do in their message.
     return sendLegacyRegisterPage(request, reply, { expect, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// ── Opening credit (switch-over D2 (c), SETUP §2.2.3): upload, check, credit ──
+
+/** A year of the old lottery's statements, posted as form text, can run to several MB. */
+const OPENING_CREDIT_BODY_LIMIT = 32 * 1024 * 1024;
+
+/**
+ * Reads the opening-credit form. Decisions on which number a payment is for
+ * build up across "Check again": an uploaded exception report, then the
+ * decisions carried from the last check, then the boxes on the page (a
+ * blank box takes a decision back).
+ */
+function openingCreditInputs(body: Record<string, string | undefined>): OpeningCreditInputs {
+  let statements: unknown;
+  try {
+    statements = JSON.parse(body['statements'] || '[]');
+  } catch {
+    throw new Error('The statement files could not be read. Choose them again.');
+  }
+  if (
+    !Array.isArray(statements) ||
+    !statements.every((s) => typeof s === 'object' && s !== null && typeof s.name === 'string' && typeof s.content === 'string')
+  ) {
+    throw new Error('The statement files could not be read. Choose them again.');
+  }
+  if (statements.length === 0) throw new Error("Choose the old lottery's statement files first.");
+
+  const decisions: Record<string, number | null> = {};
+  const csv = body['assignmentsCsv'] ?? '';
+  if (csv.trim() !== '') for (const [id, v] of readOpeningCreditAssignments(parseDelimited(csv))) decisions[id] = v;
+  if (body['decisions']) {
+    let carried: unknown;
+    try {
+      carried = JSON.parse(body['decisions']);
+    } catch {
+      carried = {};
+    }
+    for (const [id, v] of Object.entries(carried as Record<string, unknown>)) {
+      if (v === null || (typeof v === 'number' && Number.isInteger(v))) decisions[id] = v;
+    }
+  }
+  for (const [key, raw] of Object.entries(body)) {
+    if (!key.startsWith('assign:')) continue;
+    const id = key.slice('assign:'.length);
+    const v = (raw ?? '').trim();
+    if (v === '') delete decisions[id];
+    else if (v.toLowerCase() === 'ignore') decisions[id] = null;
+    else if (/^\d+$/.test(v)) decisions[id] = Number(v);
+    else throw new Error(`"${v}" is not a prize draw number or "ignore".`);
+  }
+
+  const oldDrawDay = (body['oldDrawDay'] ?? '').trim();
+  if (!/^[0-6]?$/.test(oldDrawDay)) throw new Error('Choose the old lottery\'s draw day from the list.');
+  return {
+    statements: statements as { name: string; content: string }[],
+    cutoff: (body['cutoff'] ?? '').trim(),
+    firstDraw: (body['firstDraw'] ?? '').trim(),
+    oldDrawDay,
+    decisions,
+  };
+}
+
+/** The plan for those inputs, against the register as loaded now — exactly as the CLI makes it. */
+async function planFromInputs(inputs: OpeningCreditInputs) {
+  const files = inputs.statements.map((s) => {
+    let lines: OpeningCreditStatementLine[];
+    try {
+      lines = readOpeningCreditStatement(s.content);
+    } catch (error) {
+      throw new Error(`${s.name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return { name: s.name, lines, sha256: sha256(s.content) };
+  });
+  const numbers = await loadOpeningCreditNumbers(pool);
+  if (numbers.length === 0) throw new Error('No member numbers are loaded. Load the legacy register first.');
+  const plan = planOpeningCredit(
+    files.flatMap((f) => f.lines),
+    numbers,
+    {
+      cutoff: inputs.cutoff,
+      firstDraw: inputs.firstDraw,
+      ...(inputs.oldDrawDay !== '' ? { oldDrawWeekday: Number(inputs.oldDrawDay) } : {}),
+      assignments: new Map(Object.entries(inputs.decisions)),
+    },
+  );
+  return { plan, files: files.map((f) => ({ name: f.name, lines: f.lines.length, sha256: f.sha256 })) };
+}
+
+/** What was checked: the credit is refused unless the posted inputs hash to the same. */
+function openingCreditHash(inputs: OpeningCreditInputs): string {
+  return sha256(
+    JSON.stringify({
+      cutoff: inputs.cutoff,
+      firstDraw: inputs.firstDraw,
+      oldDrawDay: inputs.oldDrawDay,
+      statements: inputs.statements.map((s) => sha256(s.content)),
+      decisions: Object.entries(inputs.decisions).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    }),
+  );
+}
+
+async function sendOpeningCreditPage(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  extra: { form?: { cutoff: string; firstDraw: string; oldDrawDay: string }; error?: string; flash?: string } = {},
+) {
+  const status = await getOpeningCreditStatus(pool);
+  reply.type('text/html').send(
+    openingCreditPage({
+      user: viewUser(request),
+      status,
+      ...(extra.form ? { form: extra.form } : {}),
+      ...(extra.error ? { error: extra.error } : {}),
+      ...(extra.flash ? { flash: extra.flash } : {}),
+    }),
+  );
+}
+
+const formOf = (body: Record<string, string | undefined>) => ({
+  cutoff: (body['cutoff'] ?? '').trim(),
+  firstDraw: (body['firstDraw'] ?? '').trim(),
+  oldDrawDay: (body['oldDrawDay'] ?? '').trim(),
+});
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+app.get('/opening-credit', async (request, reply) => sendOpeningCreditPage(request, reply));
+
+app.post('/opening-credit/preview', { bodyLimit: OPENING_CREDIT_BODY_LIMIT }, async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const body = request.body as Record<string, string | undefined>;
+  try {
+    const inputs = openingCreditInputs(body);
+    const { plan, files } = await planFromInputs(inputs);
+    const [status, imported, existing] = await Promise.all([
+      getOpeningCreditStatus(pool),
+      countImportedCreditsUpTo(pool, plan.cutoff),
+      existingOpeningCredits(pool),
+    ]);
+    const warnings: string[] = [];
+    if (!status.firstOpenDraw) warnings.push('No draws are open yet: the credited weeks would wait until draws are created.');
+    else if (status.firstOpenDraw.day !== plan.firstDraw) {
+      warnings.push(`The first open draw is Draw ${status.firstOpenDraw.drawNumber} on ${status.firstOpenDraw.day}, not ${plan.firstDraw}.`);
+    }
+    const longest = Math.max(0, ...plan.lines.map((l) => l.weeks));
+    if (status.openDraws > 0 && longest > status.openDraws) {
+      warnings.push(`The longest credit is ${longest} weeks but only ${status.openDraws} draws are open: the rest wait until more draws are created.`);
+    }
+    const again = plan.lines.filter((l) => l.weeks > 0 && existing.has(l.prizeDrawNo)).length;
+    if (again > 0) warnings.push(`${again} of these numbers already have an opening credit: they are left as they are.`);
+    reply.type('text/html').send(
+      openingCreditPreviewPage({
+        user: viewUser(request),
+        plan,
+        inputs,
+        files,
+        planHash: openingCreditHash(inputs),
+        warnings,
+        importedUpToCutoff: imported,
+      }),
+    );
+  } catch (error) {
+    return sendOpeningCreditPage(request, reply, { form: formOf(body), error: messageOf(error) });
+  }
+});
+
+app.post('/opening-credit/apply', { bodyLimit: OPENING_CREDIT_BODY_LIMIT }, async (request, reply) => {
+  if (!requireCsrf(request, reply, request.authCsrf!)) return;
+  const body = request.body as Record<string, string | undefined>;
+  try {
+    const inputs = openingCreditInputs(body);
+    // The credit is of exactly what was checked, or nothing.
+    if (body['confirm'] !== 'yes' || body['planHash'] !== openingCreditHash(inputs)) {
+      return sendOpeningCreditPage(request, reply, {
+        form: formOf(body),
+        error: 'The statements or decisions changed after they were checked, or the credit was not confirmed. Check them again.',
+      });
+    }
+    const { plan, files } = await planFromInputs(inputs);
+    const result = await applyOpeningCredit(pool, {
+      plan,
+      sourceFileHashes: files.map((f) => f.sha256),
+      actorLabel: request.authUser!.email,
+      allowUnresolved: body['allowUnresolved'] === 'yes',
+    });
+    const placed =
+      'error' in result.allocation
+        ? ` The entries are not placed yet (${result.allocation.error}); each draw enters them when it runs.`
+        : ` ${result.allocation.entriesPlaced} entries placed; ${result.allocation.weeksWaitingForDraws} weeks wait for numbers or for more draws.`;
+    return sendOpeningCreditPage(request, reply, {
+      flash:
+        `Opening credit: ${result.weeksCredited} weeks credited to ${result.numbersCredited} numbers.` +
+        (result.alreadyCredited.length > 0 ? ` ${result.alreadyCredited.length} numbers already had one and were left as they were.` : '') +
+        placed,
+    });
+  } catch (error) {
+    // OpeningCreditOverlapError and OpeningCreditUnresolvedError say what to do in their message.
+    return sendOpeningCreditPage(request, reply, { form: formOf(body), error: messageOf(error) });
   }
 });
 
