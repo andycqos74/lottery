@@ -252,6 +252,9 @@ Debit's entries in draws still taking entries — and duplicates, or weeks
 moved to an earlier draw — are *voided* (`entry.voided_at`, 0017). Every
 entry count, winner scan and member view ignores voided entries.
 
+**Weeks paid to the old lottery before the switch-over** are carried over
+once, as an opening credit (§2.2.3).
+
 **Standing orders not yet paid** are not entries — the money hasn't arrived.
 They are *estimated* into each open draw's jackpot
 (`estimateStandingOrderEntries()`: annual amount ÷ £2 ÷ 52 per active
@@ -330,6 +333,71 @@ pnpm import:legacy-register register.csv --expect-rows 3774 --expect-members 159
 A second load of the same numbers is refused (FR-1.3). The register and its
 exception report hold real people's details (B-2): keep them out of the
 repository and off dev machines.
+
+### 2.2.3 Weeks already paid before the switch-over (opening credit)
+
+A legacy standing order paid monthly, quarterly or annually has usually, on
+switch-over day, already paid for weeks the old lottery never drew. The new
+system only turns money into weeks when it reads it off a statement, and the
+statements uploaded on the Bank statements page start **after** the cut-off,
+so those weeks need carrying over once. `pnpm opening-credit` does that from
+the **old** lottery's statements (`packages/domain/src/opening-credit.ts`,
+`tools/opening-credit.ts`).
+
+- **Inputs.** The bank's TransactionHistory export(s) up to the cut-off,
+  ideally a full year back so annual payers' last payment is in them
+  (overlapping files are fine, and repeated rows count once); `--cutoff`, the
+  old lottery's **last draw** date; `--first-draw`, the new Draw 1.
+  `--old-draw-day` gives the old draw weekday if the cut-off is not one.
+- **Matching.** Each credit is tied to a number the way bank matching does
+  it: the prize draw number in the reference (or description). With several
+  numbers, the one whose standing-order amount equals the credit wins.
+  `Branch` credits (agents' lodgements), debits and credits after the cut-off
+  are left out. Anything else goes to the exception report.
+- **The calculation, per number.** A running balance: each credit adds its
+  amount; each old weekly draw up to the cut-off takes £2 whenever the
+  number is in credit (the old lottery entered paying members every week, so
+  a draw that dips a few pence below zero is not skipped; the next payment
+  makes it up). What is left at the cut-off, in whole £2s, is the opening
+  credit; the pennies under £2 are not credited and a shortfall is not
+  carried. E.g. £8.68 monthly paid on the 1st, Saturday draws, cut-off
+  Saturday 21 November: 1 week left. £26 quarterly paid 1 October: 13 weeks
+  paid, 8 drawn, 5 left. Weeks are not lost in a gap between the old last
+  draw and the new Draw 1; they start at Draw 1.
+- **Writing it.** One payment per number with weeks left: `so_fps`, weeks ×
+  £2, `allocation_method = 'legacy_opening_credit'`, the workings in
+  `allocation_evidence`, dated the cut-off, attributed to that number's line.
+  `allocateUpcomingEntries()` then places the weeks like any matched
+  standing-order money (a number without chosen numbers keeps its weeks
+  until GAP-13 gives it some). It shows on the member page as "Opening
+  credit: N weeks paid before the switch-over".
+
+```bash
+export APP_DB_MIGRATION_URL=postgres://lottery_owner@localhost:5432/lottery_app
+export APP_DB_MIGRATION_PASSWORD_FILE=deploy/secrets/app_db_password
+
+# Dry run: summary, plus opening-credit-<cutoff>.csv (one row per number: paid,
+# old draws covered, weeks carried, flags) and opening-credit-<cutoff>.exceptions.csv
+# (credits it could not tie to one number) beside the first statement.
+pnpm opening-credit --cutoff 2026-11-21 --first-draw 2026-11-27 old-statements/*.csv
+
+# Fill in the exceptions file's "assign" column (a prize draw number, or
+# "ignore"), pass it back, repeat until nothing is left to assign, then:
+pnpm opening-credit --cutoff 2026-11-21 --first-draw 2026-11-27 old-statements/*.csv \
+  --assign old-statements/opening-credit-2026-11-21.exceptions.csv --commit --actor "Your Name"
+```
+
+Safeguards: `--commit` refuses while any credit is unassigned (unless
+`--allow-unresolved`). It also refuses if the system already holds statement
+credits dated on or before the cut-off, because those were counted at full
+value and crediting them again would pay for the same weeks twice. Each
+number is credited at most once (`legacy_opening_credit:<number>`), so
+running it again changes nothing and lists what is already there. Flags in
+the report to read before committing: `no_payment_in_window` (a standing
+order with no payment seen), `no_standing_order` (money for a number the
+register has none on), `amount_differs`, `window_shorter_than_cycle` (the
+statements may miss an earlier payment) and `member_not_active`. The
+statements and both reports name real people (B-2).
 
 ### 2.3 Member portal (GAP-04, GAP-09)
 

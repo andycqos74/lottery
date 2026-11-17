@@ -214,3 +214,14 @@ export {
   LegacyRegisterEmailTakenError,
   type ImportLegacyRegisterRequest,
 } from './migration/import-legacy-register.js';
+export {
+  applyOpeningCredit,
+  countImportedCreditsUpTo,
+  existingOpeningCredits,
+  loadOpeningCreditNumbers,
+  OPENING_CREDIT_METHOD,
+  OpeningCreditOverlapError,
+  OpeningCreditUnresolvedError,
+  type ApplyOpeningCreditRequest,
+  type ApplyOpeningCreditResult,
+} from './migration/opening-credit.js';

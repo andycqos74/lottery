@@ -49,10 +49,12 @@ Three consequences shape the whole plan:
    Legacy members have no numbers on load, so the GAP-13 week
    (`RANDOM_ALLOCATION_GRACE_DAYS = 7`, a constant) plus the hourly sweep
    (200 lines per run) must finish **before Draw 1's entries close**.
-3. **There is no opening-credit mechanism.** A member whose standing order is
-   monthly, quarterly or annual and paid *before* the cut-over window has no
-   money in the system and no entries until their next payment arrives. See
-   decision D2 — this is the biggest open question for go-live.
+3. **Weeks paid before the cut-over need an opening credit.** A member whose
+   standing order is monthly, quarterly or annual has usually paid, before
+   the cut-over, for weeks the old lottery never drew. That money is on the
+   old statements, not the new ones, so it is carried over once with
+   `pnpm opening-credit` (D2 (c), SETUP §2.2.3, Phase 8 step 5). Without it
+   they have no entries until their next payment arrives.
 
 ---
 
@@ -61,8 +63,8 @@ Three consequences shape the whole plan:
 | # | Decision | Recommendation for the dry run | Who |
 |---|---|---|---|
 | D1 | **Real or anonymised data, and where.** B-2 says real member data stays off dev machines; the dev stack sends real email (`NOTIFIER=socketlabs`). | Run on the dev host with the **real register and statement**, *but* with `NOTIFIER=sandbox` (mail goes to mailpit), and delete the files after. Or anonymise the names/emails/addresses (keep Prize Draw No, amounts, frequencies, status, channel, agent). Either way, no real member may get an email from the dry run. | Andy |
-| D2 | **Legacy prepaid credit.** How does a member who paid their monthly/quarterly/annual standing order *before* cut-over get entries in the first draws? Options: (a) nothing — entries start from their next payment; (b) import a longer statement window so earlier payments count as weeks (risks paying twice for weeks the old lottery already drew); (c) a one-off opening credit per number, calculated from the last payment date and frequency — **needs building**. | Run with (a) and **measure** the shortfall in Phase 9 (members with an active subscription but no Draw 1 entry). That number decides whether (c) is needed before live. | Andy / treasurer |
-| D3 | **Cut-over date and statement window.** The first day whose standing-order credits belong to the new lottery. | Pick a date (e.g. the day after the old lottery's last draw) and use a statement from that date. | Andy |
+| D2 | **Legacy prepaid credit.** How does a member who paid their monthly/quarterly/annual standing order *before* cut-over get entries in the first draws? Options: (a) nothing — entries start from their next payment; (b) import a longer statement window so earlier payments count as weeks (risks paying twice for weeks the old lottery already drew); (c) a one-off opening credit per number, calculated from the old statements up to the cut-off — **built**: `pnpm opening-credit` (SETUP §2.2.3). It runs a balance per number (payments in, £2 out for each old weekly draw) and credits the whole weeks left at the cut-off, so nobody gets weeks the old lottery already drew. | Run (c) in Phase 8 step 5 and compare the Phase 9 "no Draw 1 entry" count with and without it. | Andy / treasurer |
+| D3 | **Cut-over date and statement window.** The *cut-off* is the old lottery's last draw; the first day whose standing-order credits belong to the new lottery is the day after. Also: the old lottery's draw weekday. | Use the old lottery's last draw as `--cutoff` (Phase 8 step 5) and upload statements on the Bank statements page from the day after. | Andy |
 | D4 | **First draw date and the series.** GAP-16: Fridays 12:00, entries close Friday 00:00. | Create a weekly series of 13 draws from the intended live Draw 1 date, so quarterly payments place in full (weeks beyond created draws wait — rule 4). | Andy |
 | D5 | **TG-04 auto-accept threshold.** Unset = every credit is a manual review task (likely 600–800 for a month). A credit that quotes one number and equals that number's subscription amount scores 0.9. | Set it to `0.9` for the dry run so exact matches allocate themselves and only the odd ones need review. Record the confirmer. | Andy |
 | D6 | **GAP-35 quarantine list.** Defaults: #1304 and Alan Henry's rows. | Use the defaults unless the queries are resolved. | Andy |
@@ -77,6 +79,7 @@ Three consequences shape the whole plan:
 | R1 | **Legacy register** (final version) | CSV or TSV, header row first: `Prize Draw No`, `Title`, `Forename`, `Surname`, `Address 1`–`3`, `Post Code`, `Telephone`, `Agent`, `Channel`, `Joining Date`, `Payment Type (raw)`, `Amount (parsed)`, `Frequency (parsed)`, `Info`, `Row Type`, `Status`, `Payments (12m)`, `Total (12m)`, `Observed Freq`, optional `Email` (SETUP §2.2.2) | The cleaned register spreadsheet (`Lottery_Database_Cleaned_2026.xlsx` lineage, with the Email column added per GAP-05, 2026-10-27), saved as CSV by Andy. Not in the repo (B-1). | Phase 4 |
 | R2 | **Expected counts** for R1 | total rows, member rows, BLANK RESERVED rows | Counted from R1 by Andy (D7) | Phase 4 |
 | R3 | **Bank statement(s)** for the cut-over window | The bank's own "TransactionHistory" CSV export (the format `real-export-csv-format.ts` maps, B-10); credits must quote the prize draw number in the reference | Club bank account online-banking export, by the treasurer, covering D3's date to the dry-run date | Phase 8 |
+| R3a | **Old-lottery bank statements** for the opening credit | Same export format, covering the **12 months up to the cut-off** (annual payers' last payment must be in it); several overlapping files are fine | Same account, by the treasurer; can be the same exports the register's `Payments (12m)` columns were worked out from | Phase 8 step 5 |
 | R4 | **Agent list** | Name, telephone, email (if any), postal address for each agent | Distinct values of the register's `Agent` column (query in Phase 5) for the names; contact details from the lottery organiser / club records | Phase 3 |
 | R5 | **Admin users** | Name and email for at least two people (GAP-44 needs two different approvers) | Andy + a second officer (treasurer) | Phase 2 |
 | R6 | **Draw schedule** | First draw date, number of draws, draw time, cutoff | D4 / GAP-16 | Phase 6 |
@@ -301,6 +304,25 @@ RANDOM.ORG numbers by the hourly sweep.
    SELECT count(*) FROM human_task WHERE status = 'open';   -- review tasks left
    ```
    Record how long the review took — that is the weekly treasurer workload.
+5. **Opening credit (D2 (c))** — weeks paid to the old lottery and not yet
+   drawn, from R3a (SETUP §2.2.3). From the repo root, as the owner role:
+   ```bash
+   export APP_DB_MIGRATION_URL=$OWNER APP_DB_MIGRATION_PASSWORD_FILE=deploy/secrets/app_db_password
+   pnpm opening-credit --cutoff <old last draw> --first-draw <Draw 1 date> /root/switchover-dryrun/old/*.csv
+   ```
+   Read the summary and `opening-credit-<cutoff>.csv` (weeks per number;
+   flags `no_payment_in_window`, `no_standing_order`, `amount_differs`,
+   `window_shorter_than_cycle`). Fill in the `assign` column of
+   `opening-credit-<cutoff>.exceptions.csv` (a prize draw number or
+   `ignore`), re-run with `--assign <that file>` until nothing is left to
+   assign, then add `--commit --actor "<name>"`. It refuses if any R3
+   statement line is dated on or before the cut-off (fix R3, don't force it).
+   **Check:**
+   ```sql
+   SELECT count(*), sum(amount_pence)/200 AS weeks FROM payment WHERE allocation_method = 'legacy_opening_credit';
+   ```
+   Re-run the `--commit` once: it must credit 0 numbers and list the rest as
+   already credited.
 
 ### Phase 9 — Readiness check for Draw 1
 
@@ -313,6 +335,8 @@ SELECT d.draw_number, count(e.*) FILTER (WHERE e.voided_at IS NULL) AS entries
   FROM draw d LEFT JOIN entry e ON e.draw_id = d.id GROUP BY 1 ORDER BY 1;
 
 -- D2 measure: paying standing orders with NO entry in Draw 1
+-- (after the opening credit, these should be mostly members whose last
+-- payment's weeks were used up by the old draws: their next payment is due)
 SELECT s.frequency, count(*) FROM subscription s
   JOIN payment_method pm ON pm.id = s.payment_method_id
  WHERE s.status = 'active' AND NOT EXISTS (
@@ -331,7 +355,8 @@ SELECT count(DISTINCT p.line_prize_draw_no) FROM payment p
 
 - [ ] Every matched standing order has an entry in Draw 1 (and later draws
       for multi-week payments).
-- [ ] The "no entry in Draw 1" list is understood and agreed (D2).
+- [ ] The opening credit is committed, its report reviewed, and the
+      "no entry in Draw 1" list is understood and agreed (D2).
 - [ ] No open `bank_transaction_review` tasks; `post_allocated_numbers`
       tasks either worked or accepted as post-go-live work.
 - [ ] Draws page: entry count and jackpot for Draw 1 look right; rollover 0.
@@ -363,7 +388,7 @@ Working back from Draw 1's entries closing (Friday 00:00):
 | T−2 weeks | Phases 1–3 on the VPS (empty start, config, admin users, agents) |
 | **T−9 days at the latest** | Phase 4–6: register loaded, draws created. The 7-day GAP-13 week starts here; letters/emails tell members they can choose numbers |
 | T−2 days | Sweep has allocated every remaining number; `post_allocated_numbers` letters printed and posted |
-| T−1 day | Final statement uploaded and matched (Phase 8); Phase 9 go / no-go |
+| T−1 day | Final statement uploaded and matched (Phase 8); opening credit committed (Phase 8 step 5, once the old lottery's last draw has run); Phase 9 go / no-go |
 | Friday 00:00 | Entries close; 12:00 Draw 1 runs itself (`draw-dispatch`) |
 
 Standing-order money arriving after Thursday's upload but before the
@@ -375,7 +400,7 @@ cutoff only counts if a statement is uploaded and matched before 00:00.
 
 | # | Issue | Effect on go-live | Suggested fix |
 |---|---|---|---|
-| G1 | No opening credit for legacy standing orders paid before cut-over (D2) | Monthly/quarterly/annual payers may have no entries for weeks or months | Decide D2; if (c), build a one-off "opening weeks" load from the register |
+| G1 | ~~No opening credit for legacy standing orders paid before cut-over (D2)~~ **Built:** `pnpm opening-credit` (SETUP §2.2.3) | Monthly/quarterly/annual payers would have no entries for weeks or months | Run it in Phase 8 step 5; needs R3a (12 months of old statements) |
 | G2 | `activate-config` can't set `recon_auto_threshold` or `selection_cutoff_before` | Manual SQL on the live database | Add both to `OVERRIDABLE_COLUMNS` |
 | G3 | `RANDOM_ALLOCATION_GRACE_DAYS` is a constant 7 | Load must happen ≥ 9 days before Draw 1's cutoff | Fine if planned; otherwise make it config |
 | G4 | Random allocation covers *every* number of an active member, including their non-paying numbers | Extra allocations and letters for numbers that pay nothing | Restrict the sweep to numbers with an active subscription, or accept |
