@@ -1,5 +1,5 @@
 /*
- * The Doonhamers Draw — public pages behaviour.
+ * Doonhamer Lotto — public pages behaviour.
  *
  * One file, not inline <script> blocks: the site runs under a strict CSP
  * (script-src 'self'). Each feature looks for its own markup and does nothing

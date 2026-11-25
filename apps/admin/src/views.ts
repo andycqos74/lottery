@@ -136,7 +136,7 @@ export function loginPage(opts: { error?: string }): string {
     title: 'Log in',
     authShell: true,
     body: `
-      <h1>QOSFC Lottery — Admin</h1>
+      <h1>Doonhamer Lotto — Admin</h1>
       <div class="card">
         ${opts.error ? `<div class="error">${escapeHtml(opts.error)}</div>` : ''}
         <form method="post" action="/login">

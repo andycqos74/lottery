@@ -56,14 +56,14 @@ const TEMPLATES: Readonly<Record<string, (mergeData: Readonly<Record<string, str
   welcome_signup: (m) => {
     const forename = m['forename']?.trim() || 'there';
     return {
-      subject: 'Welcome to the QOSFC Lottery',
+      subject: 'Welcome to Doonhamer Lotto',
       text:
         `Hi ${forename},\n\n` +
-        `Your QOSFC Lottery account is set up. Log in any time to pick your numbers, check draw results, and manage your entries.\n\n` +
+        `Your Doonhamer Lotto account is set up. Log in any time to pick your numbers, check draw results, and manage your entries.\n\n` +
         `Good luck!\nQOSFC`,
       html:
         `<p>Hi ${escapeHtml(forename)},</p>` +
-        `<p>Your QOSFC Lottery account is set up. Log in any time to pick your numbers, check draw results, and manage your entries.</p>` +
+        `<p>Your Doonhamer Lotto account is set up. Log in any time to pick your numbers, check draw results, and manage your entries.</p>` +
         `<p>Good luck!<br>QOSFC</p>`,
     };
   },
@@ -71,15 +71,15 @@ const TEMPLATES: Readonly<Record<string, (mergeData: Readonly<Record<string, str
     const forename = m['forename']?.trim() || 'there';
     const resetUrl = m['resetUrl'] ?? '';
     return {
-      subject: 'Reset your QOSFC Lottery password',
+      subject: 'Reset your Doonhamer Lotto password',
       text:
         `Hi ${forename},\n\n` +
-        `We received a request to reset your QOSFC Lottery password. Use the link below within the next hour:\n\n` +
+        `We received a request to reset your Doonhamer Lotto password. Use the link below within the next hour:\n\n` +
         `${resetUrl}\n\n` +
         `If you didn't ask for this, you can safely ignore this email — your password will not change.\n\nQOSFC`,
       html:
         `<p>Hi ${escapeHtml(forename)},</p>` +
-        `<p>We received a request to reset your QOSFC Lottery password. Use the link below within the next hour:</p>` +
+        `<p>We received a request to reset your Doonhamer Lotto password. Use the link below within the next hour:</p>` +
         `<p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>` +
         `<p>If you didn't ask for this, you can safely ignore this email — your password will not change.</p><p>QOSFC</p>`,
     };
@@ -113,7 +113,7 @@ QOSFC`,
     const forename = m['forename']?.trim() || 'there';
     const lines = m['lines'] ?? '';
     return {
-      subject: 'Your QOSFC Lottery numbers',
+      subject: 'Your Doonhamer Lotto numbers',
       text:
         `Hi ${forename},\n\n` +
         `You hadn't chosen your lottery numbers, so we've picked them for you at random using RANDOM.ORG: ${lines}.\n\n` +

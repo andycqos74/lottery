@@ -5,7 +5,7 @@ import { escapeHtml, faqPage, landingPage, pastDrawsPage } from './views.js';
 describe('FAQ copy (design_handoff_public_pages, page 9)', () => {
   it("has the design's sections, in order, with every question", () => {
     expect(FAQ.map((s) => [s.title, s.items.length])).toEqual([
-      ['About QOS Lotto', 10],
+      ['About Doonhamer Lotto', 10],
       ['Entering', 5],
       ['If you already pay by standing order', 10],
       ['If you pay through a collecting agent', 1],
@@ -15,7 +15,7 @@ describe('FAQ copy (design_handoff_public_pages, page 9)', () => {
   });
 
   it('lists the [placeholders] still to be replaced, and none once they are', () => {
-    expect(faqPlaceholders()).toContainEqual({ question: 'What is QOS Lotto?', placeholder: '[first draw date]' });
+    expect(faqPlaceholders()).toContainEqual({ question: 'What is Doonhamer Lotto?', placeholder: '[first draw date]' });
     const done: FaqSection[] = [{ title: 'T', items: [['Q?', 'Every Friday.']] }];
     expect(faqPlaceholders(done)).toEqual([]);
     expect(faqPlaceholders([{ title: 'T', items: [['Q?', 'Call [phone']] }])).toEqual([{ question: 'Q?', placeholder: '[phone' }]);
