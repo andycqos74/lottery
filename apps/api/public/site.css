@@ -68,7 +68,7 @@ input,button,select{ font-family:var(--font-body) }
 /* ── Footer ──────────────────────────────────────────────────────────────── */
 .site-footer{ background:var(--navy); color:var(--on-navy); padding:40px clamp(16px,4vw,48px) 32px; display:flex; flex-wrap:wrap; align-items:center; gap:20px 24px;
            font-size:13px; clip-path:polygon(0 12px,30% 0,62% 14px,100% 2px,100% 100%,0 100%); }
-.site-footer img{ width:42px; height:42px; }
+.site-footer img{ width:auto; height:42px; }
 .footer-links{ margin-left:auto; display:flex; flex-wrap:wrap; gap:20px 24px; }
 .footer-links a{ color:#fff; text-decoration:none; }
 .footer-links a:hover{ color:var(--on-navy-label); }

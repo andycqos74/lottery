@@ -164,7 +164,7 @@ function nav(member: ViewMember | undefined): string {
 
 function footer(): string {
   return `<footer class="site-footer">
-    <img src="/assets/img/qos-crest.png" alt="" width="42" height="42" />
+    <img src="/assets/img/doonhamer-lotto-white.svg" alt="" width="166" height="42" />
     <span>The Doonhamers Draw · Queen of the South FC · Palmerston Park, Dumfries</span>
     <div class="footer-links">${FOOTER_LINKS.map((l) => `<a href="${l.href}">${escapeHtml(l.label)}</a>`).join('')}</div>
   </footer>`;
@@ -177,7 +177,9 @@ function document_(opts: { title: string; pageClass: 'page-inner' | 'page-landin
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(opts.title)} — The Doonhamers Draw</title>
-  <link rel="icon" href="/assets/img/qos-crest.png" />
+  <link rel="icon" href="/assets/img/favicon.ico" sizes="32x32" />
+  <link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png" />
   <link rel="preload" href="/assets/fonts/merriweather-sans-0.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/assets/fonts/open-sans-1.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="${assetUrl('fonts.css')}" />

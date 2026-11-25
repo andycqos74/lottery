@@ -20,6 +20,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
   '.webp': 'image/webp',
   '.jpg': 'image/jpeg',
   '.woff2': 'font/woff2',
