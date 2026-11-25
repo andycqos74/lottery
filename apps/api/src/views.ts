@@ -152,8 +152,7 @@ function nav(member: ViewMember | undefined): string {
     : '';
   return `<nav class="site-nav" aria-label="Main">
     <a class="brand" href="/">
-      <img src="/assets/img/qos-crest.png" alt="Queen of the South FC" width="52" height="52" />
-      <span class="brand-text"><span class="brand-club">Queen of the South FC</span><span class="brand-name">The Doonhamers Draw</span></span>
+      <img src="/assets/img/doonhamer-lotto.svg" alt="Doonhamer Lotto" width="207" height="52" />
     </a>
     <div class="nav-actions">
       <button type="button" class="menu-btn" aria-expanded="false" aria-controls="site-menu"><span class="menu-word">Menu</span><span class="menu-glyph" aria-hidden="true">&#9776;</span></button>
@@ -165,8 +164,8 @@ function nav(member: ViewMember | undefined): string {
 
 function footer(): string {
   return `<footer class="site-footer">
-    <img src="/assets/img/qos-crest.png" alt="" width="42" height="42" />
-    <span>The Doonhamers Draw · Queen of the South FC · Palmerston Park, Dumfries</span>
+    <img src="/assets/img/doonhamer-lotto-white.svg" alt="" width="166" height="42" />
+    <span>Doonhamer Lotto · Queen of the South FC · Palmerston Park, Dumfries</span>
     <div class="footer-links">${FOOTER_LINKS.map((l) => `<a href="${l.href}">${escapeHtml(l.label)}</a>`).join('')}</div>
   </footer>`;
 }
@@ -177,8 +176,10 @@ function document_(opts: { title: string; pageClass: 'page-inner' | 'page-landin
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(opts.title)} — The Doonhamers Draw</title>
-  <link rel="icon" href="/assets/img/qos-crest.png" />
+  <title>${escapeHtml(opts.title)} — Doonhamer Lotto</title>
+  <link rel="icon" href="/assets/img/favicon.ico" sizes="32x32" />
+  <link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png" />
   <link rel="preload" href="/assets/fonts/merriweather-sans-0.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/assets/fonts/open-sans-1.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="${assetUrl('fonts.css')}" />
@@ -280,7 +281,7 @@ export function landingPage(opts: {
           <a class="btn-primary" href="#easy-entry">Play this week ${arrow}</a>
           <a class="btn-secondary" href="#how-to-play">How it works</a>
         </div>`
-    : `<span class="hero-eyebrow">The Doonhamers Draw</span>
+    : `<span class="hero-eyebrow">Doonhamer Lotto</span>
         <p class="hero-soon">Next draw coming soon</p>
         <div class="hero-ctas"><a class="btn-secondary" href="#how-to-play">How it works</a></div>`;
 
@@ -1067,7 +1068,7 @@ export function faqPage(opts: { member?: ViewMember | undefined; sections?: read
     title: 'FAQs',
     eyebrow: 'Help',
     heading: 'Questions and answers',
-    lede: 'How QOS Lotto works, entering, standing orders, winning and your account.',
+    lede: 'How Doonhamer Lotto works, entering, standing orders, winning and your account.',
     member: opts.member,
     body: `<div class="faq" data-faq>
       <aside class="faq-nav" data-reveal="left">

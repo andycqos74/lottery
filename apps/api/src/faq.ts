@@ -16,10 +16,10 @@ export interface FaqSection {
 
 export const FAQ: readonly FaqSection[] = [
   {
-    title: 'About QOS Lotto',
+    title: 'About Doonhamer Lotto',
     items: [
       [
-        'What is QOS Lotto?',
+        'What is Doonhamer Lotto?',
         "It's Queen of the South's club lottery, now a weekly match-the-numbers draw. It replaces the old numbered raffle from [first draw date].",
       ],
       [
@@ -90,7 +90,7 @@ export const FAQ: readonly FaqSection[] = [
     items: [
       [
         'Do I need to do anything?',
-        "No. Your standing order carries on as it is, and you'll keep playing in QOS Lotto.",
+        "No. Your standing order carries on as it is, and you'll keep playing in Doonhamer Lotto.",
       ],
       [
         'What will I get for my payment?',
@@ -172,7 +172,7 @@ export const FAQ: readonly FaqSection[] = [
         "Call [phone] or email [email] and we'll update your record.",
       ],
       [
-        'Who runs QOS Lotto?',
+        'Who runs Doonhamer Lotto?',
         "Queen of the South FC Ltd Development Association. It's registered with Dumfries and Galloway Council under the Gambling Act 2005 [registration no.]. The promoter is [name], [address].",
       ],
       [
