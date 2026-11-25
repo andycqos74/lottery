@@ -30,10 +30,7 @@ input,button,select{ font-family:var(--font-body) }
 .site-nav{ position:relative; z-index:5; height:76px; display:flex; align-items:center; justify-content:space-between; gap:12px;
            padding:0 clamp(16px,4vw,48px); background:var(--sky); }
 .brand{ display:flex; align-items:center; gap:clamp(8px,2vw,14px); text-decoration:none; min-width:0; }
-.brand img{ width:clamp(40px,10vw,52px); height:clamp(40px,10vw,52px); flex:none; }
-.brand-text{ display:flex; flex-direction:column; gap:2px; }
-.brand-club{ font-size:clamp(9px,2.6vw,11px); font-weight:700; letter-spacing:clamp(1px,.5vw,2px); text-transform:uppercase; color:var(--ice-2); white-space:nowrap; }
-.brand-name{ font-family:var(--font-display); font-weight:800; font-size:clamp(15px,4.2vw,20px); color:var(--ice); white-space:nowrap; }
+.brand img{ height:clamp(36px,9vw,52px); width:auto; max-width:100%; flex:none; }
 .nav-actions{ display:flex; align-items:center; gap:8px; }
 .menu-btn{ display:flex; align-items:center; justify-content:center; gap:10px; height:44px; min-width:44px; padding:0 clamp(6px,2vw,16px);
            background:transparent; border:0; color:var(--ice); font-weight:700; font-size:15px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
