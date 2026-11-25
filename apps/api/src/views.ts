@@ -152,7 +152,7 @@ function nav(member: ViewMember | undefined): string {
     : '';
   return `<nav class="site-nav" aria-label="Main">
     <a class="brand" href="/">
-      <img src="/assets/img/doonhamer-lotto.svg" alt="Doonhamer Lotto" width="207" height="52" />
+      <img src="/assets/img/doonhamer-lotto-white.svg" alt="Doonhamer Lotto" width="207" height="52" />
     </a>
     <div class="nav-actions">
       <button type="button" class="menu-btn" aria-expanded="false" aria-controls="site-menu"><span class="menu-word">Menu</span><span class="menu-glyph" aria-hidden="true">&#9776;</span></button>
